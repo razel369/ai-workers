@@ -1,0 +1,16 @@
+# Railway (https://railway.app)
+# Drop this file at the repo root, then:
+#   1. Create a new Railway project from GitHub repo
+#   2. Add environment variables in the dashboard (see .env.example)
+#   3. Railway auto-detects the Dockerfile and deploys
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node --experimental-sqlite --no-warnings server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

@@ -1,0 +1,37 @@
+# Render (https://render.com)
+# Drop this file at the repo root, then:
+#   1. New -> Web Service -> Connect repo
+#   2. Render auto-detects render.yaml
+#   3. Set env vars in dashboard (see .env.example)
+
+services:
+  - type: web
+    name: paid-agent-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_OPTIONS
+        value: --experimental-sqlite --no-warnings
+      - key: AGENT_NAME
+        sync: false
+      - key: AGENT_OWNER_CONTACT
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PAYPAL_ME
+        sync: false
+      - key: BIT_PHONE
+        sync: false
+      - key: BUY_ME_A_COFFEE
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: WALLET_ADDRESS
+        sync: false
+      - key: NETWORK
+        value: base-sepolia
+      - key: PRICE_USDC
+        value: "0.05"

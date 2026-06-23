@@ -1,0 +1,42 @@
+# Fly.io (https://fly.io)
+# Setup (one-time):
+#   powershell -c "irm https://fly.io/install.ps1 | iex"
+#   fly auth signup                       # or: fly auth login
+#   fly launch --no-deploy                # in this dir
+#   fly secrets set ADMIN_TOKEN=$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")
+#   fly secrets set WALLET_ADDRESS=0x...
+#   ... etc (see .env.example)
+#   fly deploy
+
+app = "paid-agent-demo"
+primary_region = "ams"   # Amsterdam (closest to Israel)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  NODE_OPTIONS = "--experimental-sqlite --no-warnings"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[mounts]
+  source = "earnings_data"
+  destination = "/app/data"

@@ -1,0 +1,8 @@
+bin/cloudflared.exe
+bin/cloudflared
+bin/cloudflared-*
+node_modules/
+.env
+*.log
+.DS_Store
+data/
