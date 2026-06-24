@@ -9,6 +9,19 @@ Three ways to get an API key:
 
 Zero npm dependencies. Single Node.js process.
 
+## Live demo
+
+A public demo is running on a Cloudflare quick tunnel right now (URL is printed by `npm run tunnel` and changes per restart):
+
+```
+Dashboard:    https://individually-threatening-disable-bottom.trycloudflare.com/
+Invoice:      https://individually-threatening-disable-bottom.trycloudflare.com/invoice
+Agent card:   https://individually-threatening-disable-bottom.trycloudflare.com/.well-known/agent.json
+Health:       https://individually-threatening-disable-bottom.trycloudflare.com/health
+```
+
+The tunnel is courtesy of [cloudflared](https://github.com/cloudflare/cloudflared) (free, no account needed for `--url` mode). Tunnel URLs are ephemeral; for permanent hosting see "Deploy options" below.
+
 ## What's new in v0.4.0 (Israel edition)
 
 - **Stripe removed** (not viable in Israel without a business entity)
@@ -22,6 +35,7 @@ Zero npm dependencies. Single Node.js process.
 - **Admin endpoint** to issue API keys after off-platform payment (with ADMIN_TOKEN)
 - **Tip jar endpoint** to log incoming tips
 - x402 (crypto) path still works alongside for AI agents
+- **`X-Forwarded-*` honored** so the invoice / dashboard always show the public URL behind any reverse proxy
 
 ## Quick start (mock mode, zero setup)
 
@@ -36,23 +50,29 @@ npm start   # starts on :3000
 
 Open http://localhost:3000/ for the dashboard.
 
+## Expose it to the internet (one command, zero account)
+
+```powershell
+npm run tunnel
+```
+
+Prints a public `https://*.trycloudflare.com` URL connected to your local server. Cloudflare's Tel Aviv edge is the closest region. Free. No signup. The URL changes every restart; for a permanent URL, sign up for Cloudflare and bind a named tunnel (instructions in the script output).
+
 ## Configure it for Israel (10 minutes)
 
 Edit `.env` (or set env vars) and fill in **only the ones you want to enable**:
 
 ```powershell
-# Who you are
 $env:AGENT_NAME              = "Razel's AI Tools"
 $env:AGENT_DESCRIPTION       = "Smart AI agent for Hebrew/English text"
 $env:AGENT_OWNER_CONTACT     = "razel@example.com"
-$env:PUBLIC_BASE_URL         = "https://your-host.example.com"
 
 # Oldschool channels (any subset)
 $env:PAYPAL_ME               = "razel"            # -> paypal.me/razel
 $env:BUY_ME_A_COFFEE         = "https://buymeacoffee.com/razel"
 $env:KO_FI                   = "https://ko-fi.com/razel"
 $env:BIT_PHONE               = "972541234567"     # -> bitpay.co.il link
-$env:GITHUB_SPONSORS         = "razel"            # -> github.com/sponsors/razel
+$env:GITHUB_SPONSORS         = "razel"
 $env:GUMROAD_URL             = "https://razel.gumroad.com/l/paid-agent-template"
 
 # Israeli bank invoice
@@ -60,19 +80,19 @@ $env:PAYEE_NAME              = "Razel M."
 $env:BANK_NAME               = "Bank Hapoalim"
 $env:BANK_BRANCH             = "620"
 $env:BANK_ACCOUNT            = "123456"
-$env:IBAN                    = "IL62 0126 2000 0000 1234 567"   # optional
-$env:SWIFT                   = "POALILIT"                       # optional
+$env:IBAN                    = "IL62 0126 2000 0000 1234 567"
+$env:SWIFT                   = "POALILIT"
 
 # x402 (crypto path, optional)
 $env:NETWORK                 = "base-sepolia"    # for real money: "base"
 $env:WALLET_ADDRESS          = "0xYourAddress"
 $env:PRICE_USDC              = "0.05"
 
-# Admin (REQUIRED for manual key issuance)
-$env:ADMIN_TOKEN             = "your-secret-token-from-above"
+# Admin
+$env:ADMIN_TOKEN             = "your-secret-token"
 ```
 
-Then `npm start` and open the dashboard.
+Then `npm start` (or `npm run tunnel` for public access).
 
 ## How the oldschool path actually works
 
@@ -80,10 +100,9 @@ Then `npm start` and open the dashboard.
 2. They pick a plan (`credits-100`, `monthly-1k`, `power-10k`)
 3. They pay via **any channel listed** (PayPal.me, Bit, bank transfer, etc.)
 4. They email you the screenshot + plan id
-5. **You issue their key** (one curl command):
+5. **You issue their key** (one curl):
 
 ```powershell
-$env:ADMIN_TOKEN = "your-secret"
 Invoke-WebRequest -Uri "https://your-host/admin/issue-key?token=$env:ADMIN_TOKEN" `
   -Method POST -Headers @{ "content-type" = "application/json" } `
   -Body '{"planId":"monthly-1k","channel":"paypal","reference":"PP-12345","label":"John D."}'
@@ -91,13 +110,7 @@ Invoke-WebRequest -Uri "https://your-host/admin/issue-key?token=$env:ADMIN_TOKEN
 
 Response:
 ```json
-{
-  "ok": true,
-  "key": "sk_a1b2c3d4...",
-  "plan": "monthly-1k",
-  "callsLimit": 1000,
-  "note": "Send this key to the customer once..."
-}
+{ "ok": true, "key": "sk_a1b2c3d4...", "plan": "monthly-1k", "callsLimit": 1000 }
 ```
 
 6. You paste that key into an email to the customer.
@@ -110,29 +123,38 @@ curl -X POST https://your-host/entrypoints/summarize/invoke `
   -d '{"text":"hello world"}'
 ```
 
-That's it. No Stripe. No business registration.
+## Deploy options (permanent hosting)
 
-## Why this works for Israeli individuals
+All configs are committed in the repo:
 
-| Channel | Why it's legal/easy in Israel |
-|---|---|
-| **PayPal.me** | Personal accounts can receive in Israel; no business needed up to moderate volume |
-| **Bit** | Israeli peer-to-peer app, designed for individuals |
-| **Buy Me a Coffee / Ko-fi** | International platforms; payout to Israeli bank |
-| **Bank transfer (masheh)** | Universal; just invoice + IBAN |
-| **Gumroad** | "Merchant of record" — they collect + remit VAT; you get paid to your bank |
-| **GitHub Sponsors** | Available in Israel; works once you have a public repo |
-| **Crypto (x402)** | No bank/KYC at all for the receiver |
+| Platform | Files | Cost | Time to live |
+|---|---|---|---|
+| **Cloudflare Tunnel (this machine)** | `bin/cloudflared.exe` + `npm run tunnel` | free | 1 min |
+| **Railway** | `railway.toml`, `Dockerfile` | free tier + ~$5/mo | 5 min |
+| **Fly.io** | `fly.toml`, `Dockerfile` | free tier (3 VMs) | 5 min |
+| **Render** | `render.yaml`, `Dockerfile` | free tier (sleeps) | 5 min |
+| **Any VPS** (Hetzner, DigitalOcean) | `Dockerfile` | ~$4/mo | 15 min |
 
-## Revenue math (Israeli pricing)
+### Railway
+```powershell
+npm install -g @railway/cli
+railway login
+railway init
+railway up
+# Then in dashboard: set env vars (see .env.example)
+```
 
-| Plan | Calls | ILS | USD | Use case |
-|---|---|---|---|---|
-| credits-100 | 100 | 18 | ~$5 | one-off use |
-| monthly-1k | 1,000 | 35 | ~$9 | solo developer, monthly |
-| power-10k | 10,000 | 280 | ~$75 | small team / heavy use |
+### Fly.io
+```powershell
+irm https://fly.io/install.ps1 | iex
+fly auth signup
+fly launch --no-deploy
+fly secrets set ADMIN_TOKEN=... WALLET_ADDRESS=0x... PAYPAL_ME=razel BIT_PHONE=...
+fly deploy
+```
 
-100 monthly-1k customers = 3,500 ILS/month (~$900).
+### Render
+Push the repo to GitHub, then in Render dashboard: New → Web Service → Connect repo. Render reads `render.yaml` automatically and prompts for the env vars.
 
 ## Endpoints
 
@@ -152,28 +174,15 @@ That's it. No Stripe. No business registration.
 | GET | `/admin/keys` | `ADMIN_TOKEN` | list issued keys (no secrets) |
 | POST | `/admin/revoke` | `ADMIN_TOKEN` | revoke a key |
 
-## What the agent does (5 entrypoints)
+## Revenue math (Israeli pricing)
 
-| key | description | x402 price |
-|---|---|---|
-| `summarize` | condense text | $0.05 |
-| `translate` | stub | $0.05 |
-| `sentiment` | score -1..1 | $0.05 |
-| `extract-entities` | pull capitalized phrases | $0.05 |
-| `word-count` | chars/words/sentences | $0.001 |
+| Plan | Calls | ILS | USD |
+|---|---|---|---|
+| credits-100 | 100 | 18 ₪ | ~$5 |
+| monthly-1k | 1,000 | 35 ₪ | ~$9 |
+| power-10k | 10,000 | 280 ₪ | ~$75 |
 
-Drop in a real LLM call in the handler (look for `handler: async ({ text }) =>` in `server.js`).
-
-## How to scale this beyond manual key issuance
-
-When volume grows past "I can email each customer":
-
-1. **Buy Me a Coffee webhooks** → auto-issue API key on payment
-2. **Gumroad webhooks** → same
-3. **Wise personal account** + invoice automation
-4. **Register a business** (osek patur / osek murshe) — then you can add Stripe Israel via their partner program
-
-For now: zero business, zero Stripe, fully working.
+100 monthly-1k customers = 3,500 ₪/month.
 
 ## File map
 
@@ -182,6 +191,12 @@ For now: zero business, zero Stripe, fully working.
 | `server.js` | Paid agent: HTTP, x402, API keys, admin, invoice, dashboard |
 | `test.js` | 31 E2E tests |
 | `package.json` | zero runtime deps |
+| `Dockerfile` | container for Railway/Fly/Render/any VPS |
+| `railway.toml` | Railway config |
+| `fly.toml` | Fly.io config |
+| `render.yaml` | Render config |
+| `bin/cloudflared.exe` | Cloudflare Tunnel binary |
+| `bin/tunnel.js` | Quick-tunnel launcher |
 | `.env.example` | config template |
 | `data/earnings.db` | SQLite (auto-created) |
 

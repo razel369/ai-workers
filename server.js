@@ -283,6 +283,16 @@ function clientIp(req) {
   if (typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
   return req.socket?.remoteAddress ?? 'unknown';
 }
+
+// Resolve the public base URL for the current request.
+// Trusts X-Forwarded-* headers (set by Cloudflare Tunnel, Fly, Render, Railway)
+// so the dashboard and invoice always show the real public URL, not localhost.
+function resolveBaseUrl(req) {
+  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
+  const proto = req.headers['x-forwarded-proto'] ?? 'http';
+  if (host) return `${proto}://${host}`;
+  return PUBLIC_BASE_URL;
+}
 async function readBody(req, max = 1024 * 64) {
   const cs = []; let t = 0;
   for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true }; cs.push(c); }
@@ -291,7 +301,7 @@ async function readBody(req, max = 1024 * 64) {
 
 // --- A2A Agent Card -------------------------------------------------------
 
-function buildAgentCard() {
+function buildAgentCard(baseUrl = PUBLIC_BASE_URL) {
   const skills = entrypoints.map((e) => ({
     id: e.key, name: e.key.replace(/-/g, ' '), description: e.description,
     inputSchema: e.inputSchema, outputSchema: { type: 'object' },
@@ -308,7 +318,7 @@ function buildAgentCard() {
   }));
   return {
     schema: 'a2a-agent-card/v1',
-    name: AGENT_NAME, description: AGENT_DESCRIPTION, version: AGENT_VERSION, url: PUBLIC_BASE_URL,
+    name: AGENT_NAME, description: AGENT_DESCRIPTION, version: AGENT_VERSION,     url: baseUrl,
     provider: { organization: AGENT_NAME, contact: AGENT_OWNER_CONTACT || undefined },
     capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
     authentication: {
@@ -344,7 +354,7 @@ const PLANS = [
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
-function buildDashboard() {
+function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   const channels = buildAcquireChannels();
   const channelButtons = channels.map((c) => {
     if (c.kind === 'paypal') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">PayPal</div><div class="price">any amount</div><div class="muted">paypal.me/${escapeHtml(PAYPAL_ME)}</div></a>`;
@@ -429,7 +439,7 @@ function buildDashboard() {
   <div class="card">
     <h3 style="margin-top:0">Pay per call (x402 / USDC, instant)</h3>
     <div class="muted" style="margin-bottom:8px">No signup. Any AI agent or x402 client can call this directly.</div>
-    <pre>curl -X POST ${escapeHtml(PUBLIC_BASE_URL)}/entrypoints/summarize/invoke \\
+    <pre>curl -X POST ${escapeHtml(baseUrl)}/entrypoints/summarize/invoke \\
   -H "x-payment: &lt;x402-payment-proof&gt;" \\
   -H "content-type: application/json" \\
   -d '{"text":"hello world"}'</pre>
@@ -491,14 +501,14 @@ function buildDashboard() {
 </html>`;
 }
 
-function buildInvoiceText() {
+function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   const lines = [];
   lines.push(`INVOICE / HATZAMAT HESHBON`);
   lines.push('='.repeat(60));
   lines.push(`From:    ${AGENT_NAME}`);
   if (PAYEE_NAME) lines.push(`Payee:   ${PAYEE_NAME}`);
   if (AGENT_OWNER_CONTACT) lines.push(`Email:   ${AGENT_OWNER_CONTACT}`);
-  if (PUBLIC_BASE_URL) lines.push(`URL:     ${PUBLIC_BASE_URL}`);
+  if (baseUrl) lines.push(`URL:     ${baseUrl}`);
   lines.push(`Date:    ${new Date().toISOString().slice(0, 10)}`);
   lines.push('');
   lines.push('SERVICES');
@@ -535,7 +545,7 @@ function buildInvoiceText() {
   lines.push(`  2. Send the payment confirmation + plan id to ${AGENT_OWNER_CONTACT || 'the owner'}.`);
   lines.push(`  3. You'll receive an API key (sk_...) within 24 hours.`);
   lines.push(`  4. Use it:  curl -H "authorization: Bearer sk_..." \\`);
-  lines.push(`                ${PUBLIC_BASE_URL}/entrypoints/summarize/invoke ...`);
+  lines.push(`                ${baseUrl}/entrypoints/summarize/invoke ...`);
   return lines.join('\n');
 }
 
@@ -559,7 +569,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === 'GET' && url.pathname === '/') {
-    return send(res, 200, buildDashboard(), { 'content-type': 'text/html; charset=utf-8' });
+    return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     return send(res, 200, {
@@ -567,10 +577,10 @@ const server = http.createServer(async (req, res) => {
       paymentMode: PAYMENT_MODE, priceUsdc: PRICE_USDC, walletAddress: WALLET_ADDRESS || null,
       channels: buildAcquireChannels().map((c) => c.kind),
       adminEnabled: !!ADMIN_TOKEN,
-      publicBaseUrl: PUBLIC_BASE_URL,
+      publicBaseUrl: resolveBaseUrl(req),
     });
   }
-  if (req.method === 'GET' && url.pathname === '/.well-known/agent.json') return send(res, 200, buildAgentCard());
+  if (req.method === 'GET' && url.pathname === '/.well-known/agent.json') return send(res, 200, buildAgentCard(resolveBaseUrl(req)));
   if (req.method === 'GET' && url.pathname === '/requirements') return send(res, 200, buildPaymentRequirements('/entrypoints/*/invoke'));
   if (req.method === 'GET' && url.pathname === '/earnings') return send(res, 200, { agent: AGENT_NAME, summary: getEarningsSummary(), recent: getRecentCalls(50) });
   if (req.method === 'GET' && url.pathname === '/earnings.csv') {
@@ -583,9 +593,9 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { plans: PLANS, channels: buildAcquireChannels() });
   }
   if (req.method === 'GET' && url.pathname === '/invoice') {
-    return send(res, 200, buildInvoiceText(), { 'content-type': 'text/plain; charset=utf-8' });
+    return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
   }
-  if (req.method === 'GET' && url.pathname === '/invoice.txt') return send(res, 200, buildInvoiceText(), { 'content-type': 'text/plain; charset=utf-8' });
+  if (req.method === 'GET' && url.pathname === '/invoice.txt') return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
 
   // Admin: issue an API key after off-platform payment
   if (req.method === 'POST' && url.pathname === '/admin/issue-key') {
@@ -668,8 +678,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 402, {
         error: 'payment_required',
         message: `Pay via PayPal/Bit/bank (see /invoice) for an API key, OR pay ${price} USDC on ${NETWORK} and retry with X-PAYMENT.`,
-        invoiceUrl: `${PUBLIC_BASE_URL}/invoice`,
-        plansUrl: `${PUBLIC_BASE_URL}/billing/plans`,
+        invoiceUrl: `${resolveBaseUrl(req)}/invoice`,
+        plansUrl: `${resolveBaseUrl(req)}/billing/plans`,
         ...requirements,
       }, { 'x-payment-required': Buffer.from(JSON.stringify(requirements)).toString('base64') });
     }
