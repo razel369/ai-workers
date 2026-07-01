@@ -347,6 +347,29 @@
   .composer { display:flex; gap:10px; align-items:flex-end; }
   .composer textarea { flex:1; min-height:48px; max-height:120px; padding:12px 16px; border-radius:var(--radius); resize:none; }
   .composer .btn { height:48px; padding:0 28px; border-radius:var(--radius); }
+  .composer-actions { display:flex; gap:8px; align-items:flex-end; }
+  .btn-mic { width:48px; height:48px; padding:0; border-radius:var(--radius); font-size:20px; flex-shrink:0; }
+  .btn-mic.listening { background:var(--red-bg); border-color:rgba(212,93,93,.4); color:var(--red); animation:micPulse 1.2s ease-in-out infinite; }
+  @keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(212,93,93,.3)} 50%{box-shadow:0 0 0 8px rgba(212,93,93,0)} }
+  .chat-suggestions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .suggestion-chip { padding:8px 14px; border-radius:100px; border:1px solid var(--border); background:var(--surface2); color:var(--body); font-size:13px; cursor:pointer; transition:all .15s; }
+  .suggestion-chip:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+  .confidence-badge { display:inline-block; margin-top:6px; font-size:11px; color:var(--muted); padding:2px 8px; border-radius:100px; background:rgba(255,255,255,.04); }
+  .confidence-badge.high { color:var(--green); }
+  .confidence-badge.medium { color:var(--accent); }
+  .confidence-badge.low { color:var(--red); }
+  .stream-cursor { display:inline-block; width:2px; height:1em; background:var(--accent); margin-right:2px; animation:blink 1s step-end infinite; vertical-align:text-bottom; }
+  @keyframes blink { 50%{opacity:0} }
+  .share-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .health-card { display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:var(--radius-sm); background:var(--surface2); border:1px solid var(--border); margin:10px 0 14px; font-size:13px; }
+  .health-card.ok { border-color:rgba(102,173,120,.35); color:var(--green); }
+  .health-card.warn { border-color:rgba(214,160,77,.35); color:var(--accent); }
+  .health-card.info { border-color:var(--border); color:var(--muted); }
+  .magic-connect { margin-top:18px; padding:16px; border:1px dashed var(--border); border-radius:var(--radius); background:rgba(255,255,255,.02); }
+  .magic-connect h4 { font-size:14px; margin-bottom:10px; color:var(--text); }
+  .magic-connect .fld { margin-bottom:10px; }
+  .magic-connect .fld label { font-size:12px; }
+  .test-reply-edit { width:100%; margin-top:8px; min-height:72px; font-size:13px; }
   .tool-log .tc { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:6px; }
   .tool-log .tc .tn { font-weight:700; color:var(--accent); font-size:13px; }
   .tool-log .tc pre { font-size:11px; margin:6px 0 0; color:var(--muted); white-space:pre-wrap; }
@@ -510,6 +533,12 @@
     </symbol>
     <symbol id="icon-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+    </symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/>
+    </symbol>
+    <symbol id="icon-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
     </symbol>
     <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -763,6 +792,19 @@ const APP = (() => {
           <h1 class="magic-title">מה העובד צריך לעשות?</h1>
           <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
           <div class="tpl-pick">${picks}</div>
+          <details class="magic-connect" id="magic-connect-panel">
+            <summary style="cursor:pointer;font-weight:600;color:var(--muted)">${icon('plug', 14)} חיבורים מהירים (אופציונלי)</summary>
+            <div style="margin-top:12px">
+              <div class="fld">
+                <label>${icon('chat', 12)} חבר וואטסאפ — Access Token</label>
+                <input id="magic-wa-token" type="password" placeholder="EAAxxxx... (Meta Cloud API)" dir="ltr" style="text-align:left;font-family:monospace" value="${escapeHtml(state.waToken || '')}" />
+              </div>
+              <div class="fld">
+                <label>${icon('zap', 12)} קבל התראות — Webhook URL</label>
+                <input id="magic-webhook-url" type="url" placeholder="https://hooks.zapier.com/..." dir="ltr" style="text-align:left;font-family:monospace" value="${escapeHtml(state.webhookUrl || '')}" />
+              </div>
+            </div>
+          </details>
           <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} דבר איתו עכשיו!</button>
         </div>`;
         app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
@@ -775,7 +817,11 @@ const APP = (() => {
         });
         document.getElementById('magic-next').onclick = async () => {
           if (!state.templateId) return;
-          saveMagicState({ step: 2 });
+          const wa = document.getElementById('magic-wa-token')?.value?.trim() || '';
+          const wh = document.getElementById('magic-webhook-url')?.value?.trim() || '';
+          saveMagicState({ step: 2, waToken: wa, webhookUrl: wh });
+          state.waToken = wa;
+          state.webhookUrl = wh;
           step = 2;
           await finishMagic();
         };
@@ -792,13 +838,21 @@ const APP = (() => {
       if (!buy.ok) { toast('לא הצלחנו — נסה שוב', 'error'); step = 1; return paint(); }
       const workerId = buy.body.workerId;
       const tpl = templates.find((t) => t.id === state.templateId);
+      const knRes = await fetch('/api/workers/smart-knowledge?' + new URLSearchParams({ templateId: state.templateId, businessName }));
+      const smartKnowledge = knRes.ok ? (await knRes.json()).knowledge : `שם העסק: ${businessName}\nשעות פעילות: א-ה 09:00-18:00`;
       await api('/api/workers/' + workerId, {
         method: 'PATCH',
         body: JSON.stringify({
           name: (tpl?.nameHe || 'העובד שלי') + ' — ' + businessName,
-          knowledge: `שם העסק: ${businessName}\nמה העסק נותן: (הוסיפו פרטים בהמשך)\nשעות פעילות: א-ה 09:00-18:00`,
+          knowledge: smartKnowledge,
         }),
       });
+      if (state.waToken) {
+        await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', config: { provider: 'meta', accessToken: state.waToken } }) });
+      }
+      if (state.webhookUrl) {
+        await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'webhook', config: { url: state.webhookUrl } }) });
+      }
       localStorage.removeItem(MAGIC_LS);
       localStorage.setItem(ONBOARDING_LS, '1');
       location.hash = '#/workers/chat/' + workerId;
@@ -1140,12 +1194,15 @@ async function renderMarketplace() {
           const isLive = w.isActive;
           const pillCls = w.status === 'active' && isLive ? 'pill-active' : (w.status === 'active' ? 'pill-expired' : 'pill-pending');
           const pillTxt = w.status === 'active' ? (isLive ? 'פעיל' : 'פג תוקף') : 'ממתין לתשלום';
+          const health = w.health || { labelHe: isLive ? 'עובד תקין ✓' : 'מצב ניסיון', tone: isLive ? 'ok' : 'info' };
+          const healthCls = health.tone === 'ok' ? 'ok' : (health.tone === 'warn' ? 'warn' : 'info');
           return `
             <div class="card">
               <div class="row">
                 <h3 style="flex:1">${escapeHtml(w.name)}</h3>
                 <span class="pill ${pillCls}"><span class="badge-dot ${pillCls}"></span>${pillTxt}</span>
               </div>
+              <div class="health-card ${healthCls}">${icon(health.tone === 'ok' ? 'check' : 'alert', 14)} ${escapeHtml(health.labelHe)}</div>
               <div class="template-meta"><span class="pill">${escapeHtml(w.template?.nameHe || w.template?.name || w.templateId)}</span></div>
               <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
               <div class="actions">
@@ -1710,7 +1767,23 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           if (!r.ok) { out.innerHTML = '<span class="err">' + escapeHtml(JSON.stringify(r.body)) + '</span>'; return; }
           const steps = (r.body.agentSteps ?? []).map((s) => `<div class="step"><b>${escapeHtml(s.phase)}</b>${s.tool ? ' → ' + escapeHtml(s.tool) : ''}${s.thought ? ': ' + escapeHtml(s.thought) : ''}</div>`).join('');
           const tools = (r.body.toolCalls ?? []).map((t) => `<div class="step">🔧 <b>${escapeHtml(t.name)}</b>: ${escapeHtml((t.result ?? '').slice(0, 160))}</div>`).join('');
-          out.innerHTML = `<div><b>מנוע:</b> ${escapeHtml(r.body.runtime)} · <b>שלבים:</b> ${r.body.stepsUsed ?? 0}</div>${steps}${tools}<div class="step" style="margin-top:8px">${escapeHtml((r.body.reply ?? '').slice(0, 300))}…</div>`;
+          const replyFull = r.body.reply ?? '';
+          const conf = r.body.qualityScore?.labelHe ? `<span class="confidence-badge ${r.body.qualityScore.level || 'medium'}">${escapeHtml(r.body.qualityScore.labelHe)}</span>` : '';
+          out.innerHTML = `<div><b>מנוע:</b> ${escapeHtml(r.body.runtime)} · <b>שלבים:</b> ${r.body.stepsUsed ?? 0} ${conf}</div>${steps}${tools}
+            <label style="display:block;margin-top:10px;font-size:12px;color:var(--muted)">ערכו את התשובה — נשמור כידע לעובד:</label>
+            <textarea class="test-reply-edit" id="test-reply-edit">${escapeHtml(replyFull)}</textarea>
+            <button type="button" class="btn btn-sm btn-primary" id="test-learn-save" style="margin-top:8px">${icon('save', 12)} שמור תיקון כידע</button>
+            <div id="test-learn-status" class="muted" style="margin-top:6px;font-size:12px"></div>`;
+          document.getElementById('test-learn-save').onclick = async () => {
+            const corrected = document.getElementById('test-reply-edit').value.trim();
+            const lr = await api('/api/workers/' + workerId + '/learn-correction', {
+              method: 'POST',
+              body: JSON.stringify({ original: replyFull, corrected, userMessage: msg }),
+            });
+            const st = document.getElementById('test-learn-status');
+            st.textContent = lr.ok ? '✓ נשמר במאגר הידע — העובד ילמד מזה' : 'שגיאה בשמירה';
+            if (lr.ok) toast('התיקון נשמר בידע העובד', 'success');
+          };
         };
       } else if (agentTestBtn && !workerId) {
         agentTestBtn.onclick = () => toast('שמור את העובד קודם, ואז הרץ בדיקה', 'error');
@@ -2055,21 +2128,75 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   // ---- Chat (demo first, paywall only for production) ----
+  async function streamChatMessage(workerId, text, isDemo, onToken) {
+    const r = await fetch('/api/workers/' + workerId + '/chat/stream', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ message: text, demoMode: isDemo }),
+    });
+    if (!r.ok || !r.body) return null;
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let doneData = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const blocks = buf.split('\n\n');
+      buf = blocks.pop() || '';
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let evt = 'message';
+        let data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event: ')) evt = line.slice(7).trim();
+          if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (!data) continue;
+        try {
+          const j = JSON.parse(data);
+          if (evt === 'token' && j.text) onToken(j.text);
+          if (evt === 'done') doneData = j;
+          if (evt === 'error') throw new Error(j.message || 'שגיאה');
+        } catch (parseErr) {
+          if (evt === 'error') throw parseErr;
+        }
+      }
+    }
+    return doneData;
+  }
+
+  function shareWorkerChat(workerId, workerName) {
+    const link = location.origin + '/marketplace#/workers/chat/' + workerId;
+    const text = `שלום! אפשר לדבר עם ${workerName} כאן: ${link}`;
+    return { link, text, wa: 'https://wa.me/?text=' + encodeURIComponent(text) };
+  }
+
   async function renderChat(workerId) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
     const wr = await api('/api/workers/' + workerId);
     if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
     const w = wr.body.worker;
+    const suggestions = wr.body.suggestions || [];
     const isDemo = !w.isActive;
 
     const mr = await api('/api/workers/' + workerId + '/messages');
     const messages = mr.ok ? mr.body.messages : [];
+    const share = shareWorkerChat(workerId, w.name);
+    const chips = suggestions.slice(0, 3).map((s) =>
+      `<button type="button" class="suggestion-chip" data-suggest="${escapeHtml(s)}">${escapeHtml(s)}</button>`
+    ).join('');
 
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
         <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
+      </div>
+      <div class="share-row">
+        <button type="button" class="btn btn-sm btn-outline" id="share-copy">${icon('copy', 14)} העתק קישור ללקוחות</button>
+        <a class="btn btn-sm btn-outline" id="share-wa" href="${escapeHtml(share.wa)}" target="_blank" rel="noopener">${icon('share', 14)} שתף בוואטסאפ</a>
       </div>
       ${isDemo ? `<div class="demo-banner">
         <span>${icon('zap', 14)} מצב ניסיון — דבר איתו חופשי!</span>
@@ -2079,7 +2206,9 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתוב שלום — העובד מחכה</div>' : ''}
         ${messages.map((m) => `<div class="msg ${m.role}">${escapeHtml(m.content)}</div>`).join('')}
       </div>
+      ${chips ? `<div class="chat-suggestions" id="chat-suggestions">${chips}</div>` : ''}
       <div class="composer">
+        <button type="button" class="btn btn-outline btn-mic" id="c-mic" title="דבר">${icon('mic', 22)}<span style="font-size:11px;display:block">דבר</span></button>
         <textarea id="c-input" placeholder="כתוב הודעה..." rows="2"></textarea>
         <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
       </div>
@@ -2094,26 +2223,111 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     win.scrollTop = win.scrollHeight;
     const input = document.getElementById('c-input');
     const send = document.getElementById('c-send');
+    const micBtn = document.getElementById('c-mic');
     let gotFirstReply = messages.some((m) => m.role === 'assistant');
+    let speechRec = null;
+    let listening = false;
+
+    document.getElementById('share-copy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(share.link);
+        toast('הקישור הועתק — שלחו ללקוחות!', 'success');
+      } catch {
+        toast(share.link, 'success', 8000);
+      }
+    };
+
+    app.querySelectorAll('.suggestion-chip').forEach((chip) => {
+      chip.onclick = () => { input.value = chip.dataset.suggest; doSend(); };
+    });
+
+    if (micBtn && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      speechRec = new SR();
+      speechRec.lang = 'he-IL';
+      speechRec.interimResults = true;
+      speechRec.onresult = (e) => {
+        const t = Array.from(e.results).map((r) => r[0].transcript).join('');
+        input.value = t;
+      };
+      speechRec.onend = () => { listening = false; micBtn.classList.remove('listening'); };
+      speechRec.onerror = () => { listening = false; micBtn.classList.remove('listening'); toast('לא הצלחנו לשמוע — נסו שוב', 'error'); };
+      micBtn.onclick = () => {
+        if (listening) { speechRec.stop(); return; }
+        listening = true;
+        micBtn.classList.add('listening');
+        speechRec.start();
+      };
+    } else if (micBtn) {
+      micBtn.disabled = true;
+      micBtn.title = 'דיבור לא נתמך בדפדפן זה';
+    }
+
+    function appendConfidence(el, quality) {
+      if (!quality?.labelHe) return;
+      const badge = document.createElement('div');
+      badge.className = 'confidence-badge ' + (quality.level || 'medium');
+      badge.textContent = quality.labelHe;
+      el.appendChild(badge);
+    }
+
     async function doSend() {
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
+      if (listening && speechRec) { speechRec.stop(); listening = false; micBtn.classList.remove('listening'); }
       const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um);
       send.disabled = true;
-      const r = await api('/api/workers/' + workerId + '/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: text, demoMode: isDemo }),
-      });
-      send.disabled = false;
-      if (r.ok && r.body.reply) {
-        const am = document.createElement('div'); am.className = 'msg assistant'; am.textContent = r.body.reply; win.appendChild(am);
-        if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
-      } else {
-        const em = document.createElement('div'); em.className = 'msg system err';
-        em.textContent = r.body?.message || r.body?.error || 'שגיאה בשליחה';
-        win.appendChild(em);
+      const am = document.createElement('div');
+      am.className = 'msg assistant';
+      const cursor = document.createElement('span');
+      cursor.className = 'stream-cursor';
+      am.appendChild(cursor);
+      win.appendChild(am);
+      win.scrollTop = win.scrollHeight;
+
+      let fullReply = '';
+      let quality = null;
+      try {
+        const streamed = await streamChatMessage(workerId, text, isDemo, (tok) => {
+          fullReply += tok;
+          am.textContent = fullReply;
+          am.appendChild(cursor);
+          win.scrollTop = win.scrollHeight;
+        });
+        if (streamed) {
+          quality = streamed.qualityScore;
+        }
+      } catch {}
+
+      if (!fullReply) {
+        am.remove();
+        const r = await api('/api/workers/' + workerId + '/chat', {
+          method: 'POST',
+          body: JSON.stringify({ message: text, demoMode: isDemo }),
+        });
+        send.disabled = false;
+        if (r.ok && r.body.reply) {
+          const am2 = document.createElement('div');
+          am2.className = 'msg assistant';
+          am2.textContent = r.body.reply;
+          win.appendChild(am2);
+          appendConfidence(am2, r.body.qualityScore);
+          if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
+        } else {
+          const em = document.createElement('div');
+          em.className = 'msg system err';
+          em.textContent = r.body?.userMessageHe || r.body?.message || r.body?.error || 'שגיאה בשליחה — נסו שוב';
+          win.appendChild(em);
+        }
+        win.scrollTop = win.scrollHeight;
+        return;
       }
+
+      send.disabled = false;
+      cursor.remove();
+      appendConfidence(am, quality);
+      if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
       win.scrollTop = win.scrollHeight;
     }
     send.onclick = doSend;
