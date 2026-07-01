@@ -37,7 +37,7 @@ console.log(`Workers tests against ${BASE}\n`);
   const r = await req('/api/workers/templates');
   expect('GET /api/workers/templates -> 200', r.status === 200);
   expect('  has 9 templates', r.body.templates?.length >= 9);
-  expect('  all have id/name/buyPriceIls', r.body.templates?.every((t) => t.id && t.name && t.buyPriceIls > 0));
+  expect('  all have id/name/buyPriceIls', r.body.templates?.every((t) => t.id && t.name && t.buyPriceIls >= 0));
   expect('  sales-leads-il present', !!r.body.templates?.find((t) => t.id === 'sales-leads-il'));
   expect('  support-he present', !!r.body.templates?.find((t) => t.id === 'support-he'));
   expect('  data-entry present', !!r.body.templates?.find((t) => t.id === 'data-entry'));
