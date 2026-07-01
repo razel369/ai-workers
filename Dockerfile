@@ -7,6 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
+COPY bootstrap-env.js ./
 COPY server.js ./
 COPY workers.js ./
 COPY workers-ui.html ./

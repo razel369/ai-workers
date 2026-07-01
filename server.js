@@ -36,6 +36,7 @@
 //   ADMIN_TOKEN=some-long-random-string
 //   DB_PATH=./data/earnings.db
 
+import './bootstrap-env.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';

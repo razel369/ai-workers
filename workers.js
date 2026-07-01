@@ -1,24 +1,5 @@
 // Workers module — Hire-an-AI-Worker marketplace + builder + runtime.
-//
-// Each tenant (identified by an existing API key, sk_...) gets their own
-// per-tenant SQLite database at data/tenants/<tenantId>/workers.db.
-//
-// Lifecycle:
-//   1. Tenant browses /marketplace and picks a template
-//   2. Tenant calls POST /api/workers {templateId} -> worker is instantiated
-//      pre-filled with template defaults, status=pending_payment
-//   3. Tenant pays via the same oldschool channels as API keys (PayPal/Bit/bank)
-//   4. Admin calls POST /api/admin/mark-worker-paid {workerId, days}
-//      -> worker goes active, paidUntil set, tenant can chat
-//   5. Tenant customizes the worker at /builder?id=<workerId>
-//   6. Tenant chats at /workers/:id/chat -> POST /api/workers/:id/chat
-//
-// AI Service (platform-provided):
-//   LLM service is configured server-side via LLM_API_KEY / LLM_PROVIDER /
-//   LLM_MODEL / LLM_BASE_URL env vars. No tenant BYOK. If no LLM_API_KEY is
-//   set, the mock runtime kicks in (template-driven canned responses).
-//
-// Zero new npm dependencies. Uses Node 22 built-ins only.
+import './bootstrap-env.js';
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

@@ -7,7 +7,14 @@
       "use": "@vercel/node",
       "config": {
         "maxLambdaSize": "50mb",
-        "includeFiles": ["workers.js", "workers-ui.html", "mcp-client.js", "skills.js", "url-security.js"]
+        "includeFiles": [
+          "bootstrap-env.js",
+          "workers.js",
+          "workers-ui.html",
+          "mcp-client.js",
+          "skills.js",
+          "url-security.js"
+        ]
       }
     }
   ],
@@ -16,5 +23,11 @@
       "src": "/(.*)",
       "dest": "server.js"
     }
-  ]
+  ],
+  "env": {
+    "NODE_OPTIONS": "--experimental-sqlite --no-warnings",
+    "DB_PATH": "/tmp/ai-workers-data/earnings.db",
+    "TENANTS_DIR": "/tmp/ai-workers-data/tenants",
+    "TRUST_PROXY_HEADERS": "1"
+  }
 }
