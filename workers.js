@@ -1089,19 +1089,26 @@ export function buyTemplate({ tenantId, templateId, paymentChannel, paymentRefer
   const srvCfg = getServerLlmConfig();
   const llmProvider = srvCfg.apiKey ? srvCfg.provider : 'mock';
   const llmModel = srvCfg.apiKey ? srvCfg.model : '';
+  const trialDays = Number(process.env.TRIAL_DAYS ?? 0);
+  const initialStatus = trialDays > 0 ? 'active' : 'pending_payment';
+  const trialPaidUntil = trialDays > 0 ? new Date(Date.now() + trialDays * 86400000).toISOString() : null;
   db.prepare(`INSERT INTO workers
     (id, name, template_id, persona, tasks_json, knowledge, tools_json, llm_provider, llm_model, llm_base_url, status, paid_until, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending_payment', NULL, ?, ?)`).run(
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`).run(
     workerId, `${tpl.nameHe || tpl.name} (חדש)`, tpl.id, tpl.defaultPersona,
     JSON.stringify(defaultTasks), starterKnowledgeForTemplate(tpl),
-    JSON.stringify(defaultTools), llmProvider, llmModel, now, now
+    JSON.stringify(defaultTools), llmProvider, llmModel, initialStatus, trialPaidUntil, now, now
   );
   db.prepare(`INSERT INTO purchases
     (id, worker_id, template_id, kind, amount_ils, payment_channel, payment_reference, paid_until, created_at)
-    VALUES (?, ?, ?, 'buy', ?, ?, ?, NULL, ?)`).run(
-    newId('pur'), workerId, tpl.id, tpl.buyPriceIls, paymentChannel ?? null, paymentReference ?? null, now
+    VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, ?)`).run(
+    newId('pur'), workerId, tpl.id, tpl.buyPriceIls, paymentChannel ?? (trialDays > 0 ? 'trial' : null), paymentReference ?? (trialDays > 0 ? `trial-${trialDays}d` : null), trialPaidUntil, now
   );
-  return { ok: true, workerId, template: tpl };
+  if (trialDays > 0) {
+    db.prepare(`INSERT INTO rentals (worker_id, tenant_id, days, amount_ils, payment_channel, payment_reference, paid_until, created_at)
+      VALUES (?, ?, ?, 0, 'trial', ?, ?, ?)`).run(workerId, tenantId, trialDays, `trial-${trialDays}d`, trialPaidUntil, now);
+  }
+  return { ok: true, workerId, template: tpl, trialDays: trialDays > 0 ? trialDays : undefined, isActive: trialDays > 0 };
 }
 
 export function listWorkers(tenantId) {
@@ -1247,6 +1254,14 @@ export function adminListAllWorkers() {
     db.close();
   }
   return all;
+}
+
+export function adminFindWorker(workerId) {
+  if (!workerId) return null;
+  for (const row of adminListAllWorkers()) {
+    if (row.id === workerId) return row;
+  }
+  return null;
 }
 
 // --- Messages / chat ------------------------------------------------------

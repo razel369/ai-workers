@@ -1,5 +1,4 @@
-// WhatsApp webhook stub — NOT wired to production server yet.
-// Import and mount from server.js when WHATSAPP_PROVIDER is set.
+// WhatsApp webhook — mounted from server.js when WHATSAPP_PROVIDER is set.
 //
 // Supported patterns:
 //   - meta: Meta WhatsApp Business Cloud API
@@ -107,11 +106,13 @@ export async function handleWhatsAppWebhook(req, res, url, { send, readBody }) {
 }
 
 export function whatsappConfigStatus() {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || '';
   return {
     enabled: !!PROVIDER,
     provider: PROVIDER || null,
     verifyTokenSet: !!process.env.WHATSAPP_VERIFY_TOKEN,
-    metaReady: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+    metaReady: !!(token && phoneId),
     twilioReady: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
   };
 }

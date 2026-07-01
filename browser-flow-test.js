@@ -24,6 +24,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultNavigationTimeout(30000);
   page.setDefaultTimeout(20000);
+  await page.addInitScript(() => localStorage.setItem('paid-agent.onboardingDone', '1'));
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(BASE + '/marketplace', { waitUntil: 'domcontentloaded' });
   await page.click('button[data-buy="sales-leads-il"]');

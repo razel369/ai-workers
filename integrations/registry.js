@@ -111,7 +111,7 @@ export const INTEGRATION_TYPES = {
     category: 'crm',
     labelHe: 'HubSpot',
     descriptionHe: 'סנכרון לידים והערות ל-HubSpot CRM',
-    scaffold: 'partial',
+    scaffold: 'working',
     fields: [
       { key: 'apiKey', labelHe: 'Private App Token / API Key', type: 'secret', required: true },
     ],

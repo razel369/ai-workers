@@ -180,10 +180,12 @@ function bookCalendarAppointment(config, params, ctx) {
 
 function testWhatsApp(config) {
   if (config.provider === 'meta') {
-    const ready = !!(config.accessToken && config.phoneNumberId);
+    const token = config.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
+    const phoneId = config.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || '';
+    const ready = !!(token && phoneId);
     return ready
-      ? { ok: true, message: 'Meta WhatsApp מוגדר (שליחה יוצאת — stub)', provider: 'meta' }
-      : { ok: false, error: 'meta_credentials_incomplete', hint: 'נדרשים accessToken ו-phoneNumberId' };
+      ? { ok: true, message: 'Meta WhatsApp מוגדר לשליחה יוצאת', provider: 'meta' }
+      : { ok: false, error: 'meta_credentials_incomplete', hint: 'נדרשים WHATSAPP_TOKEN ו-WHATSAPP_PHONE_ID' };
   }
   if (config.provider === 'twilio') {
     const ready = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) || !!config.accessToken;
@@ -194,16 +196,71 @@ function testWhatsApp(config) {
   return { ok: false, error: 'provider_required' };
 }
 
-function sendWhatsAppStub(config, params, ctx) {
+async function sendWhatsAppStub(config, params, ctx) {
+  const to = String(params.to || params.phone || '').replace(/\D/g, '');
+  const text = String(params.text || params.message || '').slice(0, 4096);
+  if (!to || !text) return { ok: false, error: 'to_and_text_required' };
+
+  if (config.provider === 'meta') {
+    const token = config.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
+    const phoneId = config.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || '';
+    if (token && phoneId) {
+      return sendMetaWhatsApp({ token, phoneId, to, text });
+    }
+  }
+
   return {
     ok: true,
     stub: true,
-    message: `הודעת WhatsApp נרשמה לתור (stub): אל ${params.to || params.phone || 'לקוח'}`,
-    to: params.to || params.phone,
-    text: String(params.text || params.message || '').slice(0, 500),
+    message: `הודעת WhatsApp נרשמה לתור (stub): אל ${to}`,
+    to,
+    text: text.slice(0, 500),
     provider: config.provider,
-    note: 'חיבור יוצא מלא ב-Phase 4 של WhatsApp roadmap',
+    note: 'הגדירו WHATSAPP_TOKEN + WHATSAPP_PHONE_ID לשליחה אמיתית',
   };
+}
+
+async function sendMetaWhatsApp({ token, phoneId, to, text }) {
+  const url = `https://graph.facebook.com/v21.0/${phoneId}/messages`;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body: text },
+      }),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      return {
+        ok: true,
+        message: `WhatsApp נשלח אל ${to}`,
+        messageId: data.messages?.[0]?.id,
+        provider: 'meta',
+      };
+    }
+    return {
+      ok: false,
+      error: `meta_http_${r.status}`,
+      details: JSON.stringify(data).slice(0, 200),
+      stub: true,
+      message: `שליחת WhatsApp נכשלה (${r.status}) — נרשם ביומן`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message ?? 'meta_send_failed',
+      stub: true,
+      message: 'שליחת WhatsApp נכשלה — נרשם ביומן (stub)',
+    };
+  }
 }
 
 async function testEmail(config) {
