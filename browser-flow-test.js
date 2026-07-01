@@ -22,7 +22,10 @@ console.log(`Browser flow tests against ${BASE}\n`);
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(BASE + '/marketplace', { waitUntil: 'networkidle' });
+  page.setDefaultNavigationTimeout(30000);
+  page.setDefaultTimeout(20000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(BASE + '/marketplace', { waitUntil: 'domcontentloaded' });
   await page.click('button[data-buy="sales-leads-il"]');
   await page.waitForSelector('#signup-business', { timeout: 10000 });
   await page.fill('#signup-business', 'Browser Flow Business');
@@ -49,9 +52,8 @@ try {
   expect('beginner builder saves worker name', configuredWorker.body?.worker?.name === 'דניאל - עובד מכירות');
   expect('beginner builder saves business knowledge', configuredWorker.body?.worker?.knowledge?.includes('Browser Flow Business'));
 
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#pay-contact', { timeout: 10000 });
+  await page.waitForSelector('#pay-contact', { timeout: 15000 });
   expect('paywall form visible', await page.locator('#pay-submit').isVisible());
 
   const act = await req('/api/workers/' + workerId + '/activation-request', {
@@ -77,20 +79,33 @@ try {
   });
   expect('admin mark-paid -> ok', paid.status === 200 && paid.body?.ok === true);
 
-  const activeDeadline = Date.now() + 10000;
+  let workerActive = false;
+  const activeDeadline = Date.now() + 15000;
   while (Date.now() < activeDeadline) {
     const w = await req('/api/workers/' + workerId, { headers: { authorization: 'Bearer ' + tenantKey } });
-    if (w.body?.worker?.isActive) break;
+    if (w.body?.worker?.isActive) { workerActive = true; break; }
     await new Promise((r) => setTimeout(r, 250));
   }
+  expect('worker active after mark-paid', workerActive);
 
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForSelector('#c-input', { timeout: 20000 });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.querySelector('#c-input') && !document.querySelector('#pay-submit'),
+    null,
+    { timeout: 20000 },
+  );
   expect('paid chat composer is visible', await page.locator('#c-input').isVisible());
 
   await page.fill('#c-input', 'שלום, מי אתה ומה אתה עושה?');
   await page.click('#c-send');
-  await page.waitForSelector('.msg.assistant', { timeout: 10000 });
+  await page.waitForFunction(
+    () => {
+      const nodes = document.querySelectorAll('.msg.assistant');
+      return nodes.length > 0 && nodes[nodes.length - 1].textContent.trim().length > 20;
+    },
+    null,
+    { timeout: 20000 },
+  );
   const reply = await page.locator('.msg.assistant').last().innerText();
   expect('chat returns assistant reply', reply.length > 20);
 } finally {
