@@ -1694,6 +1694,29 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Serve tenant media assets (unguessable filenames — public read)
+  if (req.method === 'GET' && url.pathname.startsWith('/api/media/public/')) {
+    const parts = url.pathname.split('/').filter(Boolean);
+    const pathTenantId = parts[3];
+    const filename = parts[4];
+    if (!pathTenantId || !filename) return send(res, 400, { error: 'bad_request' });
+    const filePath = workers.resolveMediaFile(pathTenantId, filename);
+    if (!filePath) return send(res, 404, { error: 'not_found' });
+    try {
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = {
+        '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp', '.mp4': 'video/mp4',
+      };
+      res.writeHead(200, { 'content-type': mime[ext] || 'application/octet-stream', 'cache-control': 'public,max-age=86400' });
+      res.end(content);
+    } catch {
+      return send(res, 404, { error: 'not_found' });
+    }
+    return;
+  }
+
   // Serve static assets from ./assets/
   if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
     const rawPath = path.join(__dirname, url.pathname);

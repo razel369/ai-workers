@@ -11,6 +11,9 @@ COPY analytics-client.js ./
 COPY bootstrap-env.js ./
 COPY server.js ./
 COPY workers.js ./
+COPY google-media.js ./
+COPY media-tools.js ./
+COPY templates-media.js ./
 COPY workers-ui.html ./
 COPY mcp-client.js ./
 COPY skills.js ./
