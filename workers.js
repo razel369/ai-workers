@@ -24,12 +24,13 @@ export const TEMPLATES = [
     defaultPersona: `You are "Daniel", a friendly Israeli B2B sales development rep working for the tenant's company.
 You speak Hebrew as default and switch to English when the lead writes in English.
 You never break character. You never mention being an AI unless directly asked (then you say: "I'm Daniel, an AI sales assistant for [company]").
-You are professional, concise, and respectful. You never pressure — you qualify.`,
+You are professional, concise, and respectful. You never pressure — you qualify.
+You use tools proactively: save_lead with BANT score, book_meeting_link for hot leads, export_leads_csv when asked.`,
     defaultTasks: [
       'Greet the lead warmly in their language and ask how you can help',
-      'Within 2-3 messages, gather: full name, company, role, team size, what problem they are trying to solve, timeline (now / this quarter / exploring), budget range',
-      'If the lead is qualified (team size >= 5 AND timeline is "now" or "this quarter"), offer to book a 20-min meeting and ask for their preferred time window',
-      'If not qualified, politely offer to send them a relevant resource (case study / blog post) and end the conversation warmly',
+      'Within 2-3 messages, gather BANT: full name, company, role, team size, problem, timeline (now/this quarter/exploring), budget range',
+      'Score the lead 1-10 using save_lead (7+ = hot). Hot leads: offer book_meeting_link immediately',
+      'If not qualified, politely offer a resource and flag_needs_followup for nurture',
       'Always end with one clear next-step question',
     ],
     defaultKnowledge: `Company: (the tenant fills this in)
@@ -38,7 +39,8 @@ Ideal customer profile: Israeli companies, 10-200 employees, in [industry]
 Pricing: (the tenant fills this in)
 Meeting link: (the tenant fills this in)
 Case studies: (the tenant fills this in)`,
-    defaultTools: ['calendar-link', 'send-summary-email'],
+    defaultTools: ['save_lead', 'book_meeting_link', 'export_leads_csv', 'create_crm_note', 'schedule_callback', 'notify_webhook'],
+    agentCapabilitiesHe: 'מסנן לידים B2B, מדרג BANT (1-10), קובע פגישות, שומר לידים ב-CSV, ושולח webhook לצוות המכירות.',
   },
   {
     id: 'support-he',
@@ -51,20 +53,22 @@ Case studies: (the tenant fills this in)`,
     rentPriceIls: 249,
     defaultPersona: `You are "Noa", a customer support agent for the tenant's company.
 You write only in Hebrew by default. You are patient, empathetic, and concrete.
-You never make up policies — if you don't know, you say so and offer to connect the customer to a human.
-You never discuss competitors.`,
+You never make up policies — search_knowledge first, cite sources as [מקור 1].
+If confidence is below 55% or refund/legal/hostile tone -> escalate_to_human immediately.
+You state your confidence level at the end of each answer.`,
     defaultTasks: [
       'Greet the customer warmly in Hebrew',
-      'Ask clarifying questions to fully understand the issue',
-      'Answer based ONLY on the provided knowledge base. Quote relevant sections when possible',
-      'If the user asks for a refund, mentions legal action, uses hostile language, or asks something outside the knowledge base -> escalate to human immediately and tell them a human will respond within X hours',
-      'End every reply with: "Is there anything else I can help with?"',
+      'search_knowledge before answering. Cite KB chunks in reply',
+      'If confidence < 55%, say you are not sure and escalate_to_human',
+      'If refund, legal, or hostile language -> escalate_to_human priority high',
+      'create_crm_note for unresolved issues. End with: "יש עוד משהו שאוכל לעזור בו?"',
     ],
     defaultKnowledge: `Knowledge base: (the tenant uploads FAQs, policies, product docs here)
 Refund policy: (the tenant fills this in)
 Support hours: Sun-Thu 09:00-18:00 IL time
 Escalation email: support@<tenant-domain>`,
-    defaultTools: ['save_lead', 'escalate_to_human', 'search_knowledge', 'export_leads_csv'],
+    defaultTools: ['search_knowledge', 'escalate_to_human', 'save_conversation_summary', 'create_crm_note', 'flag_needs_followup'],
+    agentCapabilitiesHe: 'מחפש במאגר ידע, מצטט מקורות, מחשב ציון ביטחון, ומסלים אוטומטית כשהביטחון נמוך או שיש בקשת החזר.',
   },
   {
     id: 'data-entry',
@@ -157,15 +161,15 @@ Viewing booking link: (the tenant fills this in)`,
     rentPriceIls: 299,
     defaultPersona: `You are "Maya", a warm and professional medical clinic receptionist.
 You speak Hebrew by default. You are patient, clear, and respectful of patient privacy.
-You never provide medical advice, diagnoses, or opinions. You only handle administrative tasks.
-If a patient describes symptoms or asks for medical guidance, you politely say "I'm the receptionist and cannot give medical advice — please come in or speak with the doctor."`,
+You NEVER provide medical advice, diagnoses, or opinions — only administrative tasks.
+DISCLAIMER (include when symptoms mentioned): "אני מזכיר/ה שאינני נותן/ת ייעוץ רפואי — אנא פנה/י לרופא או למיון במקרה דחוף."
+Urgent symptoms (chest pain, severe bleeding, difficulty breathing) -> escalate_to_human priority critical + recommend ER.`,
     defaultTasks: [
       'Greet the patient and ask how you can help',
-      'For new appointments: ask for full name, phone, preferred date/time, reason for visit (general checkup / specialist / follow-up / urgent), and insurance provider',
-      'For cancellations/rescheduling: confirm the appointment details, cancel or move it, and confirm the new time',
-      'Answer FAQs: hours, address, parking, insurance accepted, doctor names, how to get test results',
-      'If the patient seems urgent or in pain, recommend coming in as soon as possible or going to ER',
-      'Never share another patient\'s information (GDPR/Israel Privacy Protection)',
+      'New appointments: get_appointment_slots, collect name, phone, preferred time, visit reason, insurance',
+      'Triage urgency: routine vs urgent. Urgent -> escalate_to_human + ER recommendation',
+      'Cancellations/rescheduling: confirm details, use schedule_callback if needed',
+      'Answer FAQs from knowledge only. Never share other patients info (Privacy Protection Law)',
     ],
     defaultKnowledge: `Clinic name: (the tenant fills this in)
 Address: (the tenant fills this in)
@@ -176,7 +180,8 @@ Insurance accepted: (list kupot cholim and plans)
 Services: (list services offered)
 Booking system: (how to book — e.g. "via this chat" or "call us at...")
 Cancellation policy: (how many hours notice required)`,
-    defaultTools: ['save_lead', 'get_appointment_slots', 'check_business_hours', 'notify_webhook'],
+    defaultTools: ['save_lead', 'get_appointment_slots', 'check_business_hours', 'escalate_to_human', 'schedule_callback', 'notify_webhook'],
+    agentCapabilitiesHe: 'קובע תורים, מדרג דחיפות רפואית, מציע שעות פנויות, ומזכיר שאין ייעוץ רפואי — רק ניהול מנהלי.',
   },
   {
     id: 'restaurant-manager-he',
@@ -285,6 +290,64 @@ export function getTemplate(id) {
 
 // --- Tool system ----------------------------------------------------------
 
+function chunkKnowledge(text = '') {
+  return String(text)
+    .split(/\n\s*\n+/)
+    .map((c) => c.replace(/\s+/g, ' ').trim())
+    .filter((c) => c.length > 20);
+}
+
+function scoreLeadFromNotes(notes = '', explicitScore) {
+  if (explicitScore != null && Number.isFinite(Number(explicitScore))) {
+    return Math.min(10, Math.max(1, Math.round(Number(explicitScore))));
+  }
+  const n = String(notes).toLowerCase();
+  let score = 4;
+  if (/budget|תקציב|₪|\d+\s*(שקל|ils)/i.test(n)) score += 2;
+  if (/now|urgent|דחוף|הרבעון|רבעון|timeline|ציר זמן/i.test(n)) score += 2;
+  if (/decision|מקבל החלטות|ceo|מנכ"ל|owner|בעלים/i.test(n)) score += 1;
+  if (/team|עובדים|employees|\d+\s*(אנשים|עובד)/i.test(n)) score += 1;
+  return Math.min(10, Math.max(1, score));
+}
+
+function urgencyFromArgs(args = {}) {
+  return args.priority || args.urgency || 'normal';
+}
+
+async function fireWebhook(event, payload, ctx) {
+  const url = process.env.WEBHOOK_NOTIFY_URL || process.env.SLACK_WEBHOOK_URL || process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_WEBHOOK`] || '';
+  const body = { event, payload, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
+  if (!url) return { sent: false, logged: body };
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    return { sent: r.ok, status: r.status };
+  } catch (e) {
+    return { sent: false, error: e?.message ?? String(e) };
+  }
+}
+
+function upsertCustomerProfile(tenantId, workerId, customerId, patch = {}) {
+  if (!customerId) return;
+  const db = getTenantDb(tenantId);
+  const now = new Date().toISOString();
+  const existing = db.prepare(`SELECT preferences_json FROM customer_profiles WHERE worker_id=? AND customer_id=?`).get(workerId, customerId);
+  let prefs = {};
+  try { prefs = JSON.parse(existing?.preferences_json || '{}'); } catch {}
+  if (patch.preferences) prefs = { ...prefs, ...patch.preferences };
+  db.prepare(`INSERT INTO customer_profiles (worker_id, customer_id, name, phone, preferences_json, last_intent, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(worker_id, customer_id) DO UPDATE SET
+      name=COALESCE(excluded.name, customer_profiles.name),
+      phone=COALESCE(excluded.phone, customer_profiles.phone),
+      preferences_json=excluded.preferences_json,
+      last_intent=COALESCE(excluded.last_intent, customer_profiles.last_intent),
+      updated_at=excluded.updated_at`).run(
+    workerId, customerId,
+    patch.name ?? null, patch.phone ?? null,
+    JSON.stringify(prefs), patch.lastIntent ?? null, now
+  );
+}
+
 const TOOL_DEFS = [
   {
     name: 'get_current_time',
@@ -294,61 +357,93 @@ const TOOL_DEFS = [
   },
   {
     name: 'save_lead',
-    description: 'Save a qualified lead with contact information and notes',
+    description: 'Save a qualified lead with contact information, BANT notes, and lead score 1-10',
     parameters: {
       type: 'object', properties: {
         fullName: { type: 'string', description: 'Lead full name' },
         company: { type: 'string', description: 'Company name' },
         phone: { type: 'string', description: 'Phone number' },
         email: { type: 'string', description: 'Email address' },
-        notes: { type: 'string', description: 'Lead qualification notes' },
+        notes: { type: 'string', description: 'Lead qualification notes (BANT: budget, authority, need, timeline)' },
+        score: { type: 'number', description: 'Lead quality score 1-10 (auto-computed from notes if omitted)' },
       }, required: ['fullName'],
     },
     handler: async (args, ctx) => {
       const db = getTenantDb(ctx.tenantId);
-      db.prepare(`INSERT INTO leads (id, worker_id, customer_id, full_name, company, phone, email, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        newId('lead'), ctx.workerId, ctx.customerId ?? '',
-        args.fullName, args.company ?? '', args.phone ?? '', args.email ?? '', args.notes ?? '', new Date().toISOString()
+      const score = scoreLeadFromNotes(args.notes, args.score);
+      const leadId = newId('lead');
+      db.prepare(`INSERT INTO leads (id, worker_id, customer_id, full_name, company, phone, email, notes, score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        leadId, ctx.workerId, ctx.customerId ?? '',
+        args.fullName, args.company ?? '', args.phone ?? '', args.email ?? '', args.notes ?? '', score, new Date().toISOString()
       );
-      return { result: `Lead saved: ${args.fullName}${args.company ? ' from ' + args.company : ''}` };
+      upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, {
+        name: args.fullName, phone: args.phone, lastIntent: 'lead_capture',
+        preferences: { company: args.company, email: args.email, leadScore: score },
+      });
+      const webhook = await fireWebhook('new_lead', { leadId, fullName: args.fullName, company: args.company, phone: args.phone, email: args.email, score, notes: args.notes }, ctx);
+      return {
+        result: `Lead saved: ${args.fullName}${args.company ? ' from ' + args.company : ''} (score ${score}/10)${webhook.sent ? '. Webhook notified.' : ''}`,
+        leadId, score,
+      };
     },
   },
   {
     name: 'search_knowledge',
-    description: 'Search the worker knowledge base for relevant information. Use this to find answers from company policies, product info, etc.',
+    description: 'Search the worker knowledge base (chunked) for relevant information. Returns citations for replies.',
     parameters: {
       type: 'object', properties: {
         query: { type: 'string', description: 'Search query' },
+        maxChunks: { type: 'number', description: 'Max chunks to return (default 3)' },
       }, required: ['query'],
     },
     handler: async (args, ctx) => {
-      const q = args.query.toLowerCase();
-      const lines = (ctx.workerKnowledge ?? '').split('\n').filter(Boolean);
-      const matches = lines.filter((l) => l.toLowerCase().includes(q));
-      if (matches.length === 0) {
-        return { result: 'No relevant information found in the knowledge base.', matches: [] };
+      const q = String(args.query).toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      const chunks = chunkKnowledge(ctx.workerKnowledge ?? '');
+      const scored = chunks.map((chunk, i) => {
+        const low = chunk.toLowerCase();
+        const hits = q.reduce((n, term) => n + (low.includes(term) ? 1 : 0), 0);
+        return { chunk, i, hits, score: hits / Math.max(q.length, 1) };
+      }).filter((c) => c.hits > 0).sort((a, b) => b.score - a.score);
+      const max = Math.min(Math.max(Number(args.maxChunks) || 3, 1), 5);
+      const top = scored.slice(0, max);
+      if (top.length === 0) {
+        return { result: 'No relevant information found in the knowledge base.', matches: [], confidence: 0 };
       }
-      return { result: 'Found ' + matches.length + ' relevant lines:\n' + matches.slice(0, 5).join('\n'), matches: matches.slice(0, 5) };
+      const confidence = Math.min(0.95, 0.35 + top[0].score * 0.45);
+      const citations = top.map((t, idx) => `[${idx + 1}] ${t.chunk.slice(0, 280)}${t.chunk.length > 280 ? '…' : ''}`);
+      return {
+        result: `Found ${top.length} relevant section(s) (confidence ${(confidence * 100).toFixed(0)}%):\n` + citations.join('\n'),
+        matches: citations,
+        confidence,
+        citations,
+      };
     },
   },
   {
     name: 'escalate_to_human',
-    description: 'Escalate the conversation to a human agent with full context. Use when you cannot resolve the issue or the customer explicitly asks for a human.',
+    description: 'Escalate to a human agent with priority. Notifies Slack/webhook when configured.',
     parameters: {
       type: 'object', properties: {
         reason: { type: 'string', description: 'Why this needs a human' },
         urgency: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Urgency level' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: 'Priority (alias for urgency)' },
       }, required: ['reason'],
     },
     handler: async (args, ctx) => {
       const db = getTenantDb(ctx.tenantId);
       const id = newId('esc');
+      const urgency = urgencyFromArgs(args);
       db.prepare(`INSERT INTO escalations (id, worker_id, customer_id, reason, urgency, status, created_at)
         VALUES (?, ?, ?, ?, ?, 'open', ?)`).run(
-        id, ctx.workerId, ctx.customerId ?? '', args.reason, args.urgency ?? 'normal', new Date().toISOString()
+        id, ctx.workerId, ctx.customerId ?? '', args.reason, urgency, new Date().toISOString()
       );
-      return { result: `Escalation #${id.slice(0, 12)} created. A human will follow up. Urgency: ${args.urgency ?? 'normal'}` };
+      upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, { lastIntent: 'escalation' });
+      const webhook = await fireWebhook('escalation', { escalationId: id, reason: args.reason, urgency }, ctx);
+      return {
+        result: `Escalation #${id.slice(0, 12)} created. Priority: ${urgency}. A human will follow up.${webhook.sent ? ' Webhook/Slack notified.' : ''}`,
+        escalationId: id, urgency,
+      };
     },
   },
   {
@@ -438,13 +533,13 @@ const TOOL_DEFS = [
     parameters: { type: 'object', properties: {}, required: [] },
     handler: async (args, ctx) => {
       const db = getTenantDb(ctx.tenantId);
-      const rows = db.prepare(`SELECT full_name, company, phone, email, notes, created_at FROM leads WHERE worker_id=? ORDER BY created_at DESC LIMIT 500`).all(ctx.workerId);
+      const rows = db.prepare(`SELECT full_name, company, phone, email, notes, score, created_at FROM leads WHERE worker_id=? ORDER BY created_at DESC LIMIT 500`).all(ctx.workerId);
       const esc = (v) => {
         const s = String(v ?? '');
         return /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       };
-      const header = 'full_name,company,phone,email,notes,created_at\n';
-      const csv = header + rows.map((r) => [r.full_name, r.company, r.phone, r.email, r.notes, r.created_at].map(esc).join(',')).join('\n');
+      const header = 'full_name,company,phone,email,notes,score,created_at\n';
+      const csv = header + rows.map((r) => [r.full_name, r.company, r.phone, r.email, r.notes, r.score, r.created_at].map(esc).join(',')).join('\n');
       return { result: rows.length ? `Exported ${rows.length} leads as CSV:\n${csv}` : 'No leads captured yet.', csv, count: rows.length };
     },
   },
@@ -485,6 +580,106 @@ const TOOL_DEFS = [
     },
   },
   {
+    name: 'schedule_callback',
+    description: 'Schedule a callback for the customer. Stored in outbox for the business to action.',
+    parameters: {
+      type: 'object', properties: {
+        phone: { type: 'string', description: 'Phone to call back' },
+        preferredTime: { type: 'string', description: 'When to call (free text or ISO datetime)' },
+        notes: { type: 'string', description: 'Context for the callback' },
+      }, required: ['phone'],
+    },
+    handler: async (args, ctx) => {
+      const db = getTenantDb(ctx.tenantId);
+      const id = newId('cb');
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO schedule_callbacks (id, worker_id, customer_id, phone, preferred_time, notes, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).run(
+        id, ctx.workerId, ctx.customerId ?? '', args.phone, args.preferredTime ?? '', args.notes ?? '', now
+      );
+      db.prepare(`INSERT INTO outbox (worker_id, customer_id, recipient, subject, body, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)`).run(
+        ctx.workerId, ctx.customerId ?? '', args.phone,
+        'Callback scheduled', `Call ${args.phone} at ${args.preferredTime || 'ASAP'}: ${args.notes || ''}`, now
+      );
+      upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, { phone: args.phone, lastIntent: 'callback_scheduled' });
+      await fireWebhook('schedule_callback', { callbackId: id, phone: args.phone, preferredTime: args.preferredTime, notes: args.notes }, ctx);
+      return { result: `Callback scheduled for ${args.phone}${args.preferredTime ? ' at ' + args.preferredTime : ''}.`, callbackId: id };
+    },
+  },
+  {
+    name: 'create_crm_note',
+    description: 'Create a structured CRM note (JSON) for handoff to CRM or spreadsheet',
+    parameters: {
+      type: 'object', properties: {
+        subject: { type: 'string', description: 'Note subject' },
+        body: { type: 'string', description: 'Note body' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags e.g. hot-lead, support' },
+        metadata: { type: 'object', description: 'Extra structured fields' },
+      }, required: ['subject'],
+    },
+    handler: async (args, ctx) => {
+      const db = getTenantDb(ctx.tenantId);
+      const id = newId('crm');
+      const note = {
+        id, subject: args.subject, body: args.body ?? '', tags: args.tags ?? [],
+        metadata: args.metadata ?? {}, customerId: ctx.customerId ?? '', workerId: ctx.workerId,
+        createdAt: new Date().toISOString(),
+      };
+      db.prepare(`INSERT INTO crm_notes (id, worker_id, customer_id, note_json, created_at) VALUES (?, ?, ?, ?, ?)`).run(
+        id, ctx.workerId, ctx.customerId ?? '', JSON.stringify(note), note.createdAt
+      );
+      return { result: `CRM note created: ${args.subject}`, note, exportJson: JSON.stringify(note, null, 2) };
+    },
+  },
+  {
+    name: 'book_meeting_link',
+    description: 'Return the meeting booking link from knowledge base and log the booking intent',
+    parameters: {
+      type: 'object', properties: {
+        leadName: { type: 'string', description: 'Lead name' },
+        preferredWindow: { type: 'string', description: 'Preferred time window' },
+      }, required: [],
+    },
+    handler: async (args, ctx) => {
+      const kb = ctx.workerKnowledge ?? '';
+      const linkMatch = kb.match(/(?:meeting link|קישור לפגישה|לינק)[:\s]+(\S+)/i);
+      const link = linkMatch?.[1] ?? process.env.MEETING_BOOKING_URL ?? '';
+      if (args.leadName) {
+        upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, {
+          name: args.leadName, lastIntent: 'meeting_booking',
+          preferences: { preferredWindow: args.preferredWindow },
+        });
+      }
+      if (!link) return { result: 'Meeting link not configured in knowledge base. Ask the customer for 2-3 time windows.', link: null };
+      await fireWebhook('meeting_booking', { leadName: args.leadName, preferredWindow: args.preferredWindow, link }, ctx);
+      return { result: `Share this booking link with the customer: ${link}`, link };
+    },
+  },
+  {
+    name: 'flag_needs_followup',
+    description: 'Flag this customer conversation for proactive follow-up by the business',
+    parameters: {
+      type: 'object', properties: {
+        reason: { type: 'string', description: 'Why follow-up is needed' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Follow-up priority' },
+        scheduledFor: { type: 'string', description: 'When to follow up (optional ISO date)' },
+      }, required: ['reason'],
+    },
+    handler: async (args, ctx) => {
+      const db = getTenantDb(ctx.tenantId);
+      const id = newId('fu');
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO followup_triggers (id, worker_id, customer_id, reason, priority, status, scheduled_for, created_at)
+        VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`).run(
+        id, ctx.workerId, ctx.customerId ?? '', args.reason, args.priority ?? 'normal', args.scheduledFor ?? null, now
+      );
+      upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, { lastIntent: 'needs_followup' });
+      await fireWebhook('needs_followup', { followupId: id, reason: args.reason, priority: args.priority }, ctx);
+      return { result: `Follow-up flagged: ${args.reason}`, followupId: id };
+    },
+  },
+  {
     name: 'save_conversation_summary',
     description: 'Save a short summary of this conversation for future reference with this customer',
     parameters: {
@@ -501,7 +696,7 @@ const TOOL_DEFS = [
 ];
 
 const TOOL_ALIASES = {
-  'calendar-link': 'get_current_time',
+  'calendar-link': 'book_meeting_link',
   'send-summary-email': 'send_email',
   'send-confirmation-sms': 'notify_webhook',
   'escalate-to-human': 'escalate_to_human',
@@ -586,7 +781,35 @@ export function getCustomerMemories(tenantId, workerId, customerId) {
 
 export function getLeads(tenantId, workerId) {
   const db = getTenantDb(tenantId);
-  return db.prepare(`SELECT id, full_name, company, phone, email, notes, created_at FROM leads WHERE worker_id=? ORDER BY created_at DESC`).all(workerId);
+  return db.prepare(`SELECT id, full_name, company, phone, email, notes, score, created_at FROM leads WHERE worker_id=? ORDER BY created_at DESC`).all(workerId);
+}
+
+export function getCustomerProfile(tenantId, workerId, customerId) {
+  if (!customerId) return null;
+  const db = getTenantDb(tenantId);
+  const row = db.prepare(`SELECT name, phone, preferences_json, last_intent, updated_at FROM customer_profiles WHERE worker_id=? AND customer_id=?`).get(workerId, customerId);
+  if (!row) return null;
+  let preferences = {};
+  try { preferences = JSON.parse(row.preferences_json || '{}'); } catch {}
+  return { name: row.name, phone: row.phone, preferences, lastIntent: row.last_intent, updatedAt: row.updated_at };
+}
+
+export function getFollowups(tenantId, workerId) {
+  const db = getTenantDb(tenantId);
+  return db.prepare(`SELECT id, customer_id AS customerId, reason, priority, status, scheduled_for AS scheduledFor, created_at AS createdAt FROM followup_triggers WHERE worker_id=? ORDER BY created_at DESC`).all(workerId);
+}
+
+export function getCrmNotes(tenantId, workerId) {
+  const db = getTenantDb(tenantId);
+  return db.prepare(`SELECT id, customer_id AS customerId, note_json AS noteJson, created_at AS createdAt FROM crm_notes WHERE worker_id=? ORDER BY created_at DESC LIMIT 100`).all(workerId);
+}
+
+export function getToolCatalog() {
+  return TOOL_DEFS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  }));
 }
 
 export function getEscalations(tenantId, workerId) {
@@ -738,9 +961,51 @@ function getTenantDb(tenantId) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_conv_summaries_worker ON conversation_summaries(worker_id, customer_id);
+    CREATE TABLE IF NOT EXISTS customer_profiles (
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      name TEXT,
+      phone TEXT,
+      preferences_json TEXT NOT NULL DEFAULT '{}',
+      last_intent TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (worker_id, customer_id)
+    );
+    CREATE TABLE IF NOT EXISTS schedule_callbacks (
+      id TEXT PRIMARY KEY,
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL,
+      preferred_time TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_callbacks_worker ON schedule_callbacks(worker_id);
+    CREATE TABLE IF NOT EXISTS followup_triggers (
+      id TEXT PRIMARY KEY,
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'open',
+      scheduled_for TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_followups_worker ON followup_triggers(worker_id);
+    CREATE TABLE IF NOT EXISTS crm_notes (
+      id TEXT PRIMARY KEY,
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL DEFAULT '',
+      note_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_notes_worker ON crm_notes(worker_id);
   `);
   try { db.exec(`ALTER TABLE workers ADD COLUMN mcp_servers_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { db.exec(`ALTER TABLE workers ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
+  try { db.exec(`ALTER TABLE workers ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'agent'`); } catch {}
+  try { db.exec(`ALTER TABLE leads ADD COLUMN score INTEGER`); } catch {}
   tenantDbs.set(tenantId, { db, lastUsed: Date.now() });
   return db;
 }
@@ -749,7 +1014,8 @@ function getTenantDb(tenantId) {
 
 const DEFAULT_RENTAL_DAYS = 30;
 const LLM_MAX_TOKENS = 1024;
-const MAX_TOOL_LOOPS = 8;
+const MAX_AGENT_STEPS = 5;
+const AGENT_LOOP_TIMEOUT_MS = 45_000;
 const CHAT_HISTORY_LIMIT = 40;
 const MOCK_PERSONA_TRUNCATE = 280;
 
@@ -850,6 +1116,7 @@ function parseWorkerRow(r) {
   return {
     id: r.id, name: r.name, templateId: r.template_id,
     persona: r.persona, tasks, knowledge: r.knowledge, tools,
+    agentMode: r.agent_mode === 'chat' ? 'chat' : 'agent',
     mcpServers, skills,
     llm: {
       provider: r.llm_provider || srv.provider,
@@ -877,6 +1144,7 @@ export function updateWorker(tenantId, workerId, patch) {
   if (patch.tasks !== undefined) { fields.push('tasks_json = ?'); values.push(JSON.stringify(patch.tasks)); }
   if (patch.knowledge !== undefined) { fields.push('knowledge = ?'); values.push(String(patch.knowledge)); }
   if (patch.tools !== undefined) { fields.push('tools_json = ?'); values.push(JSON.stringify(patch.tools)); }
+  if (patch.agentMode !== undefined) { fields.push('agent_mode = ?'); values.push(patch.agentMode === 'chat' ? 'chat' : 'agent'); }
   if (patch.mcpServers !== undefined) { fields.push('mcp_servers_json = ?'); values.push(JSON.stringify(patch.mcpServers)); }
   if (patch.skills !== undefined) { fields.push('skills_json = ?'); values.push(JSON.stringify(patch.skills)); }
   if (patch.llm) {
@@ -901,6 +1169,10 @@ export function deleteWorker(tenantId, workerId) {
   db.prepare(`DELETE FROM escalations WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM outbox WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM conversation_summaries WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM customer_profiles WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM schedule_callbacks WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM followup_triggers WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM crm_notes WHERE worker_id = ?`).run(workerId);
   return r.changes > 0;
 }
 
@@ -974,29 +1246,35 @@ function appendMessage(tenantId, workerId, role, content) {
 
 function templateRuntimeHint(templateId) {
   const hints = {
-    'clinic-receptionist-he': '\n\nTEMPLATE RULES (clinic): Use get_appointment_slots for scheduling. Never give medical advice. Escalate urgent symptoms.',
-    'real-estate-il': '\n\nTEMPLATE RULES (real estate): Use save_lead for every qualified inquiry. Use export_leads_json when agent asks for lead export.',
-    'support-he': '\n\nTEMPLATE RULES (support): Search knowledge first. Escalate if confidence is low, refund requested, or hostile tone. Urgency: high for legal/refund.',
+    'clinic-receptionist-he': '\n\nTEMPLATE RULES (clinic): Use get_appointment_slots for scheduling. Triage urgency: chest pain, bleeding, severe pain -> escalate_to_human priority high + recommend ER. NEVER give medical advice — only administrative info. Always include disclaimer: "אני מזכיר/ה שאינני נותן/ת ייעוץ רפואי."',
+    'sales-leads-il': '\n\nTEMPLATE RULES (sales): Qualify with BANT. Use save_lead with score 1-10. Hot leads (score>=7): book_meeting_link. Use export_leads_csv when asked for lead export.',
+    'support-he': '\n\nTEMPLATE RULES (support): ALWAYS search_knowledge first. If confidence < 0.55 OR refund/legal/hostile -> escalate_to_human priority high. Cite KB chunks in reply as [מקור 1], [מקור 2]. End with confidence statement.',
     'restaurant-manager-he': '\n\nTEMPLATE RULES (restaurant): Use check_business_hours before confirming reservations. Capture party size and dietary needs.',
   };
   return hints[templateId] ?? '';
 }
 
-function buildSystemPrompt(worker, memories = [], extraToolDefs = [], convSummaries = []) {
+function buildSystemPrompt(worker, memories = [], extraToolDefs = [], convSummaries = [], customerProfile = null) {
   const tasks = (worker.tasks ?? []).map((t, i) => `${i + 1}. ${t}`).join('\n');
-  const allToolNames = [...new Set([...(worker.tools ?? []).map(resolveToolName), ...extraToolDefs.map((t) => t.name)])];
+  const agentMode = worker.agentMode !== 'chat';
+  const allToolNames = agentMode
+    ? [...new Set([...(worker.tools ?? []).map(resolveToolName), ...extraToolDefs.map((t) => t.name)])]
+    : [];
   const toolDesc = allToolNames.length
-    ? '\n\nAVAILABLE TOOLS (you MAY invoke these to perform actions — you are not required to use them every turn):\n' +
+    ? '\n\nAVAILABLE TOOLS (invoke these to take real actions — plan → act → observe → respond):\n' +
       allToolNames.map((tn) => {
         const td = TOOL_DEFS.find((d) => d.name === tn) || extraToolDefs.find((d) => d.name === tn);
         if (!td) return '';
         const params = Object.entries(td.parameters.properties || {}).map(([k, v]) => `  - ${k} (${v.type}): ${v.description}`).join('\n');
         return `- ${td.name}: ${td.description}\n${params}`;
       }).filter(Boolean).join('\n') +
-      '\n\nTo invoke a tool, include a function_call block in your response.'
-    : '';
+      '\n\nAGENT LOOP: You may call multiple tools across up to 5 steps. After each tool result, decide if another action is needed before your final reply.'
+    : '\n\nMODE: Chat-only — respond conversationally without invoking tools.';
   const memStr = memories.length
     ? '\n\nCUSTOMER FACTS (remembered about this customer):\n' + memories.map((m) => `- ${m.key}: ${m.value}`).join('\n')
+    : '';
+  const profStr = customerProfile
+    ? `\n\nCUSTOMER PROFILE:\n- name: ${customerProfile.name || '(unknown)'}\n- phone: ${customerProfile.phone || '(unknown)'}\n- last intent: ${customerProfile.lastIntent || '(none)'}\n- preferences: ${JSON.stringify(customerProfile.preferences || {})}`
     : '';
   const sumStr = convSummaries.length
     ? '\n\nPREVIOUS CONVERSATIONS (summaries with this customer):\n' + convSummaries.map((s) => `- [${s.createdAt?.slice(0, 10) ?? ''}] ${s.summary}`).join('\n')
@@ -1008,7 +1286,7 @@ YOUR TASKS (follow these in order):
 ${tasks || '(no specific tasks set; respond helpfully based on your persona)'}
 
 KNOWLEDGE BASE (treat as ground truth):
-${worker.knowledge || '(none provided)'}${memStr}${sumStr}${toolDesc}${tplHint}
+${worker.knowledge || '(none provided)'}${memStr}${profStr}${sumStr}${toolDesc}${tplHint}
 
 RULES:
 - Stay in character at all times
@@ -1042,6 +1320,86 @@ function mockReply(worker, history, userMessage) {
   const firstTask = tasks[0] ?? '';
   const ask = firstTask ? `To start, could you tell me a bit about ${firstTask.toLowerCase().includes('how') ? 'what you need help with' : 'yourself and what brought you here'}?` : 'How can I help?';
   return `(${tpl?.name ?? 'Worker'} · demo mode)\n\nGot it. ${ask}\n\n(This is a demo reply — the AI service is not active yet. Contact the platform admin to activate.)`;
+}
+
+function extractPhone(msg) {
+  const m = String(msg).match(/(?:0\d{1,2}[-.\s]?\d{3}[-.\s]?\d{4}|05\d[-.\s]?\d{7})/);
+  return m?.[0]?.replace(/\s/g, '') ?? '';
+}
+
+function extractName(msg) {
+  const m = String(msg).match(/(?:שמי|שם[:\s]+|my name is)\s*([א-תA-Za-z\s]{2,40})/i);
+  return m?.[1]?.trim() ?? '';
+}
+
+async function runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames, allToolDefs, agentSteps }) {
+  const toolCallsLog = [];
+  const can = (name) => enabledToolNames.includes(name) && allToolDefs.has(name);
+
+  const runTool = async (name, args, phase = 'act') => {
+    if (toolCallsLog.length >= MAX_AGENT_STEPS) return null;
+    const td = allToolDefs.get(name);
+    if (!td) return null;
+    agentSteps.push({ step: agentSteps.length + 1, phase: 'plan', thought: `Running ${name}` });
+    const res = await td.handler(args, toolCtx);
+    const resultStr = typeof res.result === 'string' ? res.result : JSON.stringify(res);
+    toolCallsLog.push({ name, args, result: resultStr, meta: res });
+    agentSteps.push({ step: agentSteps.length + 1, phase, tool: name, args, result: resultStr.slice(0, 400) });
+    return res;
+  };
+
+  agentSteps.push({ step: 1, phase: 'plan', thought: 'מנתח את הודעת הלקוח ומזהה פעולות אפשריות' });
+
+  const msg = userMessage;
+  const low = msg.toLowerCase();
+
+  if ((/תור|appointment|פגישה|ביקור/i.test(msg)) && can('get_appointment_slots')) {
+    await runTool('get_appointment_slots', { daysAhead: 3 });
+  }
+  if ((/חזור|callback|התקשר|להתקשר/i.test(msg)) && can('schedule_callback')) {
+    const phone = extractPhone(msg) || toolCtx.customerProfile?.phone || 'unknown';
+    await runTool('schedule_callback', { phone, preferredTime: 'בהקדם', notes: msg.slice(0, 200) });
+  }
+  if ((/מנהל|אדם|נציג|human|החזר|refund|משפטי|legal|כועס|angry/i.test(msg)) && can('escalate_to_human')) {
+    const priority = /דחוף|urgent|כועס|החזר|refund/i.test(msg) ? 'high' : 'normal';
+    await runTool('escalate_to_human', { reason: msg.slice(0, 300), priority, urgency: priority });
+  }
+  if (can('search_knowledge') && msg.length > 8 && !/^(שלום|היי|hello|hi)\b/i.test(msg.trim())) {
+    const kbRes = await runTool('search_knowledge', { query: msg.slice(0, 120), maxChunks: 3 });
+    if (worker.templateId === 'support-he' && kbRes?.confidence != null && kbRes.confidence < 0.55 && can('escalate_to_human')) {
+      await runTool('escalate_to_human', { reason: 'Low KB confidence — auto-escalation', priority: 'normal', urgency: 'normal' });
+    }
+  }
+  if ((/שם|טלפון|phone|ליד|lead|חברה|company/i.test(msg)) && can('save_lead')) {
+    const fullName = extractName(msg) || 'לקוח חדש';
+    const phone = extractPhone(msg);
+    const notes = msg.slice(0, 300);
+    await runTool('save_lead', { fullName, phone, notes, score: scoreLeadFromNotes(notes) });
+  }
+  if ((/פגישה|meeting|book|יומן/i.test(msg)) && can('book_meeting_link')) {
+    await runTool('book_meeting_link', { leadName: extractName(msg), preferredWindow: msg.slice(0, 100) });
+  }
+  if (can('flag_needs_followup') && /מחר|מאוחר|follow.?up|לחזור/i.test(msg)) {
+    await runTool('flag_needs_followup', { reason: 'Customer requested follow-up', priority: 'normal' });
+  }
+  if (can('create_crm_note') && toolCallsLog.length > 0) {
+    await runTool('create_crm_note', {
+      subject: 'Agent session summary',
+      body: `Customer said: ${msg.slice(0, 200)}. Tools used: ${toolCallsLog.map((t) => t.name).join(', ')}`,
+      tags: ['auto-mock'],
+    });
+  }
+
+  agentSteps.push({ step: agentSteps.length + 1, phase: 'respond', thought: 'מכין תשובה ללקוח על בסיס הפעולות שבוצעו' });
+  return { toolCallsLog, actionsTaken: toolCallsLog.length };
+}
+
+function mockReplyWithAgent(worker, userMessage, toolCallsLog = [], agentSteps = []) {
+  const base = mockReply(worker, [], userMessage);
+  if (!toolCallsLog.length) return base;
+  const actions = toolCallsLog.map((t) => `• ${t.name}: ${(t.result ?? '').slice(0, 120)}`).join('\n');
+  const trace = agentSteps.filter((s) => s.tool).map((s) => `[שלב ${s.step}] ${s.tool}`).join(' → ');
+  return `${base}\n\n--- פעולות סוכן (הדגמה) ---\n${actions}\n\nמסלול: ${trace}\n\n(חבר LLM_API_KEY להפעלת לולאת סוכן מלאה עם AI)`;
 }
 
 // --- Real LLM runtime ----------------------------------------------------
@@ -1152,7 +1510,7 @@ function defaultModelFor(provider) {
   return PROVIDER_DEFAULT_MODELS[provider] ?? getServerLlmConfig().model;
 }
 
-export async function chatWithWorker({ tenantId, workerId, userMessage, customerId = '' }) {
+export async function chatWithWorker({ tenantId, workerId, userMessage, customerId = '', testMode = false }) {
   const db = getTenantDb(tenantId);
   const row = db.prepare(`SELECT * FROM workers WHERE id = ?`).get(workerId);
   if (!row) return { ok: false, status: 404, error: 'not_found' };
@@ -1175,8 +1533,10 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     };
   }
 
-  appendMessage(tenantId, workerId, 'user', userMessage);
-  const history = db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId);
+  if (!testMode) appendMessage(tenantId, workerId, 'user', userMessage);
+  const history = testMode
+    ? []
+    : db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId);
   const memories = getCustomerMemories(tenantId, workerId, customerId);
   const convSummaries = customerId ? getConversationSummaries(tenantId, workerId, customerId) : [];
 
@@ -1210,34 +1570,49 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   for (const td of TOOL_DEFS) allToolDefs.set(td.name, td);
   for (const td of mcpToolDefs) allToolDefs.set(td.name, td);
 
-  const enabledToolNames = [...new Set(
+  const agentMode = worker.agentMode !== 'chat';
+  const enabledToolNames = agentMode ? [...new Set(
     (worker.tools ?? []).map(resolveToolName).filter((t) => allToolDefs.has(t))
-  )];
-  // Add enabled MCP tool names that aren't already in the list
-  for (const td of mcpToolDefs) {
-    if (!enabledToolNames.includes(td.name)) enabledToolNames.push(td.name);
+  )] : [];
+  if (agentMode) {
+    for (const td of mcpToolDefs) {
+      if (!enabledToolNames.includes(td.name)) enabledToolNames.push(td.name);
+    }
   }
 
-  const allToolDefsArray = [...TOOL_DEFS, ...mcpToolDefs];
-  const systemPrompt = buildSystemPrompt(worker, memories, mcpToolDefs, convSummaries);
+  const customerProfile = customerId ? getCustomerProfile(tenantId, workerId, customerId) : null;
+  const allToolDefsArray = agentMode ? enabledToolNames.map((n) => allToolDefs.get(n)).filter(Boolean) : [];
+  const systemPrompt = buildSystemPrompt(worker, memories, mcpToolDefs, convSummaries, customerProfile);
 
   let reply = '';
   let runtime = 'mock';
   let error = null;
   const toolCallsLog = [];
+  const agentSteps = [];
 
   const chatHistory = history.map((m) => ({ role: m.role, content: m.content }));
-  const toolCtx = { tenantId, workerId, customerId, workerName: worker.name, workerKnowledge: worker.knowledge };
+  const toolCtx = { tenantId, workerId, customerId, workerName: worker.name, workerKnowledge: worker.knowledge, customerProfile };
 
-  const maxToolLoops = MAX_TOOL_LOOPS;
+  const loopStarted = Date.now();
   let finalReply = '';
+  let timedOut = false;
 
-  if (srvCfg.apiKey) {
-    for (let loop = 0; loop < maxToolLoops; loop++) {
+  const runAgentStep = async (loopIndex, phase) => {
+    agentSteps.push({ step: loopIndex + 1, phase, thought: phase === 'plan' ? 'LLM planning next action' : undefined });
+  };
+
+  if (srvCfg.apiKey && agentMode && enabledToolNames.length > 0) {
+    for (let loop = 0; loop < MAX_AGENT_STEPS; loop++) {
+      if (Date.now() - loopStarted > AGENT_LOOP_TIMEOUT_MS) {
+        timedOut = true;
+        error = 'agent_timeout';
+        break;
+      }
+      await runAgentStep(loop, 'plan');
       const llmRes = await callLLM(worker, systemPrompt, chatHistory, allToolDefsArray, srvCfg.apiKey);
       if (!llmRes.ok) {
         error = llmRes.error;
-        finalReply = mockReply(worker, chatHistory, userMessage);
+        finalReply = mockReplyWithAgent(worker, userMessage, toolCallsLog, agentSteps);
         runtime = 'mock_fallback';
         break;
       }
@@ -1245,6 +1620,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       finalReply = llmRes.text;
 
       if (!llmRes.toolCalls || llmRes.toolCalls.length === 0) {
+        agentSteps.push({ step: agentSteps.length + 1, phase: 'respond', thought: 'Final reply ready' });
         break;
       }
 
@@ -1252,10 +1628,11 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       chatHistory.push(assistantMsg);
 
       for (const tc of llmRes.toolCalls) {
+        if (Date.now() - loopStarted > AGENT_LOOP_TIMEOUT_MS) { timedOut = true; error = 'agent_timeout'; break; }
         const td = allToolDefs.get(tc.name);
-        if (!td) {
-          chatHistory.push({ role: 'tool', toolCallId: tc.id, content: `Error: unknown tool "${tc.name}"` });
-          toolCallsLog.push({ name: tc.name, args: tc.args, result: `unknown tool` });
+        if (!td || !enabledToolNames.includes(tc.name)) {
+          chatHistory.push({ role: 'tool', toolCallId: tc.id, content: `Error: tool "${tc.name}" not enabled` });
+          toolCallsLog.push({ name: tc.name, args: tc.args, result: 'tool not enabled' });
           continue;
         }
         try {
@@ -1263,24 +1640,59 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
           const resultStr = typeof res.result === 'string' ? res.result : JSON.stringify(res);
           chatHistory.push({ role: 'tool', toolCallId: tc.id, content: resultStr });
           toolCallsLog.push({ name: tc.name, args: tc.args, result: resultStr });
+          agentSteps.push({ step: agentSteps.length + 1, phase: 'observe', tool: tc.name, result: resultStr.slice(0, 400) });
         } catch (e) {
           const errMsg = `Error executing ${tc.name}: ${e?.message ?? e}`;
           chatHistory.push({ role: 'tool', toolCallId: tc.id, content: errMsg });
           toolCallsLog.push({ name: tc.name, args: tc.args, result: errMsg });
         }
       }
+      if (timedOut) break;
     }
     reply = finalReply;
+  } else if (srvCfg.apiKey) {
+    const llmRes = await callLLM(worker, systemPrompt, chatHistory, [], srvCfg.apiKey);
+    if (!llmRes.ok) {
+      error = llmRes.error;
+      reply = mockReply(worker, chatHistory, userMessage);
+      runtime = 'mock_fallback';
+    } else {
+      runtime = worker.llm.provider;
+      reply = llmRes.text;
+    }
+  } else if (agentMode && enabledToolNames.length > 0) {
+    const mockRun = await runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames, allToolDefs, agentSteps });
+    toolCallsLog.push(...mockRun.toolCallsLog);
+    reply = mockReplyWithAgent(worker, userMessage, toolCallsLog, agentSteps);
+    runtime = 'mock_agent';
   } else {
     reply = mockReply(worker, chatHistory, userMessage);
   }
 
-  appendMessage(tenantId, workerId, 'assistant', reply);
-  if (customerId && history.length >= 2) {
+  if (!testMode && customerId) {
+    upsertCustomerProfile(tenantId, workerId, customerId, { lastIntent: userMessage.slice(0, 120) });
+  }
+
+  if (!testMode) appendMessage(tenantId, workerId, 'assistant', reply);
+  if (!testMode && customerId && history.length >= 2) {
     const snippet = history.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 100)}`).join(' | ');
     saveConversationSummary(tenantId, workerId, customerId, `Last exchange: ${snippet}`.slice(0, 500));
+    if (agentMode && toolCallsLog.length > 0) {
+      const fuReason = `Post-chat follow-up: tools used (${toolCallsLog.map((t) => t.name).join(', ')})`;
+      const db2 = getTenantDb(tenantId);
+      db2.prepare(`INSERT INTO followup_triggers (id, worker_id, customer_id, reason, priority, status, scheduled_for, created_at)
+        VALUES (?, ?, ?, ?, 'normal', 'open', NULL, ?)`).run(newId('fu'), workerId, customerId, fuReason, new Date().toISOString());
+    }
   }
-  return { ok: true, status: 200, reply, runtime, error, mcpErrors: mcpErrors.length ? mcpErrors : undefined, workerId, workerName: worker.name, customerId, toolCalls: toolCallsLog };
+  return {
+    ok: true, status: 200, reply, runtime, error, timedOut,
+    mcpErrors: mcpErrors.length ? mcpErrors : undefined,
+    workerId, workerName: worker.name, customerId,
+    agentMode: worker.agentMode,
+    toolCalls: toolCallsLog,
+    agentSteps,
+    stepsUsed: agentSteps.length,
+  };
 }
 
 // --- Learn-from-website generator -----------------------------------------

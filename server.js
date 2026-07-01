@@ -1294,6 +1294,7 @@ const server = http.createServer(async (req, res) => {
         icon: t.icon, category: t.category, buyPriceIls: t.buyPriceIls, rentPriceIls: t.rentPriceIls,
         defaultPersona: t.defaultPersona, defaultTasks: t.defaultTasks,
         defaultKnowledge: t.defaultKnowledge, defaultTools: t.defaultTools,
+        agentCapabilitiesHe: t.agentCapabilitiesHe ?? '',
       })),
     });
   }
@@ -1322,7 +1323,7 @@ const server = http.createServer(async (req, res) => {
     // apply builder-provided overrides immediately
     workers.updateWorker(tenantId, res2.workerId, {
       name: body.name, persona: body.persona, tasks: body.tasks,
-      knowledge: body.knowledge, tools: body.tools,
+      knowledge: body.knowledge, tools: body.tools, agentMode: body.agentMode,
       llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
     });
     return send(res, 200, { ok: true, workerId: res2.workerId });
@@ -1364,6 +1365,12 @@ const server = http.createServer(async (req, res) => {
       oldKeyId: rotated.oldKeyId,
       note: 'Replace your stored key with this new key. The old key has been revoked.',
     });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/workers/tools') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, { tools: workers.getToolCatalog() });
   }
 
   // API: get worker
@@ -1423,7 +1430,18 @@ const server = http.createServer(async (req, res) => {
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
-    const res2 = await workers.chatWithWorker({ tenantId, workerId: chatMatch[1], userMessage: body.message, customerId: body.customerId ?? '' });
+    const res2 = await workers.chatWithWorker({ tenantId, workerId: chatMatch[1], userMessage: body.message, customerId: body.customerId ?? '', testMode: !!body.testMode });
+    return send(res, res2.status ?? 200, res2);
+  }
+
+  const testAgentMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/test-agent$/);
+  if (req.method === 'POST' && testAgentMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_LARGE);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+    const res2 = await workers.chatWithWorker({ tenantId, workerId: testAgentMatch[1], userMessage: body.message, customerId: body.customerId ?? 'test_customer', testMode: true });
     return send(res, res2.status ?? 200, res2);
   }
 
@@ -1501,6 +1519,20 @@ const server = http.createServer(async (req, res) => {
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
     const outbox = workers.getOutbox(tenantId, outboxMatch[1]);
     return send(res, 200, { outbox });
+  }
+
+  const followupsMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/followups$/);
+  if (req.method === 'GET' && followupsMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, { followups: workers.getFollowups(tenantId, followupsMatch[1]) });
+  }
+
+  const crmMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/crm-notes$/);
+  if (req.method === 'GET' && crmMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, { notes: workers.getCrmNotes(tenantId, crmMatch[1]) });
   }
 
   // API (admin): list all workers across all tenants
