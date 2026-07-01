@@ -10,6 +10,13 @@ import { SKILLS, getSkill } from './skills.js';
 import { pinnedLookup, validatePublicHttpUrl } from './url-security.js';
 import { applyMediaTemplateEnhancements } from './templates-media.js';
 import { registerMediaTools, resolveMediaFile as resolveMediaFilePath } from './media-tools.js';
+import {
+  initIntegrationStore,
+  registerIntegrationTools,
+  getAutoToolNamesForTenant,
+  getIntegrationsByType,
+  getWebhookUrlForTenant,
+} from './integrations/index.js';
 
 export function resolveMediaFile(tenantId, filename) {
   return resolveMediaFilePath(tenantId, filename, ensureTenantDir);
@@ -45,7 +52,7 @@ Ideal customer profile: Israeli companies, 10-200 employees, in [industry]
 Pricing: (the tenant fills this in)
 Meeting link: (the tenant fills this in)
 Case studies: (the tenant fills this in)`,
-    defaultTools: ['save_lead', 'book_meeting_link', 'export_leads_csv', 'create_crm_note', 'schedule_callback', 'notify_webhook'],
+    defaultTools: ['save_lead', 'book_meeting_link', 'export_leads_csv', 'create_crm_note', 'schedule_callback', 'notify_webhook', 'sync_lead_to_crm', 'check_availability', 'send_whatsapp_message'],
     agentCapabilitiesHe: 'מסנן לידים B2B, מדרג BANT (1-10), קובע פגישות, שומר לידים ב-CSV, ושולח webhook לצוות המכירות.',
   },
   {
@@ -186,7 +193,7 @@ Insurance accepted: (list kupot cholim and plans)
 Services: (list services offered)
 Booking system: (how to book — e.g. "via this chat" or "call us at...")
 Cancellation policy: (how many hours notice required)`,
-    defaultTools: ['save_lead', 'get_appointment_slots', 'check_business_hours', 'escalate_to_human', 'schedule_callback', 'notify_webhook'],
+    defaultTools: ['save_lead', 'get_appointment_slots', 'check_availability', 'book_appointment', 'check_business_hours', 'escalate_to_human', 'schedule_callback', 'notify_webhook'],
     agentCapabilitiesHe: 'קובע תורים, מדרג דחיפות רפואית, מציע שעות פנויות, ומזכיר שאין ייעוץ רפואי — רק ניהול מנהלי.',
   },
   {
@@ -254,7 +261,7 @@ Exchange policy: (window, process)
 Customer service hours: (the tenant fills this in)
 Contact email: (the tenant fills this in)
 Common delivery services: Israel Post, Xpress, FedEx, UPS, local courier`,
-    defaultTools: ['track-order', 'return-lookup'],
+    defaultTools: ['lookup_order', 'track-order', 'return-lookup', 'notify_webhook', 'escalate_to_human'],
   },
   {
     id: 'property-manager-he',
@@ -323,8 +330,10 @@ function urgencyFromArgs(args = {}) {
 }
 
 async function fireWebhook(event, payload, ctx) {
-  const url = process.env.WEBHOOK_NOTIFY_URL || process.env.SLACK_WEBHOOK_URL || process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_WEBHOOK`] || '';
   const body = { event, payload, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
+  const url = getWebhookUrlForTenant(ctx.tenantId)
+    || process.env.WEBHOOK_NOTIFY_URL || process.env.SLACK_WEBHOOK_URL
+    || process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_WEBHOOK`] || '';
   if (!url) return { sent: false, logged: body };
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -1561,7 +1570,13 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   // --- MCP tool discovery ---
   let mcpToolDefs = [];
   const mcpErrors = [];
-  for (const mcpSrv of (worker.mcpServers ?? [])) {
+  const integrationMcp = getIntegrationsByType(tenantId, 'mcp').map((row) => ({
+    name: row.config?.name || row.label,
+    url: row.config?.url,
+    headers: row.config?.authHeader ? { authorization: row.config.authHeader } : {},
+  }));
+  const allMcpServers = [...(worker.mcpServers ?? []), ...integrationMcp.filter((s) => s.url)];
+  for (const mcpSrv of allMcpServers) {
     try {
       const checkedUrl = await validatePublicHttpUrl(mcpSrv.url);
       if (!checkedUrl.ok) {
@@ -1589,8 +1604,9 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   for (const td of mcpToolDefs) allToolDefs.set(td.name, td);
 
   const agentMode = worker.agentMode !== 'chat';
+  const integrationToolNames = getAutoToolNamesForTenant(tenantId);
   const enabledToolNames = agentMode ? [...new Set(
-    (worker.tools ?? []).map(resolveToolName).filter((t) => allToolDefs.has(t))
+    [...(worker.tools ?? []), ...integrationToolNames].map(resolveToolName).filter((t) => allToolDefs.has(t))
   )] : [];
   if (agentMode) {
     for (const td of mcpToolDefs) {
@@ -1807,6 +1823,8 @@ Contact: (fill in contact details for escalations)${scraped}`;
 }
 
 registerMediaTools(TOOL_DEFS, { getTenantDb, ensureTenantDir, newId });
+initIntegrationStore({ getTenantDb, newId });
+registerIntegrationTools(TOOL_DEFS, { validatePublicHttpUrl, pinnedLookup });
 
 // --- Auth helper ----------------------------------------------------------
 

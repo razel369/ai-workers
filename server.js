@@ -49,6 +49,8 @@ import { DatabaseSync } from 'node:sqlite';
 import * as workers from './workers.js';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill, handleLegalRoutes } from './skills.js';
+import * as integrations from './integrations/index.js';
+import { handleWhatsAppWebhook, whatsappConfigStatus } from './whatsapp-webhook.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1131,9 +1133,15 @@ const server = http.createServer(async (req, res) => {
       dbPath: DB_PATH,
       tenantsDir: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
       persistentStorage: !DB_PATH.includes('/tmp'),
+      whatsapp: whatsappConfigStatus(),
+      integrationsCatalog: integrations.listCatalog().length,
     });
   }
   if (handleLegalRoutes(req, res, url, send)) return;
+
+  // WhatsApp inbound webhook (no tenant auth — provider verification)
+  if (await handleWhatsAppWebhook(req, res, url, { send, readBody })) return;
+
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
   }
@@ -1672,6 +1680,60 @@ const server = http.createServer(async (req, res) => {
     const mergedSkills = (w.skills ?? []).filter((s) => s !== body.skillId);
     const res2 = workers.updateWorker(tenantId, body.workerId, { tools: filteredTools, skills: mergedSkills });
     return send(res, res2.ok ? 200 : 400, res2);
+  }
+
+  // --- Integrations hub ---
+
+  if (req.method === 'GET' && url.pathname === '/api/integrations/catalog') {
+    return send(res, 200, { catalog: integrations.listCatalog(), categories: integrations.INTEGRATION_CATEGORIES });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/integrations') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, { integrations: integrations.listIntegrations(tenantId) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/integrations') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.type) return send(res, 400, { error: 'type_required' });
+    if (body.config?.url) {
+      const checked = await validatePublicHttpUrl(body.config.url);
+      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+    }
+    if (body.type === 'mcp' && body.config?.url) {
+      const checked = await validatePublicHttpUrl(body.config.url);
+      if (!checked.ok) return send(res, 400, { error: 'unsafe_mcp_url', reason: checked.error });
+    }
+    const result = integrations.connectIntegration(tenantId, {
+      type: body.type,
+      label: body.label,
+      config: body.config ?? {},
+      meta: body.meta,
+    });
+    if (!result.ok) return send(res, 400, result);
+    const list = integrations.listIntegrations(tenantId);
+    const connected = list.find((i) => i.id === result.id);
+    return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id });
+  }
+
+  const intDeleteMatch = url.pathname.match(/^\/api\/integrations\/([A-Za-z0-9_]+)$/);
+  if (req.method === 'DELETE' && intDeleteMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const result = integrations.deleteIntegration(tenantId, intDeleteMatch[1]);
+    return send(res, result.ok ? 200 : 404, result.ok ? { ok: true } : { error: 'not_found' });
+  }
+
+  const intTestMatch = url.pathname.match(/^\/api\/integrations\/([A-Za-z0-9_]+)\/test$/);
+  if (req.method === 'POST' && intTestMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const result = await integrations.testIntegration(tenantId, intTestMatch[1]);
+    return send(res, result.ok ? 200 : 400, result);
   }
 
   if (req.method === 'GET' && url.pathname === '/analytics-client.js') {
