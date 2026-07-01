@@ -4,8 +4,9 @@
 #   fly auth signup                       # or: fly auth login
 #   fly launch --no-deploy                # in this dir
 #   fly secrets set ADMIN_TOKEN=$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")
-#   fly secrets set WALLET_ADDRESS=0x...
+#   fly secrets set LLM_API_KEY=sk-...
 #   ... etc (see .env.example)
+#   fly volumes create earnings_data --region ams --size 1
 #   fly deploy
 
 app = "paid-agent-demo"
@@ -15,15 +16,19 @@ primary_region = "ams"   # Amsterdam (closest to Israel)
   dockerfile = "Dockerfile"
 
 [env]
-  PORT = "3000"
+  PORT = "8765"
   NODE_OPTIONS = "--experimental-sqlite --no-warnings"
+  DB_PATH = "/app/data/earnings.db"
+  TENANTS_DIR = "/app/data/tenants"
+  LLM_PROVIDER = "openai_compatible"
+  TRUST_PROXY_HEADERS = "1"
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8765
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
 
   [[http_service.checks]]

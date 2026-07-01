@@ -1,27 +1,33 @@
 {
-  "name": "paid-agent-demo",
-  "version": "0.4.0",
-  "description": "Paid AI agent. x402 (USDC) + oldschool (PayPal/Bit/Bank) + admin-issued API keys. Israel-friendly.",
+  "name": "ai-workers",
+  "version": "1.0.0",
+  "description": "AI employees for Israeli businesses. Pick a template, customize it, deploy it. Monthly rental via PayPal/Bit/bank transfer.",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node --experimental-sqlite --no-warnings server.js",
-    "test": "node test.js",
+    "dev": "node --experimental-sqlite --no-warnings --watch server.js",
+    "test": "node --experimental-sqlite --no-warnings run-tests.js",
+    "test:api": "node --experimental-sqlite --no-warnings test.js && node --experimental-sqlite --no-warnings worker-tests.js",
+    "test:browser": "node --experimental-sqlite --no-warnings browser-flow-test.js",
     "tunnel": "node bin/tunnel.js"
   },
   "engines": {
     "node": ">=22.5"
   },
   "keywords": [
-    "ai-agent",
-    "x402",
-    "usdc",
-    "payments",
+    "ai-workers",
+    "ai-employees",
+    "marketplace",
     "israel",
+    "hebrew",
+    "whatsapp",
     "paypal",
     "bit",
-    "agent-commerce",
-    "a2a"
+    "business"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
 }

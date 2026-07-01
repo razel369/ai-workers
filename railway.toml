@@ -2,11 +2,18 @@
 # Drop this file at the repo root, then:
 #   1. Create a new Railway project from GitHub repo
 #   2. Add environment variables in the dashboard (see .env.example)
-#   3. Railway auto-detects the Dockerfile and deploys
+#   3. Add a persistent volume mounted at /app/data for SQLite + tenant DBs
+#   4. Railway auto-detects the Dockerfile and deploys
 
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+
+[variables]
+DB_PATH = "/app/data/earnings.db"
+TENANTS_DIR = "/app/data/tenants"
+LLM_PROVIDER = "openai_compatible"
+TRUST_PROXY_HEADERS = "1"
 
 [deploy]
 startCommand = "node --experimental-sqlite --no-warnings server.js"

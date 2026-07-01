@@ -8,18 +8,36 @@ services:
   - type: web
     name: paid-agent-demo
     runtime: docker
-    plan: free
+    plan: starter
     healthCheckPath: /health
+    disk:
+      name: ai-workers-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: PORT
-        value: 3000
+        value: 8765
       - key: NODE_OPTIONS
         value: --experimental-sqlite --no-warnings
+      - key: DB_PATH
+        value: /app/data/earnings.db
+      - key: TENANTS_DIR
+        value: /app/data/tenants
+      - key: TRUST_PROXY_HEADERS
+        value: "1"
       - key: AGENT_NAME
         sync: false
       - key: AGENT_OWNER_CONTACT
         sync: false
       - key: PUBLIC_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: openai_compatible
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_BASE_URL
         sync: false
       - key: PAYPAL_ME
         sync: false
@@ -29,9 +47,3 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         generateValue: true
-      - key: WALLET_ADDRESS
-        sync: false
-      - key: NETWORK
-        value: base-sepolia
-      - key: PRICE_USDC
-        value: "0.05"

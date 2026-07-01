@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PORT = process.env.PORT ?? 3000;
+const PORT = process.env.PORT ?? 8765;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const exe = process.platform === 'win32'

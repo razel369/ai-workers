@@ -1,0 +1,1843 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AI Workers — עובדי AI לעסקים בישראל</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Heebo',system-ui,sans-serif; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font:15px/1.7 var(--font); background:var(--bg); color:var(--body); min-height:100vh; overflow-x:hidden; }
+  body::before { content:''; position:fixed; inset:0; pointer-events:none; z-index:0; background:linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(180deg,rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(180deg,#0b0e11 0%,#090b0d 42%,#0d1013 100%); background-size:72px 72px,72px 72px,100% 100%; -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.8),rgba(0,0,0,.18) 72%,transparent); mask-image:linear-gradient(180deg,rgba(0,0,0,.8),rgba(0,0,0,.18) 72%,transparent); }
+  body::after { content:''; position:fixed; inset:0; pointer-events:none; z-index:0; background:linear-gradient(90deg,transparent,rgba(214,160,77,.08),transparent); height:1px; top:88px; }
+  main,header,.key-bar,.toast-container { position:relative; z-index:1; }
+  
+  /* === HEADER === */
+  header { position:sticky; top:0; z-index:100; background:rgba(8,7,11,.75); backdrop-filter:blur(20px) saturate(1.5); border-bottom:1px solid var(--border); padding:10px 28px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header .logo { display:flex; align-items:center; gap:10px; text-decoration:none; padding:4px 12px 4px 0; border-left:1px solid var(--border); margin-left:12px; }
+  header .logo .logo-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 0 20px var(--accent-glow); animation:logoGlow 3s ease-in-out infinite alternate; }
+  @keyframes logoGlow { 0%{box-shadow:0 0 20px var(--accent-glow)} 100%{box-shadow:0 0 35px rgba(201,149,62,.25)} }
+  header .logo .logo-text { display:flex; flex-direction:column; line-height:1.2; }
+  header .logo .logo-main { font-size:18px; font-weight:800; letter-spacing:0; color:var(--text); }
+  header .logo .logo-sub { font-size:10px; color:var(--muted); font-weight:500; }
+  header nav { display:flex; gap:2px; margin-right:auto; flex-wrap:wrap; }
+  header nav a { color:var(--muted); text-decoration:none; padding:8px 16px; border-radius:var(--radius-sm); font-size:14px; font-weight:500; transition:all .2s ease; position:relative; }
+  header nav a:hover { background:var(--surface2); color:var(--body); }
+  header nav a.active { background:var(--accent-glow); color:var(--accent); }
+  header nav a.active::after { content:''; position:absolute; bottom:2px; left:50%; transform:translateX(-50%); width:18px; height:2px; background:var(--accent); border-radius:2px; }
+  header .header-cta { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff!important; padding:8px 18px!important; border-radius:var(--radius-sm)!important; font-weight:700!important; animation:ctaPulse 2.5s ease-in-out infinite; }
+  @keyframes ctaPulse { 0%,100%{box-shadow:0 0 0 0 rgba(201,149,62,.3)} 50%{box-shadow:0 0 25px 5px rgba(201,149,62,.15)} }
+  main { max-width:1200px; margin:0 auto; padding:28px 28px 60px; min-height:calc(100vh - 64px); }
+  h1 { font-size:28px; font-weight:800; color:var(--text); }
+  h2 { font-size:22px; font-weight:700; color:var(--text); }
+  h3 { font-size:17px; font-weight:700; color:var(--text); }
+  a { color:var(--accent); text-decoration:none; }
+  code { font-family:monospace; font-size:13px; background:var(--surface2); padding:2px 6px; border-radius:4px; color:var(--accent); }
+  
+  /* === CARDS === */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:22px 24px; transition:all .3s cubic-bezier(.22,1,.36,1); position:relative; overflow:hidden; }
+  .card::before { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(255,255,255,.02) 0%,transparent 50%); pointer-events:none; }
+  .card:hover { border-color:var(--border-light); transform:translateY(-2px); box-shadow:0 8px 32px rgba(0,0,0,.35); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:20px; margin-top:18px; }
+  
+  /* === BUTTONS === */
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 22px; border-radius:var(--radius-sm); font:600 14px/1 var(--font); border:1px solid var(--border); background:var(--surface2); color:var(--body); cursor:pointer; transition:all .2s ease; text-decoration:none; white-space:nowrap; }
+  .btn:hover { background:var(--surface3); color:var(--text); transform:translateY(-2px); text-decoration:none; }
+  .btn:active { transform:translateY(0) scale(.98); }
+  .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff; border-color:transparent; font-weight:700; box-shadow:0 4px 15px var(--accent-glow); }
+  .btn-primary:hover { box-shadow:0 6px 25px var(--accent-glow); color:#fff; }
+  .btn-danger { background:var(--red-bg); color:var(--red); border-color:rgba(212,80,80,.2); }
+  .btn-sm { padding:7px 16px; font-size:13px; }
+  .btn-outline { background:transparent; border:1px solid var(--border); color:var(--muted); }
+  .btn-outline:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+  /* === PILLS === */
+  .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 12px; border-radius:100px; font-size:12px; font-weight:600; background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+  .pill-active { background:var(--green-bg); color:var(--green); border-color:rgba(110,159,94,.25); }
+  .pill-pending { background:rgba(201,149,62,.12); color:var(--accent); border-color:rgba(201,149,62,.2); }
+  .pill-expired { background:var(--red-bg); color:var(--red); border-color:rgba(212,80,80,.2); }
+  .badge-dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
+  .badge-dot.active { background:var(--green); box-shadow:0 0 8px var(--green); }
+  
+  /* === UTILITIES === */
+  .toolbar { display:flex; align-items:center; gap:14px; margin-bottom:20px; flex-wrap:wrap; }
+  .toolbar h2 { margin:0; }
+  .empty { text-align:center; padding:60px 20px; color:var(--muted); }
+  .empty h2 { font-size:20px; margin-bottom:8px; color:var(--text); }
+  .muted { color:var(--muted); font-size:13px; }
+  .ok { color:var(--green); }
+  .err { color:var(--red); }
+  .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  
+  /* === INPUTS === */
+  input,textarea,select { font:14px/1.5 var(--font); background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); padding:10px 14px; outline:none; transition:all .2s ease; width:100%; }
+  input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+  textarea { resize:vertical; min-height:80px; }
+  label { font-size:13px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px; }
+  .key-bar { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 18px; margin-bottom:20px; flex-wrap:wrap; }
+  .key-bar label { margin:0; font-size:13px; white-space:nowrap; }
+  .key-bar input { width:auto; flex:1; min-width:180px; padding:8px 12px; font-size:13px; font-family:monospace; }
+  
+  /* === MARKETPLACE HERO === */
+  .mkt-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:24px; align-items:stretch; padding:22px 0 26px; border-bottom:1px solid var(--border); margin-bottom:22px; }
+  .hero-copy { display:flex; flex-direction:column; justify-content:center; min-height:260px; }
+  .hero-badge { display:inline-flex; align-items:center; gap:8px; width:max-content; padding:5px 10px; border-radius:var(--radius-sm); background:rgba(214,160,77,.1); border:1px solid rgba(214,160,77,.24); color:var(--accent); font-size:12px; font-weight:700; margin-bottom:12px; }
+  .mkt-hero h1 { font-size:clamp(32px,5vw,56px); line-height:1.02; font-weight:900; color:var(--text); margin-bottom:14px; max-width:850px; }
+  .mkt-hero p { font-size:17px; color:var(--body); max-width:720px; margin:0; }
+  .hero-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
+  .hero-proof { background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015)); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; align-self:stretch; display:flex; flex-direction:column; justify-content:space-between; box-shadow:var(--shadow-lg); }
+  .hero-proof .proof-label { color:var(--muted); font-size:12px; font-weight:700; margin-bottom:8px; }
+  .hero-proof .proof-number { font-size:42px; font-weight:900; line-height:1; color:var(--text); }
+  .hero-proof .proof-copy { color:var(--muted); font-size:13px; margin-top:8px; }
+  .proof-list { display:grid; gap:8px; margin-top:18px; }
+  .proof-list span { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--body); }
+  .proof-list svg { color:var(--green); }
+  .trust-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:18px; }
+  .trust-item { background:rgba(255,255,255,.025); border:1px solid var(--border); border-radius:var(--radius); padding:12px; min-height:76px; }
+  .trust-item .sn { display:flex; align-items:center; gap:8px; font-size:20px; font-weight:900; color:var(--text); line-height:1.1; }
+  .trust-item .sl { font-size:12px; color:var(--muted); margin-top:6px; line-height:1.35; }
+  
+  /* === FILTER BAR === */
+  .market-heading { display:flex; gap:12px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; margin-bottom:12px; }
+  .market-heading h2 { margin:0; }
+  .market-heading p { margin:3px 0 0; color:var(--muted); font-size:13px; max-width:620px; }
+  .filter-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px; padding:6px; background:rgba(255,255,255,.018); border:1px solid var(--border); border-radius:var(--radius); }
+  .filter-btn { padding:9px 14px; border-radius:var(--radius-sm); font:700 13px/1 var(--font); border:1px solid transparent; background:transparent; color:var(--muted); cursor:pointer; transition:all .2s ease; }
+  .filter-btn:hover { color:var(--body); background:var(--surface2); }
+  .filter-btn.active { background:var(--surface3); color:var(--text); border-color:var(--border-light); box-shadow:inset 0 -2px 0 var(--accent); }
+  
+  /* === WORKER CARD === */
+  .w-card { background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.012)),var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; transition:all .25s ease; position:relative; overflow:hidden; cursor:pointer; display:flex; flex-direction:column; min-height:360px; animation:cardAppear .35s ease both; }
+  .w-card:nth-child(1) { animation-delay:0s }
+  .w-card:nth-child(2) { animation-delay:.05s }
+  .w-card:nth-child(3) { animation-delay:.1s }
+  .w-card:nth-child(4) { animation-delay:.15s }
+  .w-card:nth-child(5) { animation-delay:.2s }
+  .w-card:nth-child(6) { animation-delay:.25s }
+  .w-card:nth-child(7) { animation-delay:.3s }
+  .w-card:nth-child(8) { animation-delay:.35s }
+  .w-card:nth-child(9) { animation-delay:.4s }
+  @keyframes cardAppear { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+  .w-card:hover { transform:translateY(-3px); border-color:var(--border-light); box-shadow:0 16px 42px rgba(0,0,0,.34); }
+  .w-card.popular { border-top:3px solid var(--accent); }
+  .w-card.best { border-top:3px solid var(--green); }
+  
+  /* Worker card badge */
+  .w-badge { position:absolute; top:12px; left:12px; z-index:2; }
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:800; }
+  .badge.popular { background:rgba(214,160,77,.14); color:var(--accent); border:1px solid rgba(214,160,77,.24); }
+  .badge.best { background:var(--green-bg); color:var(--green); border:1px solid rgba(102,173,120,.28); }
+  .badge.new { background:rgba(90,166,184,.13); color:var(--blue); border:1px solid rgba(90,166,184,.28); }
+  
+  /* Worker top section */
+  .w-top { display:flex; align-items:flex-start; gap:13px; margin-bottom:14px; padding-left:78px; }
+  .w-top .wi { width:46px; height:46px; background:var(--surface2); border-radius:var(--radius); display:flex; align-items:center; justify-content:center; font-size:22px; border:1px solid var(--border); flex-shrink:0; color:var(--accent); }
+  .w-top .wi-info h3 { font-size:17px; margin:0; line-height:1.32; padding-left:2px; }
+  .w-fit { font-size:12px; color:var(--muted); margin-top:4px; }
+  
+  /* Tags */
+  .w-tags { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .worker-state, .tag { padding:4px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:700; }
+  .worker-state { background:rgba(255,255,255,.035); color:var(--body); border:1px solid var(--border); }
+  .tag-sales { background:rgba(214,160,77,.1); color:var(--accent); border:1px solid rgba(214,160,77,.18); }
+  .tag-support { background:rgba(94,186,125,.1); color:var(--green); border:1px solid rgba(94,186,125,.15); }
+  .tag-admin { background:rgba(91,142,201,.1); color:var(--blue); border:1px solid rgba(91,142,201,.15); }
+  .tag-content { background:rgba(90,166,184,.1); color:var(--blue); border:1px solid rgba(90,166,184,.18); }
+  
+  /* Worker description */
+  .desc { font-size:13px; color:var(--body); line-height:1.55; margin-bottom:14px; flex:1; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .w-outcome { display:flex; align-items:flex-start; gap:8px; padding:10px; background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); font-size:12px; line-height:1.45; margin-bottom:14px; min-height:60px; }
+  .w-outcome svg { color:var(--green); margin-top:2px; }
+  
+  /* Worker pricing */
+  .pricing { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:stretch; padding-top:12px; border-top:1px solid var(--border); margin-bottom:14px; }
+  .pricing .pr { text-align:right; background:rgba(255,255,255,.022); border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px 10px; }
+  .pricing .pr .amt { font-size:21px; line-height:1.05; font-weight:900; color:var(--text); }
+  .pricing .pr .amt .currency { font-size:14px; font-weight:600; color:var(--muted); }
+  .pricing .pr .pd { font-size:11px; color:var(--muted); margin-top:1px; }
+  .pricing .pr.buy .amt { color:var(--body); }
+  .pricing .pr.rent .amt { color:var(--accent); }
+  .pricing .pdv { display:none; }
+  .w-card .pricing .pr .amt { font-size:20px; font-weight:800; }
+  
+  /* Worker CTA section */
+  .w-cta { display:flex; gap:8px; }
+  .w-cta .btn { flex:1; }
+  
+  /* === MY WORKERS ITEM === */
+  .w-item { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; transition:all .3s ease; }
+  .w-item:hover { border-color:var(--border-light); }
+  .w-item .hdr { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+  .w-item .hdr h3 { margin:0; flex:1; font-size:16px; }
+  .w-item .meta { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; font-size:12px; color:var(--muted); }
+  .w-item .acts { display:flex; gap:8px; }
+  
+  /* === BUILDER === */
+  .b-sec { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:16px; }
+  .b-sec h3 { font-size:15px; margin-bottom:14px; display:flex; align-items:center; gap:8px; color:var(--text); }
+  .b-sec .fld { margin-bottom:14px; }
+  .b-sec textarea { min-height:100px; font-size:13px; }
+  .l-prog { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .l-prog .step { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); }
+  .l-prog .step.active { color:var(--text); }
+  .l-prog .step.done { color:var(--green); }
+  .l-prog .step.error { color:var(--red); }
+
+  /* === SKILLS & MCP CARDS === */
+  .skill-card, .mcp-card { display:flex; align-items:center; gap:10px; background:linear-gradient(135deg,rgba(255,255,255,.02),transparent); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; transition:all .25s ease; position:relative; overflow:hidden; }
+  .skill-card:hover, .mcp-card:hover { border-color:var(--border-light); background:rgba(255,255,255,.04); transform:translateX(-2px); }
+  .skill-card .sk-icon, .mcp-card .mcp-icon { width:36px; height:36px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,var(--surface2),var(--surface3)); border:1px solid var(--border); flex-shrink:0; color:var(--accent); }
+  .skill-card.installed { border-color:rgba(110,159,94,.2); }
+  .skill-card.installed .sk-icon { color:var(--green); border-color:rgba(110,159,94,.3); }
+  .mcp-card .mcp-icon { color:var(--blue); }
+  .mcp-section-hdr { display:flex; align-items:center; gap:8px; margin-top:20px; margin-bottom:8px; font-size:16px; font-weight:700; color:var(--text); }
+  .mcp-section-hdr svg { color:var(--accent); }
+  .mcp-empty { font-size:13px; color:var(--muted); padding:12px 0; }
+  .mcp-add-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .mcp-status { font-size:12px; margin-top:6px; min-height:20px; }
+
+  /* === WIZARD === */
+  .wizard-progress { display:flex; gap:4px; margin-bottom:24px; padding:4px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  .wizard-progress .wp-step { flex:1; padding:10px 6px; text-align:center; font-size:11px; font-weight:600; color:var(--muted); border-radius:var(--radius-sm); transition:all .3s ease; cursor:pointer; position:relative; }
+  .wizard-progress .wp-step .wp-num { display:inline-flex; width:22px; height:22px; border-radius:50%; align-items:center; justify-content:center; font-size:11px; background:var(--surface2); border:1px solid var(--border); margin-bottom:4px; transition:all .3s ease; }
+  .wizard-progress .wp-step.active { color:var(--text); background:var(--accent-glow); }
+  .wizard-progress .wp-step.active .wp-num { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .wizard-progress .wp-step.done { color:var(--green); }
+  .wizard-progress .wp-step.done .wp-num { background:var(--green); color:#fff; border-color:var(--green); }
+  .wizard-progress .wp-step:not(:last-child)::after { content:''; position:absolute; left:-2px; top:50%; width:4px; height:4px; border-radius:50%; background:var(--border); }
+  .wizard-step { display:none; animation:fadeIn .3s ease both; }
+  .wizard-step.active { display:block; }
+  .wizard-actions { display:flex; gap:10px; margin-top:20px; padding-top:16px; border-top:1px solid var(--border); }
+  .wizard-actions .btn { min-width:120px; }
+  .setup-coach { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr); gap:16px; align-items:start; }
+  .coach-panel { background:linear-gradient(180deg,rgba(214,160,77,.08),rgba(255,255,255,.018)); border:1px solid rgba(214,160,77,.22); border-radius:var(--radius); padding:16px; }
+  .coach-panel h3 { font-size:15px; margin-bottom:8px; }
+  .coach-panel .coach-list { display:grid; gap:8px; margin-top:12px; }
+  .coach-panel .coach-list span { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--body); line-height:1.45; }
+  .coach-panel svg { color:var(--green); margin-top:2px; }
+  .beginner-note { background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; color:var(--muted); font-size:13px; line-height:1.55; margin-bottom:14px; }
+  .quick-choices { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .quick-choice { border:1px solid var(--border); background:var(--surface2); color:var(--body); border-radius:var(--radius-sm); padding:7px 10px; font:700 12px/1 var(--font); cursor:pointer; }
+  .quick-choice:hover { border-color:var(--accent); color:var(--accent); }
+  .review-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
+  .review-item { background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; min-height:88px; }
+  .review-item .ri-label { font-size:11px; font-weight:800; color:var(--muted); margin-bottom:6px; }
+  .review-item .ri-value { color:var(--text); font-size:13px; line-height:1.45; white-space:pre-wrap; }
+  details.advanced-config { margin-top:14px; border:1px solid var(--border); border-radius:var(--radius); background:rgba(255,255,255,.018); }
+  details.advanced-config > summary { cursor:pointer; padding:12px 14px; color:var(--body); font-weight:700; }
+  details.advanced-config > div { padding:0 14px 14px; border-top:1px solid var(--border); }
+
+  /* === LIVE PREVIEW === */
+  .live-preview { position:sticky; top:80px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; text-align:center; min-height:200px; }
+  .live-preview .lp-avatar { width:64px; height:64px; margin:0 auto 10px; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); border-radius:16px; display:flex; align-items:center; justify-content:center; color:#fff; box-shadow:0 0 25px var(--accent-glow); }
+  .live-preview .lp-name { font-size:18px; font-weight:800; color:var(--text); }
+  .live-preview .lp-role { font-size:12px; color:var(--muted); margin-bottom:12px; }
+  .live-preview .lp-stats { display:flex; gap:10px; justify-content:center; font-size:11px; }
+  .live-preview .lp-stats span { background:var(--surface2); padding:4px 10px; border-radius:100px; color:var(--muted); }
+
+  /* === PAYWALL === */
+  .paywall { text-align:center; padding:40px 20px; max-width:500px; margin:0 auto; }
+  .paywall .pw-icon { width:80px; height:80px; margin:0 auto 16px; background:linear-gradient(135deg,var(--accent-glow),transparent); border-radius:50%; display:flex; align-items:center; justify-content:center; }
+  .paywall h2 { margin-bottom:8px; }
+  .paywall .pw-price { font-size:42px; font-weight:900; color:var(--accent); margin:12px 0; }
+  .paywall .pw-price small { font-size:16px; font-weight:600; color:var(--muted); }
+  .paywall .pw-methods { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
+  .paywall .pw-method { display:flex; align-items:center; gap:10px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 16px; text-align:right; transition:all .2s; }
+  .paywall .pw-method:hover { border-color:var(--border-light); background:var(--surface3); }
+  .paywall .pw-method .pm-icon { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .paywall .pw-method .pm-info { flex:1; }
+  .paywall .pw-method .pm-info .pm-title { font-weight:600; color:var(--text); font-size:14px; }
+  .paywall .pw-method .pm-info .pm-desc { font-size:12px; color:var(--muted); }
+  .paywall .pw-note { font-size:12px; color:var(--muted); margin-top:12px; padding:12px; background:rgba(255,255,255,.02); border-radius:var(--radius-sm); border:1px solid var(--border); }
+  
+  /* === CHAT === */
+  .chat-hdr { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .chat-hdr h2 { margin:0; font-size:18px; flex:1; }
+  .chat-window { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; height:420px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+  .chat-window::-webkit-scrollbar { width:6px; }
+  .chat-window::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  .msg { max-width:85%; padding:12px 18px; border-radius:18px; font-size:14px; line-height:1.55; animation:msgIn .3s cubic-bezier(.22,1,.36,1) both; word-break:break-word; }
+  @keyframes msgIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  .msg.user { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff; align-self:flex-end; border-bottom-right-radius:6px; box-shadow:0 2px 10px var(--accent-glow); }
+  .msg.assistant { background:var(--surface2); color:var(--body); border:1px solid var(--border); align-self:flex-start; border-bottom-left-radius:6px; }
+  .msg.system { background:rgba(255,255,255,.03); color:var(--muted); font-size:12px; align-self:center; text-align:center; padding:8px 16px; border-radius:20px; }
+  .composer { display:flex; gap:10px; align-items:flex-end; }
+  .composer textarea { flex:1; min-height:48px; max-height:120px; padding:12px 16px; border-radius:var(--radius); resize:none; }
+  .composer .btn { height:48px; padding:0 28px; border-radius:var(--radius); }
+  .tool-log .tc { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:6px; }
+  .tool-log .tc .tn { font-weight:700; color:var(--accent); font-size:13px; }
+  .tool-log .tc pre { font-size:11px; margin:6px 0 0; color:var(--muted); white-space:pre-wrap; }
+  
+  /* === ADMIN === */
+  .aw { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px 22px; display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  .aw .info { flex:1; min-width:200px; }
+  .aw .info h4 { font-size:15px; color:var(--text); margin-bottom:4px; }
+  .aw .acts { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  
+  /* === MODAL === */
+  .modal-overlay { position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.65); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; animation:overlayIn .2s ease both; padding:20px; }
+  .modal-overlay.closing { animation:overlayOut .2s ease both; }
+  @keyframes overlayIn { from{opacity:0} to{opacity:1} }
+  @keyframes overlayOut { from{opacity:1} to{opacity:0} }
+  .modal { background:var(--surface); border:1px solid var(--border-light); border-radius:var(--radius-lg); max-width:560px; width:100%; max-height:85vh; overflow-y:auto; box-shadow:0 0 60px rgba(0,0,0,.5); animation:modalIn .35s cubic-bezier(.22,1,.36,1) both; }
+  .modal-overlay.closing .modal { animation:modalOut .2s ease both; }
+  @keyframes modalIn { from{opacity:0;transform:scale(.93) translateY(15px)} to{opacity:1;transform:scale(1) translateY(0)} }
+  @keyframes modalOut { from{opacity:1;transform:scale(1)} to{opacity:0;transform:scale(.93)} }
+  .modal-hdr { display:flex; align-items:center; gap:12px; padding:20px 24px 0; }
+  .modal-hdr .icon-big { width:48px; height:48px; background:linear-gradient(135deg,var(--surface2),var(--surface3)); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; }
+  .modal-hdr h3 { flex:1; font-size:18px; }
+  .modal-close { width:32px; height:32px; border-radius:50%; border:none; background:var(--surface2); color:var(--muted); font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all .2s; }
+  .modal-close:hover { background:var(--surface3); color:var(--text); transform:rotate(90deg); }
+  .modal-body { padding:16px 24px 24px; }
+  
+  /* === TOAST === */
+  .toast-container { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:300; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; }
+  .toast { background:var(--surface); border:1px solid var(--border-light); border-radius:var(--radius); padding:12px 22px; font-size:14px; font-weight:500; color:var(--text); box-shadow:0 8px 40px rgba(0,0,0,.5); pointer-events:auto; transition:all .3s ease; opacity:0; transform:translateY(-10px); max-width:90vw; }
+  .toast.show { opacity:1; transform:translateY(0); }
+  .toast-success { border-color:rgba(110,159,94,.3); }
+  .toast-error { border-color:rgba(212,80,80,.3); }
+  
+  /* === SHIMMER / LOADING === */
+  .svg-icon { display:inline-block; vertical-align:middle; flex-shrink:0; transition:color .2s, opacity .2s; }
+  .icon-spin { animation:iconSpin 1.5s linear infinite; }
+  @keyframes iconSpin { 100%{transform:rotate(360deg)} }
+  .shimmer { background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%); background-size:200% 100%; animation:shimmer 1.5s ease-in-out infinite; border-radius:var(--radius-sm); }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .page-enter { animation:pageIn .35s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes pageIn { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+  
+  @media (max-width:900px) { .mkt-hero{grid-template-columns:1fr}.hero-copy{min-height:auto}.trust-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.setup-coach{grid-template-columns:1fr}.review-grid{grid-template-columns:1fr} }
+  @media (max-width:768px) { body{padding-bottom:92px} header{padding:10px 16px} header .logo{order:1;margin-left:0;border-left:0;padding-right:0} header .logo .logo-sub{display:none} header nav{order:3;width:100%;margin:4px 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px} header nav a{padding:8px 6px;font-size:12px;text-align:center} header nav a.active::after{bottom:1px}.header-cta{padding:8px 6px!important} main{padding:16px 16px 96px}.key-bar{margin:0 0 18px;border-radius:0;border-inline:0;justify-content:center}.key-bar label{width:100%;text-align:center}.key-bar input{min-width:0;flex-basis:100%;font-size:12px}.key-bar .btn{padding:8px 10px}.mkt-hero{padding-top:12px;gap:14px}.mkt-hero h1{font-size:32px}.hero-actions .btn{width:100%}.trust-strip{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.toolbar h2{font-size:20px}.wizard-progress{margin-bottom:18px}.wizard-progress .wp-step{font-size:10px;padding:8px 4px}.b-sec{padding:18px}.quick-choice{width:100%;justify-content:center}.w-top{padding-left:70px}.w-cta{flex-direction:column}.chat-window{height:300px}.composer{flex-direction:column}.composer .btn{width:100%}.toast-container{top:auto;bottom:88px;width:calc(100vw - 24px)}.toast{width:100%;text-align:center;padding:10px 14px} }
+</style>
+</head>
+<body>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="icon-robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="7" width="18" height="14" rx="3"/><circle cx="9" cy="12" r="1.5" fill="currentColor"/><circle cx="15" cy="12" r="1.5" fill="currentColor"/>
+      <path d="M12 7V4M8 21v1h8v-1"/><path d="M8 4L6 2M16 4l2-2" stroke-width="1.2"/>
+    </symbol>
+    <symbol id="icon-sales" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2l3 6 6 .5-4.5 4.5L18 20l-6-4-6 4 1.5-7L3 8.5 9 8z"/>
+    </symbol>
+    <symbol id="icon-support" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 14a8 8 0 1 1 16 0v2a3 3 0 0 1-3 3h-1a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h1.5A7.5 7.5 0 0 0 4 11.5"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>
+      <path d="M10 17.5c.5.5 1.5.5 2 0"/>
+    </symbol>
+    <symbol id="icon-data" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12v4c0 1.66 4 3 9 3s9-1.34 9-3v-4"/>
+    </symbol>
+    <symbol id="icon-content" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/>
+    </symbol>
+    <symbol id="icon-estate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 21V9l9-7 9 7v12"/><path d="M7 21v-8h10v8"/><rect x="10" y="14" width="4" height="7"/>
+    </symbol>
+    <symbol id="icon-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 21l-1.5-1.4C5.4 15.4 2 12.3 2 8.5 2 5.4 4.4 3 7.5 3c1.7 0 3.4.8 4.5 2.1A6.5 6.5 0 0 1 16.5 3C19.6 3 22 5.4 22 8.5c0 3.8-3.4 6.9-8.5 11.1L12 21z"/>
+    </symbol>
+    <symbol id="icon-restaurant" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2v6a4 4 0 0 0 4 4"/><path d="M10 2v10a4 4 0 0 0 4-4V2"/><path d="M18 2v20"/>
+    </symbol>
+    <symbol id="icon-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.5a2 2 0 0 0 1.9-1.4L23 6H6"/>
+    </symbol>
+    <symbol id="icon-property" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="3"/><path d="M5 21c0-4.5 3.1-8 7-8s7 3.5 7 8"/>
+    </symbol>
+    <symbol id="icon-mcp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="14" width="8" height="8" rx="2"/>
+      <path d="M10 6h2a2 2 0 0 1 2 2v6"/><path d="M6 14v-2a2 2 0 0 1 2-2h2"/><circle cx="6" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="18" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="icon-skills" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 4a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5v1.5"/><circle cx="12" cy="19" r="2"/><path d="M12 12v1"/><circle cx="8" cy="7" r="3" stroke-width="1.2" opacity=".5"/><circle cx="18" cy="10" r="2.5" stroke-width="1.2" opacity=".4"/>
+    </symbol>
+    <symbol id="icon-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 0 1-9 9H5l2-3a9 9 0 1 1 14-6z"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="13" cy="12" r="1" fill="currentColor"/><circle cx="17" cy="12" r="1" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+    </symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <symbol id="icon-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 15.1 8.3 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.3" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-star-empty" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 15.1 8.3 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.3"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/>
+    </symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.3 3.9a2 2 0 0 1 3.4 0l7.5 13A2 2 0 0 1 19.5 20h-15a2 2 0 0 1-1.7-3.1z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </symbol>
+    <symbol id="icon-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="14 7 19 12 14 17"/>
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><ellipse cx="12" cy="12" rx="4" ry="10"/><path d="M2 12h20"/>
+    </symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-gem" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="6 3 18 3 22 9 12 21 2 9"/><path d="M12 3v18M2 9h20"/>
+    </symbol>
+    <symbol id="icon-sparkle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/>
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+    </symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </symbol>
+    <symbol id="icon-ils" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="2" x2="12" y2="22"/><path d="M7 6c2-1 4-1.5 6-1.5s4 .5 6 1.5"/><path d="M7 18c2 1 4 1.5 6 1.5s4-.5 6-1.5"/>
+    </symbol>
+    <symbol id="icon-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v8M16 2v8M8 2v8"/><path d="M4 10h16v2a8 8 0 0 1-8 8 8 8 0 0 1-8-8v-2z"/><path d="M12 20v4"/>
+    </symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/>
+    </symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/>
+    </symbol>
+    <symbol id="icon-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+    </symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    </symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </symbol>
+    <symbol id="icon-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>
+    </symbol>
+    <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="13 2 4 14 12 14 11 22 20 10 12 10"/>
+    </symbol>
+    <symbol id="icon-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.6A4 4 0 0 0 6 13v1a4 4 0 0 0 4 4 2.5 2.5 0 0 1 2 1.2"/><path d="M4.5 2A2.5 2.5 0 0 1 7 4.5v.6A4 4 0 0 1 8 13"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v.6A4 4 0 0 1 18 13v1a4 4 0 0 1-4 4 2.5 2.5 0 0 0-2 1.2"/><path d="M19.5 2A2.5 2.5 0 0 0 17 4.5v.6A4 4 0 0 0 16 13"/>
+    </symbol>
+    <symbol id="icon-loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
+      <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
+    </symbol>
+    <symbol id="icon-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header>
+  <a href="#/" class="logo">
+    <span class="logo-icon"><svg class="svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="14" rx="3"/><circle cx="9" cy="12" r="1.5" fill="#fff"/><circle cx="15" cy="12" r="1.5" fill="#fff"/><path d="M12 7V4M8 21v1h8v-1"/><path d="M8 4L6 2M16 4l2-2" stroke-width="1.2"/></svg></span>
+    <span class="logo-text">
+      <span class="logo-main">AI Workers</span>
+      <span class="logo-sub">עובדים חכמים לעסקים</span>
+    </span>
+  </a>
+  <nav id="nav">
+    <a href="#/" data-route="marketplace">שוק העובדים</a>
+    <a href="#/workers" data-route="workers">העובדים שלי</a>
+    <a href="#/admin" data-route="admin">ניהול</a>
+    <a href="/" target="_blank" class="header-cta">לוח בקרה ↗</a>
+  </nav>
+</header>
+<main id="app">
+  <div class="empty">טוען...</div>
+</main>
+<script>
+const APP = (() => {
+  const app = document.getElementById('app');
+  const navLinks = document.querySelectorAll('#nav a[data-route]');
+
+  // ---- API key ----
+  const KEY_LS = 'paid-agent.workerKey';
+  function getKey() { return localStorage.getItem(KEY_LS) || ''; }
+  function setKey(k) {
+    if (k) localStorage.setItem(KEY_LS, k);
+    else localStorage.removeItem(KEY_LS);
+    renderKeyBar();
+  }
+  function authHeaders() {
+    const k = getKey();
+    return k ? { 'authorization': 'Bearer ' + k, 'content-type': 'application/json' } : { 'content-type': 'application/json' };
+  }
+  async function api(path, opts = {}) {
+    const r = await fetch(path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+    const ct = r.headers.get('content-type') || '';
+    const body = ct.includes('application/json') ? await r.json() : await r.text();
+    return { status: r.status, body, ok: r.ok };
+  }
+
+  function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function fmtDate(iso) { if (!iso) return '—'; const d = new Date(iso); return d.toLocaleString('he-IL'); }
+  function icon(name, size, cls) {
+    const s = size || 18;
+    return `<svg class="svg-icon${cls ? ' ' + cls : ''}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-${name}"/></svg>`;
+  }
+
+  // ---- Toast notifications ----
+  function toast(msg, type, duration) {
+    type = type || 'info';
+    duration = duration || 4000;
+    const container = document.getElementById('toast-container') || (() => {
+      const c = document.createElement('div'); c.id = 'toast-container'; c.className = 'toast-container';
+      document.body.appendChild(c); return c;
+    })();
+    const t = document.createElement('div');
+    t.className = 'toast toast-' + type;
+    t.textContent = msg;
+    container.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 350);
+    }, duration);
+  }
+
+  // ---- Modal helpers ----
+  let modalHandler = null;
+  function openModal(html) {
+    const existing = document.querySelector('.modal-overlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal">${html}</div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) closeModal(overlay); };
+    modalHandler = (e) => { if (e.key === 'Escape') closeModal(overlay); };
+    document.addEventListener('keydown', modalHandler);
+    return overlay;
+  }
+  function closeModal(overlay) {
+    overlay.classList.add('closing');
+    if (modalHandler) document.removeEventListener('keydown', modalHandler);
+    setTimeout(() => overlay.remove(), 250);
+  }
+
+  // ---- Key bar ----
+  function renderKeyBar() {
+    let bar = document.getElementById('key-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'key-bar';
+      document.body.insertBefore(bar, app);
+    }
+    const k = getKey();
+    bar.className = 'key-bar';
+    bar.innerHTML = `
+      <label>${icon('lock', 14)} מפתח API</label>
+      <input id="kb-input" placeholder="sk_... (הדבק את המפתח שלך)" value="${escapeHtml(k)}" />
+      <button id="kb-save">${icon('check', 14)} שמור</button>
+      ${!k ? '<button id="kb-signup" class="btn-outline">' + icon('plus', 14) + ' התחל</button>' : ''}
+      ${k ? '<button id="kb-rotate" class="btn-outline">' + icon('shield', 14) + ' החלף מפתח</button>' : ''}
+      ${k ? '<button id="kb-clear" style="background:transparent;color:var(--muted);border:1px solid var(--border)">' + icon('x', 14) + ' נקה</button>' : ''}
+      <span class="status" id="kb-status"></span>
+    `;
+    document.getElementById('kb-save').onclick = async () => {
+      const v = document.getElementById('kb-input').value.trim();
+      setKey(v);
+      const st = document.getElementById('kb-status');
+      if (v) {
+        const r = await api('/api/workers');
+        if (r.ok) { st.className = 'status ok'; st.innerHTML = icon('check', 14) + ' המפתח תקין'; }
+        else { st.className = 'status err'; st.innerHTML = icon('alert', 14) + ' מפתח לא תקין'; }
+      } else { st.textContent = ''; }
+    };
+    if (document.getElementById('kb-clear')) {
+      document.getElementById('kb-clear').onclick = () => { setKey(''); render(); };
+    }
+    if (document.getElementById('kb-rotate')) {
+      document.getElementById('kb-rotate').onclick = async () => {
+        if (!confirm('להחליף את המפתח? המפתח הישן יבוטל מיד.')) return;
+        const st = document.getElementById('kb-status');
+        st.innerHTML = icon('loading', 14, 'icon-spin') + ' מחליף...';
+        const r = await api('/api/account/rotate-key', { method: 'POST' });
+        if (r.ok && r.body.key) {
+          setKey(r.body.key);
+          st.className = 'status ok';
+          st.innerHTML = icon('check', 14) + ' המפתח הוחלף';
+        } else {
+          st.className = 'status err';
+          st.innerHTML = icon('alert', 14) + ' לא ניתן להחליף מפתח';
+        }
+      };
+    }
+    if (document.getElementById('kb-signup')) {
+      document.getElementById('kb-signup').onclick = () => openSignupModal();
+    }
+    if (k) {
+      api('/api/account').then((r) => {
+        const st = document.getElementById('kb-status');
+        if (!st) return;
+        if (r.ok) {
+          st.className = 'status ok';
+          st.innerHTML = icon('check', 14) + ' ' + escapeHtml(r.body.label || 'חשבון פעיל') + ' · ' + escapeHtml(r.body.tenantId || '');
+        }
+      }).catch(() => {});
+    }
+  }
+
+  function openSignupModal(afterSignup) {
+    const overlay = openModal(`
+      <div class="modal-hdr">
+        <span class="icon-big">${icon('lock', 24)}</span>
+        <h3>התחלה מהירה</h3>
+        <button class="modal-close" id="signup-close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:14px">צור מפתח עסקי כדי לבחור עובד, להתאים אותו, ולשלוח בקשת הפעלה אחרי התשלום.</p>
+        <div class="fld">
+          <label>שם העסק</label>
+          <input id="signup-business" placeholder="לדוגמה: Acme Clinic" />
+        </div>
+        <div class="fld">
+          <label>אימייל או טלפון לחזרה</label>
+          <input id="signup-contact" placeholder="you@example.com / 05..." style="direction:ltr;text-align:left" />
+        </div>
+        <div id="signup-status" class="muted" style="min-height:22px;margin-top:8px"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" id="signup-create">${icon('check', 14)} צור מפתח והמשך</button>
+      </div>
+    `);
+    document.getElementById('signup-close').onclick = () => closeModal(overlay);
+    document.getElementById('signup-create').onclick = async () => {
+      const status = document.getElementById('signup-status');
+      const businessName = document.getElementById('signup-business').value.trim();
+      const contact = document.getElementById('signup-contact').value.trim();
+      if (!businessName || !contact) {
+        status.innerHTML = '<span class="err">' + icon('alert', 14) + ' מלא שם עסק ופרטי קשר</span>';
+        return;
+      }
+      status.innerHTML = icon('loading', 14, 'icon-spin') + ' יוצר מפתח...';
+      const r = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ businessName, contact }),
+      }).then(async (x) => ({ ok: x.ok, body: x.headers.get('content-type')?.includes('json') ? await x.json() : await x.text() }));
+      if (!r.ok) {
+        status.innerHTML = '<span class="err">' + icon('alert', 14) + ' לא ניתן ליצור מפתח: ' + escapeHtml(JSON.stringify(r.body)) + '</span>';
+        return;
+      }
+      setKey(r.body.key);
+      closeModal(overlay);
+      toast('המפתח נוצר ונשמר בדפדפן', 'success');
+      if (afterSignup) await afterSignup();
+    };
+  }
+
+  async function buyWorker(templateId) {
+    const r = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId }) });
+    if (r.ok) {
+      toast('העובד נוצר! שלם ' + r.body.template.rentPriceIls + ' ₪ ואז שלח בקשת הפעלה.', 'success', 6000);
+      location.hash = '#/workers/edit/' + r.body.workerId;
+    } else {
+      toast('הקנייה נכשלה: ' + JSON.stringify(r.body), 'error');
+    }
+  }
+
+  // ---- Category filter state ----
+  let currentFilter = 'all';
+const CATEGORIES = { sales:'מכירות', support:'שירות', ops:'תפעול', admin:'משרד', content:'תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'נכסים' };
+const CAT_LABELS = { sales:'מכירות', support:'שירות לקוחות', ops:'תפעול ונתונים', admin:'משרד וניהול', content:'כתיבת תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'ניהול נכסים' };
+const CAT_ICONS = { sales:'sales', support:'support', ops:'database', admin:'users', content:'content', realestate:'estate', healthcare:'heart', hospitality:'restaurant', ecommerce:'cart', property:'property' };
+const FIT_LABELS = {
+  sales:'מתאים לעסקים שמטפלים בלידים ושיחות מכירה',
+  support:'מתאים לעסקים עם הרבה שאלות חוזרות מלקוחות',
+  ops:'מתאים לצוותים שצריכים סדר בנתונים ותהליכים',
+  admin:'מתאים למשרד שצריך עוזר תפעולי זמין',
+  content:'מתאים לעסקים שמפרסמים תוכן קבוע',
+  realestate:'מתאים לסוכנויות ותיווך נדל"ן',
+  healthcare:'מתאים למרפאות ונותני שירות רפואי',
+  hospitality:'מתאים למסעדות, מלונות ואירוח',
+  ecommerce:'מתאים לחנויות אונליין',
+  property:'מתאים לניהול נכסים ודיירים',
+};
+const OUTCOME_LABELS = {
+  sales:'אוסף פרטים, מסנן פניות ומקדם ליד לשיחת מכירה.',
+  support:'עונה בעברית, מזהה כוונה ומעביר רק מקרים שדורשים אדם.',
+  ops:'מקבל מידע לא מסודר ומחזיר מבנה שאפשר לעבוד איתו.',
+  admin:'מטפל בפניות משרדיות, תיאומים ושאלות שגרה.',
+  content:'מייצר טיוטות שימושיות לפי קול המותג והקהל.',
+  realestate:'עוזר לסנן מחפשים ולרכז דרישות לפני שיחה.',
+  healthcare:'עוזר לתאם פניות, לקבוע תורים ולענות על שאלות בסיס.',
+  hospitality:'מנהל הזמנות ושאלות אורחים בשפה טבעית.',
+  ecommerce:'עוזר ללקוחות למצוא הזמנות, מוצרים ותשובות מהירות.',
+  property:'רכז פניות תחזוקה ודיירים עם פרטים מלאים לטיפול.',
+};
+function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
+  // ---- Routing ----
+  function setActive(route) {
+    navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
+  }
+  function route() {
+    const h = (location.hash || '#/').slice(1);
+    const [, section, ...rest] = h.split('/');
+    if (!section || section === '') return renderMarketplace();
+    if (section === 'workers' && rest.length === 0) return renderWorkersList();
+    if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] });
+    if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] });
+    if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1]);
+    if (section === 'admin') return renderAdmin();
+    return renderMarketplace();
+}
+async function renderMarketplace() {
+  function renderCards(tpls) {
+    if (tpls.length === 0) return '<div class="empty" style="grid-column:1/-1">אין תבניות בקטגוריה זו.</div>';
+    return tpls.map((t) => {
+      const popular = t.id === 'support-he' || t.id === 'sales-leads-il';
+      const bestVal = t.id === 'data-entry';
+      const isNew = t.id === 'property-manager-he' || t.id === 'clinic-receptionist-he';
+      const categoryLabel = CATEGORIES[t.category] || t.category;
+      const fit = FIT_LABELS[t.category] || 'מתאים לעסק שרוצה להוריד עומס תפעולי';
+      const outcome = OUTCOME_LABELS[t.category] || 'מקבל פניות, שואל שאלות המשך ומחזיר תשובה מוכנה לעבודה.';
+      const badge = popular
+        ? '<div class="w-badge"><span class="badge popular">' + icon('shield', 12) + ' בחירת עסקים</span></div>'
+        : bestVal
+          ? '<div class="w-badge"><span class="badge best">' + icon('ils', 12) + ' עלות נמוכה</span></div>'
+          : isNew
+            ? '<div class="w-badge"><span class="badge new">' + icon('sparkle', 12) + ' תבנית חדשה</span></div>'
+            : '';
+      return `<div class="w-card ${popular ? 'popular' : ''} ${bestVal ? 'best' : ''}">
+        ${badge}
+        <div class="w-top">
+          <div class="wi">${catIcon(t.category)}</div>
+          <div class="wi-info">
+            <h3>${escapeHtml(t.nameHe || t.name)}</h3>
+            <div class="w-fit">${escapeHtml(fit)}</div>
+          </div>
+        </div>
+        <div class="w-tags">
+          <span class="worker-state">${icon('check', 12)} מוכן להתאמה</span>
+          <span class="tag tag-${t.category}">${escapeHtml(categoryLabel)}</span>
+        </div>
+        <div class="desc">${escapeHtml(t.description)}</div>
+        <div class="w-outcome">${icon('activity', 14)} <span>${escapeHtml(outcome)}</span></div>
+        <div class="pricing">
+          <div class="pr buy">
+            <div class="amt"><span class="currency">₪</span>${t.buyPriceIls}</div>
+            <div class="pd">רכישה חד-פעמית</div>
+          </div>
+          <div class="pdv"></div>
+          <div class="pr rent">
+            <div class="amt"><span class="currency">₪</span>${t.rentPriceIls}</div>
+            <div class="pd">לחודש</div>
+          </div>
+        </div>
+        <div class="w-cta">
+          <button class="btn btn-primary btn-sm" data-preview="${escapeHtml(t.id)}">${icon('eye', 14)} בדוק דוגמה</button>
+          <button class="btn btn-sm btn-outline" data-buy="${escapeHtml(t.id)}">${icon('plus', 14)} הוסף לעסק</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  const tr = await fetch('/api/workers/templates');
+  const allTpls = tr.ok ? (await tr.json()).templates : [];
+  const cats = ['all', ...new Set(allTpls.map((t) => t.category).filter(Boolean))];
+  const filtered = currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter);
+  app.innerHTML = `
+      <div class="mkt-hero">
+      <div class="hero-copy">
+        <div class="hero-badge">${icon('shield', 14)} עובדים מוכנים להפעלה לעסקים בישראל</div>
+        <h1>בחר עובד AI לפי תפקיד, לא לפי הבטחה.</h1>
+        <p>תבניות מוכנות לעברית, תהליך התאמה קצר, ואישור הפעלה אנושי לפני שהעובד מתחיל לענות ללקוחות.</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="mkt-start">${icon('plus', 14)} צור מפתח והתחל</button>
+          <a class="btn btn-outline" href="#/workers">${icon('users', 14)} העובדים שלי</a>
+        </div>
+      </div>
+      <aside class="hero-proof" aria-label="סיכום הפעלה">
+        <div>
+          <div class="proof-label">קטלוג תפעולי</div>
+          <div class="proof-number">${allTpls.length}</div>
+          <div class="proof-copy">תבניות לפי תפקידים אמיתיים: מכירות, שירות, תפעול, תוכן וניהול נכסים.</div>
+        </div>
+        <div class="proof-list">
+          <span>${icon('check', 14)} מפתח לקוח נוצר לבד</span>
+          <span>${icon('check', 14)} תשלום ואישור בלי חשיפת דאטה</span>
+          <span>${icon('check', 14)} התאמה אישית לפני הפעלה</span>
+        </div>
+      </aside>
+    </div>
+      <div class="trust-strip">
+        <div class="trust-item"><div class="sn">${icon('copy', 18)} ${allTpls.length}</div><div class="sl">תבניות שניתן להתאים לעסק</div></div>
+        <div class="trust-item"><div class="sn">₪99+</div><div class="sl">מחיר חודשי התחלתי ברור</div></div>
+        <div class="trust-item"><div class="sn">${icon('clock', 18)} 24/7</div><div class="sl">זמין לשיחות גם מחוץ לשעות עבודה</div></div>
+        <div class="trust-item"><div class="sn">${icon('shield', 18)} IL</div><div class="sl">עברית, תשלומים מקומיים ואישור ידני</div></div>
+      </div>
+      <div class="market-heading">
+        <div>
+          <h2>קטלוג עובדים</h2>
+          <p>בחר תפקיד, ראה דוגמת שיחה, הוסף לעסק ואז התאם את ההוראות והידע לפני התשלום.</p>
+        </div>
+        <span class="muted">${filtered.length} מתוך ${allTpls.length} תבניות</span>
+      </div>
+      <div class="filter-bar">
+        ${cats.map((c) => `<button class="filter-btn${c === currentFilter ? ' active' : ''}" data-cat="${c}">${c === 'all' ? 'הכל' : escapeHtml(CAT_LABELS[c] || c)}</button>`).join('')}
+      </div>
+      <div class="grid page-enter">
+        ${renderCards(filtered)}
+      </div>
+    `;
+    app.querySelectorAll('.filter-btn').forEach((b) => {
+      b.onclick = () => { currentFilter = b.dataset.cat; renderMarketplace(); };
+    });
+    const startBtn = document.getElementById('mkt-start');
+    if (startBtn) startBtn.onclick = () => openSignupModal();
+    app.querySelectorAll('button[data-buy]').forEach((b) => {
+      b.onclick = async () => {
+        if (!getKey()) return openSignupModal(() => buyWorker(b.dataset.buy));
+        await buyWorker(b.dataset.buy);
+      };
+    });
+    app.querySelectorAll('button[data-preview]').forEach((b) => {
+      b.onclick = () => {
+        const t = allTpls.find((x) => x.id === b.dataset.preview);
+        if (t) showTemplatePreview(t);
+      };
+    });
+  }
+
+  // ---- Template preview modal ----
+  const PREVIEW_CHATS = {
+    'sales-leads-il': [
+      { role: 'user', content: 'היי, אני מתעניין בשירותים שלכם' },
+      { role: 'assistant', content: 'היי! תודה על הפנייה. אוכל לשאול — מה גודל החברה שלך וכמה לידים אתם מייצרים בחודש?' },
+      { role: 'user', content: 'חברה קטנה, בערך 10 לידים בחודש' },
+      { role: 'assistant', content: 'מעולה. אנחנו יכולים לעזור לך להכפיל את המספר הזה תוך חודש. אשמח לתאם שיחה עם המומחה שלנו — מתי נוח לך?' },
+    ],
+    'support-he': [
+      { role: 'user', content: 'היי, יש לי שאלה לגבי הזמנה שהיו צריכה להגיע' },
+      { role: 'assistant', content: 'היי! אשמח לעזור. יש לך מספר הזמנה? אני יכול לבדוק את הסטטוס העדכני.' },
+    ],
+    'content-he': [
+      { role: 'user', content: 'אני צריך פוסט לאינסטגרם על מוצר חדש' },
+      { role: 'assistant', content: 'בשמחה! תן לי פרטים על המוצר, קהל היעד, והמסר המרכזי — ואני אכתוב 3 וריאציות לבחירתך.' },
+    ],
+    'data-entry': [
+      { role: 'user', content: 'יש לי דף עם נתונים שצריך להזין לאקסל' },
+      { role: 'assistant', content: 'שלח לי את הפרטים או תמונה של המסמך. אני אחלץ את השדות הרלוונטיים ואחזיר JSON מסודר.' },
+    ],
+    'real-estate-il': [
+      { role: 'user', content: 'אני מחפש דירת 3 חדרים בתל אביב' },
+      { role: 'assistant', content: 'מעולה! יש לי מספר אפשרויות זמינות. מה התקציב שלך ואיזה אזור ספציפי מעניין אותך?' },
+    ],
+    'clinic-receptionist-he': [
+      { role: 'user', content: 'אני רוצה לקבוע תור לרופא בשבוע הבא' },
+      { role: 'assistant', content: 'בשמחה! לאיזה רופא אתה מעוניין להגיע? ומתי נוח לך — בוקר או אחה"צ?' },
+    ],
+    'restaurant-manager-he': [
+      { role: 'user', content: 'היי, אני רוצה להזמין מקום ל-4 אנשים למחר בערב' },
+      { role: 'assistant', content: 'שמח לעזור! לאיזה שעה? ויש העדפה לאיזור מסוים באולם?' },
+    ],
+    'ecom-support-he': [
+      { role: 'user', content: 'איפה ההזמנה שלי? שלמתי לפני שבוע' },
+      { role: 'assistant', content: 'בוא נבדוק ביחד. יש לך מספר הזמנה או כתובת אימייל שהזמנת איתה?' },
+    ],
+    'property-manager-he': [
+      { role: 'user', content: 'יש נזילה בדירה שלי, צריך לשלוח מישהו בדחיפות' },
+      { role: 'assistant', content: 'מצטער לשמוע! אפנה את האינסטלטור הקבוע שלנו. באיזה שעה נוח לך שיגיע?' },
+    ],
+  };
+  function showTemplatePreview(tpl) {
+    const msgs = PREVIEW_CHATS[tpl.id] || [
+      { role: 'user', content: 'היי, מה אתה יכול לעשות?' },
+      { role: 'assistant', content: 'היי! אני ' + (tpl.nameHe || tpl.name) + '. אשמח לעזור בכל שאלה. ' + (tpl.description || '') },
+    ];
+    openModal(`
+      <div class="modal-hdr">
+        <span class="icon-big">${catIcon(tpl.category)}</span>
+        <h3>${escapeHtml(tpl.nameHe || tpl.name)}</h3>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" style="margin-bottom:16px">${escapeHtml(tpl.description)}</p>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;display:flex;gap:16px">
+          <span>קנייה: <b class="num">${tpl.buyPriceIls} ₪</b></span>
+          <span>שכירות: <b class="num">${tpl.rentPriceIls} ₪/חודש</b></span>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">
+          <div style="background:var(--surface2);padding:8px 14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)">${icon('chat', 14)} הצצה לשיחה</div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+            ${msgs.map((m) => `<div class="msg ${m.role}" style="max-width:95%">${escapeHtml(m.content)}</div>`).join('')}
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:18px">
+          <button class="btn btn-primary" onclick="location.hash='#/workers/new/${tpl.id}';this.closest('.modal-overlay').remove()" style="flex:1">${icon('edit', 14)} התאם אישית</button>
+          <button onclick="this.closest('.modal-overlay').remove()" style="flex:1">סגור</button>
+        </div>
+      </div>
+    `);
+  }
+
+  // ---- My Workers ----
+  async function renderWorkersList() {
+    setActive('workers');
+    if (!getKey()) {
+      app.innerHTML = `<div class="empty"><h2>${icon('lock', 20)} אין מפתח API</h2><p>הדבק את מפתח ה-<code>sk_...</code> שלך למעלה כדי לראות את העובדים שלך.</p></div>`;
+      return;
+    }
+    app.innerHTML = '<div class="grid" style="margin-top:20px">' + Array(3).fill(0).map(() => '<div class="card" style="height:160px;padding:0"><div class="shimmer" style="width:100%;height:100%"></div></div>').join('') + '</div>';
+    const r = await api('/api/workers');
+    if (!r.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(r.body))}</div>`; return; }
+    const workers = r.body.workers;
+    if (!workers.length) {
+      app.innerHTML = `<div class="empty"><h2>אין עדיין עובדים</h2><p>לך ל<a href="#/">שוק העובדים</a> כדי לקנות את העובד הראשון שלך.</p></div>`;
+      return;
+    }
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>העובדים שלי</h2>
+        <span class="muted">${workers.length} עובדים</span>
+      </div>
+      <div class="grid">
+        ${workers.map((w) => {
+          const isLive = w.isActive;
+          const pillCls = w.status === 'active' && isLive ? 'pill-active' : (w.status === 'active' ? 'pill-expired' : 'pill-pending');
+          const pillTxt = w.status === 'active' ? (isLive ? 'פעיל' : 'פג תוקף') : 'ממתין לתשלום';
+          return `
+            <div class="card">
+              <div class="row">
+                <h3 style="flex:1">${escapeHtml(w.name)}</h3>
+                <span class="pill ${pillCls}"><span class="badge-dot ${pillCls}"></span>${pillTxt}</span>
+              </div>
+              <div class="template-meta"><span class="pill">${escapeHtml(w.template?.nameHe || w.template?.name || w.templateId)}</span></div>
+              <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
+              <div class="actions">
+                <button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/chat/${w.id}'">${icon('chat', 14)} צ'אט</button>
+                <button class="btn btn-sm btn-outline" onclick="location.hash='#/workers/edit/${w.id}'">${icon('edit', 14)} עריכה</button>
+                <button class="btn btn-sm btn-danger" data-del="${w.id}">${icon('trash', 14)} מחק</button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    app.querySelectorAll('button[data-del]').forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm('למחוק את העובד ואת השיחות שלו?')) return;
+        const r = await api('/api/workers/' + b.dataset.del, { method: 'DELETE' });
+        if (r.ok) renderWorkersList();
+        else toast('המחיקה נכשלה: ' + JSON.stringify(r.body), 'error');
+      };
+    });
+  }
+
+  // ---- Builder (Interactive Wizard) ----
+  let builderWorker = null;
+  let builderWorkerId = null;
+  let builderStep = 0;
+  const BUILDER_STEPS = [
+    { id: 'job', label: 'מה העובד יעשה', icon: 'robot' },
+    { id: 'business', label: 'מה הוא צריך לדעת', icon: 'database' },
+    { id: 'review', label: 'בדיקה והפעלה', icon: 'check' },
+  ];
+
+  const QUICK_TASKS = [
+    'לענות לשאלות של לקוחות בעברית',
+    'לאסוף פרטי קשר ולידים',
+    'לקבוע פגישות או תורים',
+    'להעביר מקרים חשובים לאדם',
+    'לשלוח סיכום שיחה לעסק',
+  ];
+  const TONE_CHOICES = {
+    friendly: 'ידידותי, ברור וסבלני. מדבר בעברית פשוטה ולא מלחיץ את הלקוח.',
+    professional: 'מקצועי, קצר וממוקד. נותן תשובות ברורות ושומר על טון עסקי.',
+    sales: 'מכירתי אבל לא אגרסיבי. שואל שאלות, מזהה צורך, ומציע את הצעד הבא.',
+  };
+
+  function starterTasksForTemplate(tpl) {
+    const byCategory = {
+      sales: ['לענות לפניות חדשות בעברית', 'לאסוף שם, טלפון, צורך ותקציב', 'להציע שיחת המשך עם נציג אנושי', 'להעביר ליד חם לעסק עם סיכום קצר'],
+      support: ['לענות לשאלות נפוצות של לקוחות', 'לבדוק מה הבעיה ולבקש פרטים חסרים', 'להעביר תלונות או החזרים לאדם אמיתי', 'לסיים כל שיחה עם צעד הבא ברור'],
+      ops: ['לקבל מידע לא מסודר מלקוחות או מסמכים', 'להוציא שדות חשובים בצורה מסודרת', 'לסמן מידע חסר שצריך להשלים', 'להכין סיכום שנוח להעתיק למערכת העסק'],
+      content: ['לכתוב טיוטות תוכן בעברית', 'להתאים את הטון לקהל היעד של העסק', 'להציע כמה גרסאות לבחירה', 'לא לפרסם מידע שלא אושר על ידי העסק'],
+      realestate: ['לסנן פניות של מחפשי נכסים', 'לאסוף תקציב, אזור, מספר חדרים ותאריך כניסה', 'לתאם ביקור או שיחה עם סוכן', 'להעביר פניות רציניות עם סיכום'],
+      healthcare: ['לקבל בקשות לתור או שינוי תור', 'לאסוף שם, טלפון וסיבת הפנייה', 'לענות רק על מידע כללי שהעסק סיפק', 'להעביר שאלות רפואיות או דחופות לאדם'],
+      hospitality: ['לקבל הזמנות ושאלות אורחים', 'לאסוף תאריך, שעה, כמות אנשים ופרטי קשר', 'לענות על שאלות תפריט או זמינות לפי המידע שסופק', 'להעביר בקשות חריגות לצוות'],
+      ecommerce: ['לעזור ללקוחות עם הזמנות ומוצרים', 'לאסוף מספר הזמנה או פרטי קשר', 'להסביר מדיניות משלוחים והחזרות לפי המידע שסופק', 'להעביר בעיות מורכבות לשירות אנושי'],
+      property: ['לקבל פניות מדיירים ובעלי נכסים', 'לאסוף כתובת, סוג תקלה ודחיפות', 'להכין סיכום טיפול מסודר', 'להעביר מקרי חירום לאדם מיד'],
+    };
+    return byCategory[tpl.category] ?? QUICK_TASKS.slice(0, 4);
+  }
+
+  function starterKnowledgeForTemplate() {
+    return `שם העסק: (כתוב כאן)
+מה העסק מוכר או נותן: (כתוב כאן)
+שעות פעילות: (כתוב כאן)
+מחירים או חבילות: (כתוב כאן)
+מתי להעביר לאדם: לקוח כועס, בקשת החזר, שאלה משפטית/רפואית, או כל דבר שהעובד לא יודע.`;
+  }
+
+  function firstLine(value, fallback = 'עדיין לא הוגדר') {
+    return String(value ?? '').split('\n').map((s) => s.trim()).filter(Boolean)[0] || fallback;
+  }
+
+  function defaultBeginnerPersona(name, toneKey = 'friendly') {
+    return `You are "${name || 'AI Worker'}", an AI worker for this business.
+${TONE_CHOICES[toneKey] || TONE_CHOICES.friendly}
+You answer in Hebrew by default.
+You ask one clear question at a time.
+If you do not know something, say that you do not know and offer to pass the customer to a human.
+Never invent prices, policies, medical/legal advice, or promises that are not in the business information.`;
+  }
+
+  function setupScore(w) {
+    let done = 0;
+    if (String(w.name || '').trim()) done++;
+    if ((w.tasks ?? []).filter(Boolean).length >= 2) done++;
+    if (String(w.knowledge || '').trim().length >= 30) done++;
+    return { done, total: 3 };
+  }
+
+  function renderBuilderPreview() {
+    if (!builderWorker) return '';
+    const w = builderWorker;
+    const hasLLM = w.llm?.hasApiKey || w.llm?.platformProvided;
+    const score = setupScore(w);
+    return `
+      <div class="live-preview">
+        <div class="lp-avatar">${icon('robot', 32)}</div>
+        <div class="lp-name">${escapeHtml(w.name || 'שם העובד')}</div>
+        <div class="lp-role">${(w.tasks ?? [])[0] ? escapeHtml((w.tasks ?? [])[0]) : 'מחכה להגדרה...'}</div>
+        <div class="lp-stats">
+          <span>${icon('check', 12)} ${score.done}/${score.total} מוכן</span>
+          <span>${hasLLM ? icon('check', 12) + ' AI' : icon('zap', 12) + ' הדגמה'}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBuilderWizard() {
+    const w = builderWorker;
+    const html = BUILDER_STEPS.map((s, i) => {
+      const cls = i === builderStep ? 'active' : i < builderStep ? 'done' : '';
+      return `<div class="wp-step ${cls}" data-step="${i}"><div class="wp-num">${i < builderStep ? icon('check', 12) : (i + 1)}</div>${s.label}</div>`;
+    }).join('');
+
+    const stepContent = (step) => {
+      switch (step) {
+        case 0: return `
+          <div class="setup-coach">
+            <div class="b-sec" style="margin-bottom:0">
+              <div class="beginner-note">${icon('shield', 14)} בשלב הזה לא צריך לדעת לכתוב פרומפט. כתוב במילים רגילות מה העובד אמור לעשות, ואנחנו נשמור את זה כהוראות עבודה מסודרות.</div>
+              <div class="fld"><label>איך יקראו לעובד?</label>
+                <input id="f-name" value="${escapeHtml(w.name)}" placeholder="לדוגמה: דניאל - נציג מכירות" />
+              </div>
+              <div class="fld"><label>מה העובד יעשה ביום-יום?</label>
+                <textarea id="f-tasks" rows="6" placeholder="כתוב פעולה אחת בכל שורה:
+לענות לשאלות של לקוחות בעברית
+לאסוף פרטי קשר ולידים
+לקבוע פגישות או תורים">${escapeHtml((w.tasks ?? []).join('\n'))}</textarea>
+                <div class="quick-choices">
+                  ${QUICK_TASKS.map((t) => `<button type="button" class="quick-choice" data-add-task="${escapeHtml(t)}">${icon('plus', 12)} ${escapeHtml(t)}</button>`).join('')}
+                </div>
+              </div>
+            </div>
+            <aside class="coach-panel">
+              <h3>${icon('check', 16)} מה נחשב טוב?</h3>
+              <div class="muted">תפקיד טוב הוא כזה שבעל עסק יכול להסביר לעובד חדש ב-2 דקות.</div>
+              <div class="coach-list">
+                <span>${icon('check', 13)} פעולה ברורה: לענות, לאסוף, לתאם, להעביר.</span>
+                <span>${icon('check', 13)} גבול ברור: מתי הוא מעביר לאדם אמיתי.</span>
+                <span>${icon('check', 13)} שפה פשוטה: עברית עסקית, בלי מילים טכניות.</span>
+              </div>
+              ${renderBuilderPreview()}
+            </aside>
+          </div>`;
+        case 1: return `
+          <div class="setup-coach">
+            <div class="b-sec" style="margin-bottom:0">
+              <div class="beginner-note">${icon('database', 14)} תן לעובד את המידע שהוא צריך כדי לא להמציא תשובות. אפשר להתחיל קצר ולהוסיף אחר כך.</div>
+              <div class="fld"><label>מידע שהעובד חייב לדעת</label>
+                <textarea id="f-knowledge" rows="9" placeholder="לדוגמה:
+שעות פעילות: א-ה 9:00-18:00
+מחירים: שיחת ייעוץ ראשונה ללא עלות
+מה אנחנו מוכרים: שירותי ליווי לעסקים קטנים
+מתי להעביר לאדם: בקשת החזר, תלונה, או לקוח כועס">${escapeHtml(w.knowledge ?? '')}</textarea>
+              </div>
+              <div class="fld"><label>איך הוא צריך לדבר?</label>
+                <div class="quick-choices">
+                  <button type="button" class="quick-choice" data-tone="friendly">ידידותי וסבלני</button>
+                  <button type="button" class="quick-choice" data-tone="professional">מקצועי וקצר</button>
+                  <button type="button" class="quick-choice" data-tone="sales">מכירתי ועדין</button>
+                </div>
+              </div>
+              <details class="advanced-config">
+                <summary>${icon('edit', 14)} עריכת הוראות מתקדמת</summary>
+                <div>
+                  <div class="fld"><label>הוראות אישיות לעובד</label>
+                    <textarea id="f-persona" rows="8">${escapeHtml(w.persona || defaultBeginnerPersona(w.name))}</textarea>
+                  </div>
+                  <div class="fld"><label>פעולות שהעובד יכול לבצע</label>
+                    <textarea id="f-tools" rows="4">${escapeHtml((w.tools ?? []).join('\n'))}</textarea>
+                  </div>
+                </div>
+              </details>
+            </div>
+            <aside class="coach-panel">
+              <h3>${icon('alert', 16)} כלל חשוב</h3>
+              <div class="muted">אם מידע לא מופיע כאן, העובד צריך להגיד שהוא לא יודע ולהציע להעביר לאדם.</div>
+              <div class="coach-list">
+                <span>${icon('check', 13)} מחירים ומבצעים</span>
+                <span>${icon('check', 13)} שעות פעילות ופרטי קשר</span>
+                <span>${icon('check', 13)} שאלות נפוצות ומדיניות החזרות</span>
+              </div>
+              ${renderBuilderPreview()}
+            </aside>
+          </div>`;
+        case 2: return `
+          <div class="setup-coach">
+            <div class="b-sec" style="margin-bottom:0">
+              <div class="beginner-note">${icon('check', 14)} בדוק שהכול נראה נכון. אחרי שמירה תוכל לשלוח בקשת הפעלה ולשלם, ואז העובד ייפתח לצ'אט לאחר אישור.</div>
+              <div class="review-grid">
+                <div class="review-item"><div class="ri-label">שם העובד</div><div class="ri-value">${escapeHtml(w.name || 'לא הוגדר')}</div></div>
+                <div class="review-item"><div class="ri-label">התפקיד הראשון</div><div class="ri-value">${escapeHtml(firstLine((w.tasks ?? []).join('\n')))}</div></div>
+                <div class="review-item"><div class="ri-label">כמה משימות</div><div class="ri-value">${(w.tasks ?? []).filter(Boolean).length} משימות</div></div>
+                <div class="review-item"><div class="ri-label">ידע לעובד</div><div class="ri-value">${escapeHtml(firstLine(w.knowledge, 'עדיין חסר מידע עסקי'))}</div></div>
+              </div>
+              <details class="advanced-config">
+                <summary>${icon('skills', 14)} יכולות מתקדמות וחיבורים</summary>
+                <div>
+                  <div style="margin:12px 0 14px">
+                    <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:4px">Skills - יכולות מוכנות</div>
+                    <div class="muted" style="font-size:12px">לא חובה להתחלה. אפשר להוסיף יכולות אחרי שהעובד עובד.</div>
+                  </div>
+                  <div id="skills-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px"><div class="muted">טוען Skills...</div></div>
+                  <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
+                    <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:4px">שרתי MCP (למתקדמים)</div>
+                    <div class="muted" style="font-size:12px;margin-bottom:8px">מיועד לצוותים עם שרת MCP קיים. רוב העסקים לא צריכים את זה בהתחלה.</div>
+                    <div id="mcp-list"></div>
+                    <div class="mcp-add-row">
+                      <input id="mcp-new-url" type="url" placeholder="https://..." style="flex:2;min-width:180px;direction:ltr;text-align:left;font-family:monospace" />
+                      <input id="mcp-new-name" placeholder="שם" style="flex:1;min-width:80px" />
+                      <button class="btn btn-sm btn-outline" id="mcp-add-btn">${icon('plus', 14)} הוסף</button>
+                    </div>
+                    <div id="mcp-status" class="mcp-status"></div>
+                  </div>
+                </div>
+              </details>
+            </div>
+            <aside class="coach-panel">
+              <h3>${icon('activity', 16)} מצב ההגדרה</h3>
+              <div class="coach-list">
+                <span>${setupScore(w).done >= 1 ? icon('check', 13) : icon('circle', 13)} שם ותפקיד</span>
+                <span>${(w.tasks ?? []).filter(Boolean).length >= 2 ? icon('check', 13) : icon('circle', 13)} לפחות שתי משימות</span>
+                <span>${String(w.knowledge || '').trim().length >= 30 ? icon('check', 13) : icon('circle', 13)} מידע בסיסי לעובד</span>
+              </div>
+              ${renderBuilderPreview()}
+            </aside>
+          </div>`;
+        default: return '';
+      }
+    };
+
+    const isFirst = builderStep === 0;
+    const isLast = builderStep === BUILDER_STEPS.length - 1;
+
+    return `
+      <div class="toolbar">
+        <h2>${builderWorkerId ? icon('edit', 18) + ' עריכת ' + escapeHtml(builderWorker.name) : icon('robot', 18) + ' צור עובד חדש'}</h2>
+        <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
+      </div>
+
+      <div class="wizard-progress">${html}</div>
+
+      <div class="wizard-step active">
+        ${stepContent(builderStep)}
+      </div>
+
+      <div class="wizard-actions">
+        ${!isFirst ? '<button class="btn btn-outline" id="w-prev">' + icon('arrow-right', 14) + ' חזור</button>' : '<span></span>'}
+        <span id="f-status" class="muted" style="flex:1;text-align:center"></span>
+        ${isLast
+          ? '<button class="btn btn-primary" id="f-save" style="padding:12px 32px">' + icon('save', 16) + ' שמור עובד</button>'
+          : '<button class="btn btn-primary" id="w-next">המשך ' + icon('arrow-right', 14) + '</button>'
+        }
+      </div>
+    `;
+  }
+
+  async function renderBuilder({ workerId, templateId }) {
+    setActive('marketplace');
+    let worker = null;
+    if (workerId) {
+      const r = await api('/api/workers/' + workerId);
+      if (!r.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(r.body))}</div>`; return; }
+      worker = r.body.worker;
+    } else if (templateId) {
+      const r = await api('/api/workers/templates');
+      const t = r.body.templates.find((x) => x.id === templateId);
+      if (!t) { app.innerHTML = '<div class="empty err">תבנית לא ידועה</div>'; return; }
+      worker = {
+        name: (t.nameHe || t.name) + ' (חדש)',
+        templateId: t.id,
+        persona: defaultBeginnerPersona(t.nameHe || t.name),
+        tasks: starterTasksForTemplate(t),
+        knowledge: starterKnowledgeForTemplate(t),
+        tools: t.defaultTools,
+        llm: { provider: '', model: '', baseUrl: '', hasApiKey: false, platformProvided: false },
+        skills: [],
+        mcpServers: [],
+        status: 'new',
+      };
+    } else {
+      location.hash = '#/'; return;
+    }
+
+    builderWorker = worker;
+    builderWorkerId = workerId;
+    builderStep = 0;
+
+    app.innerHTML = renderBuilderWizard();
+    attachWizardEvents();
+    attachBuilderFormEvents();
+
+    function goToStep(i) {
+      builderStep = Math.max(0, Math.min(i, BUILDER_STEPS.length - 1));
+      app.innerHTML = renderBuilderWizard();
+      attachWizardEvents();
+      attachBuilderFormEvents();
+    }
+
+    function attachWizardEvents() {
+      document.querySelectorAll('.wp-step').forEach((el) => {
+        el.onclick = () => { const i = parseInt(el.dataset.step); if (i <= builderStep || el.classList.contains('done')) goToStep(i); };
+      });
+      const nextBtn = document.getElementById('w-next');
+      if (nextBtn) nextBtn.onclick = () => goToStep(builderStep + 1);
+      const prevBtn = document.getElementById('w-prev');
+      if (prevBtn) prevBtn.onclick = () => goToStep(builderStep - 1);
+    }
+
+    function attachBuilderFormEvents() {
+      const mcpServers = worker.mcpServers ?? [];
+
+      // ---- Real-time preview updates ----
+      const nameInput = document.getElementById('f-name');
+      const tasksInput = document.getElementById('f-tasks');
+      const personaInput = document.getElementById('f-persona');
+      const knowledgeInput = document.getElementById('f-knowledge');
+      const toolsInput = document.getElementById('f-tools');
+      if (nameInput) nameInput.oninput = () => {
+        builderWorker.name = nameInput.value;
+        const el = document.querySelector('.live-preview .lp-name');
+        if (el) el.textContent = nameInput.value || 'שם העובד';
+        if (!builderWorker.persona || builderWorker.persona.includes('AI Worker')) builderWorker.persona = defaultBeginnerPersona(builderWorker.name);
+      };
+      if (tasksInput) tasksInput.oninput = () => {
+        const lines = tasksInput.value.split('\n').map(s => s.trim()).filter(Boolean);
+        builderWorker.tasks = lines;
+        const el = document.querySelector('.live-preview .lp-role');
+        if (el) el.textContent = lines[0] || 'מחכה להגדרה...';
+      };
+      if (personaInput) personaInput.oninput = () => { builderWorker.persona = personaInput.value; };
+      if (knowledgeInput) knowledgeInput.oninput = () => { builderWorker.knowledge = knowledgeInput.value; };
+      if (toolsInput) toolsInput.oninput = () => { builderWorker.tools = toolsInput.value.split('\n').map((s) => s.trim()).filter(Boolean); };
+      document.querySelectorAll('.quick-choice[data-add-task]').forEach((btn) => {
+        btn.onclick = () => {
+          const task = btn.dataset.addTask;
+          const lines = new Set((builderWorker.tasks ?? []).filter(Boolean));
+          lines.add(task);
+          builderWorker.tasks = [...lines];
+          if (tasksInput) {
+            tasksInput.value = builderWorker.tasks.join('\n');
+            tasksInput.dispatchEvent(new Event('input'));
+          }
+        };
+      });
+      document.querySelectorAll('.quick-choice[data-tone]').forEach((btn) => {
+        btn.onclick = () => {
+          builderWorker.persona = defaultBeginnerPersona(builderWorker.name, btn.dataset.tone);
+          if (personaInput) personaInput.value = builderWorker.persona;
+          toast('עודכן סגנון הדיבור של העובד', 'success');
+        };
+      });
+
+      // ---- Skills ----
+      (async () => {
+        const container = document.getElementById('skills-list');
+        if (!container) return;
+        const installedSkills = new Set(worker.skills ?? []);
+        const skRes = await api('/api/skills');
+        if (!skRes.ok) { container.innerHTML = '<span class="err">שגיאה בטעינת skills</span>'; return; }
+        const allSkills = skRes.body.skills;
+        if (!allSkills.length) { container.innerHTML = '<span class="muted">אין skills זמינות כרגע.</span>'; return; }
+        container.innerHTML = '';
+        for (const sk of allSkills) {
+          const isInstalled = installedSkills.has(sk.id);
+          const card = document.createElement('div');
+          card.className = 'skill-card' + (isInstalled ? ' installed' : '');
+          card.innerHTML = `
+            <span class="sk-icon">${icon('skills', 18)}</span>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">${escapeHtml(sk.name)}</div>
+              <div class="muted" style="font-size:12px">${escapeHtml(sk.description)}</div>
+            </div>
+            <button class="btn skill-toggle" data-skill-id="${sk.id}" data-action="${isInstalled ? 'uninstall' : 'install'}" style="font-size:12px;padding:4px 12px;${isInstalled ? 'border-color:rgba(239,68,68,.3);color:var(--red)' : ''}">
+              ${isInstalled ? icon('trash', 12) + ' הסר' : icon('plus', 12) + ' התקן'}
+            </button>
+          `;
+          container.appendChild(card);
+        }
+        container.querySelectorAll('.skill-toggle').forEach((btn) => {
+          btn.onclick = async () => {
+            if (!workerId) { toast('קודם שמור את העובד לפני התקנת Skills.', 'error'); return; }
+            const skillId = btn.dataset.skillId;
+            const action = btn.dataset.action;
+            const ep = action === 'install' ? '/api/workers/skill-install' : '/api/workers/skill-uninstall';
+            const r = await api(ep, { method: 'POST', body: JSON.stringify({ workerId, skillId }) });
+            if (r.ok) { toast('Skill ' + (action === 'install' ? 'הותקנה' : 'הוסרה') + ' בהצלחה', 'success'); goToStep(BUILDER_STEPS.findIndex(s => s.id === 'skills')); }
+            else toast('שגיאה: ' + JSON.stringify(r.body), 'error');
+          };
+        });
+      })();
+
+      // ---- MCP Servers ----
+      const mcpList = document.getElementById('mcp-list');
+      if (mcpList) {
+        function renderMcpServers() {
+          mcpList.innerHTML = '';
+          if (!mcpServers.length) {
+            mcpList.innerHTML = '<div class="mcp-empty">' + icon('plug', 14) + ' עדיין לא הוגדרו שרתי MCP</div>';
+            return;
+          }
+          for (const ms of mcpServers) {
+            const row = document.createElement('div');
+            row.className = 'mcp-card';
+            row.innerHTML = `
+              <span class="mcp-icon">${icon('mcp', 18)}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:left">${escapeHtml(ms.name || ms.url)}</div>
+                <div class="muted" style="font-size:11px;direction:ltr;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(ms.url)}</div>
+              </div>
+              <span class="pill" style="font-size:10px">${ms.toolCount || '?'} כלים</span>
+              <button class="btn mcp-remove" data-url="${escapeHtml(ms.url)}" style="font-size:11px;padding:3px 10px;border-color:rgba(239,68,68,.3);color:var(--red)">${icon('trash', 12)}</button>
+            `;
+            mcpList.appendChild(row);
+          }
+          mcpList.querySelectorAll('.mcp-remove').forEach((btn) => {
+            btn.onclick = () => {
+              const idx = mcpServers.findIndex((m) => m.url === btn.dataset.url);
+              if (idx >= 0) mcpServers.splice(idx, 1);
+              persistMcp();
+              renderMcpServers();
+            };
+          });
+        }
+        async function persistMcp() {
+          if (!workerId) { toast('שמור את העובד קודם, ואז הוסף שרתי MCP', 'error'); return; }
+          const r = await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify({ mcpServers }) });
+          if (!r.ok) toast('שגיאה בשמירת שרתי MCP: ' + JSON.stringify(r.body), 'error');
+        }
+        const mcpAddBtn = document.getElementById('mcp-add-btn');
+        if (mcpAddBtn) {
+          mcpAddBtn.onclick = async () => {
+            const url = document.getElementById('mcp-new-url').value.trim();
+            const name = document.getElementById('mcp-new-name').value.trim() || url;
+            if (!url) { toast('הכנס כתובת URL של שרת MCP', 'error'); return; }
+            try { new URL(url); } catch { toast('כתובת לא תקינה', 'error'); return; }
+            document.getElementById('mcp-status').innerHTML = icon('loading', 14, 'icon-spin') + ' בודק חיבור...';
+            const discRes = await api('/api/mcp/discover?url=' + encodeURIComponent(url));
+            if (!discRes.ok) {
+              document.getElementById('mcp-status').innerHTML = `<span class="err">${icon('alert', 14)} לא ניתן להתחבר: ${escapeHtml(JSON.stringify(discRes.body))}</span>`;
+              return;
+            }
+            const toolCount = discRes.body.tools?.length || 0;
+            mcpServers.push({ name, url, toolCount });
+            await persistMcp();
+            renderMcpServers();
+            document.getElementById('mcp-new-url').value = '';
+            document.getElementById('mcp-new-name').value = '';
+            document.getElementById('mcp-status').innerHTML = icon('check', 14) + ' ' + toolCount + ' כלים התגלו';
+            toast('השרת ' + name + ' חובר (' + toolCount + ' כלים)', 'success');
+          };
+        }
+        renderMcpServers();
+      }
+
+      // ---- Save ----
+      const saveBtn = document.getElementById('f-save');
+      if (saveBtn) {
+        saveBtn.onclick = async () => {
+          const status = document.getElementById('f-status');
+          status.innerHTML = icon('loading', 14, 'icon-spin') + ' שומר...';
+          if (!String(builderWorker.name || '').trim()) {
+            status.innerHTML = '<span class="err">' + icon('alert', 14) + ' צריך לתת שם לעובד.</span>';
+            return;
+          }
+          if ((builderWorker.tasks ?? []).filter(Boolean).length === 0) {
+            status.innerHTML = '<span class="err">' + icon('alert', 14) + ' הוסף לפחות משימה אחת שהעובד יעשה.</span>';
+            return;
+          }
+          const fields = {
+            name: String(builderWorker.name || '').trim(),
+            persona: builderWorker.persona || defaultBeginnerPersona(builderWorker.name),
+            tasks: (builderWorker.tasks ?? []).map((s) => String(s).trim()).filter(Boolean),
+            knowledge: builderWorker.knowledge || '',
+            tools: (builderWorker.tools ?? []).map((s) => String(s).trim()).filter(Boolean),
+            mcpServers: mcpServers,
+          };
+          let r;
+          if (workerId) {
+            r = await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify(fields) });
+          } else {
+            r = await api('/api/workers', { method: 'POST', body: JSON.stringify({ templateId: worker.templateId, ...fields }) });
+          }
+          if (r.ok) {
+            status.innerHTML = icon('check', 14) + ' נשמר!';
+            const newId = r.body.workerId || workerId;
+            setTimeout(() => { location.hash = '#/workers/edit/' + newId; }, 500);
+          } else {
+            status.innerHTML = icon('alert', 14) + ' ' + JSON.stringify(r.body);
+          }
+        };
+    }
+  }
+
+  }
+
+  // ---- Chat (with Paywall) ----
+  async function renderChat(workerId) {
+    setActive('workers');
+    if (!getKey()) { app.innerHTML = '<div class="empty"><h2>' + icon('lock', 20) + ' אין מפתח API</h2><p>הדבק את מפתח ה-<code>sk_...</code> שלך למעלה.</p></div>'; return; }
+    const wr = await api('/api/workers/' + workerId);
+    if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
+    const w = wr.body.worker;
+
+    // ---- Paywall for unpaid workers ----
+    if (!w.isActive) {
+      const tplRes = await api('/api/workers/templates');
+      const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
+      const price = template ? template.rentPriceIls : 99;
+      app.innerHTML = `
+        <div class="toolbar">
+          <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
+          <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
+        </div>
+        <div class="paywall">
+          <div class="pw-icon">${icon('lock', 40)}</div>
+          <div style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:4px">עובד בהמתנה לתשלום</div>
+          <h2>${escapeHtml(w.name)} מוכן לעבודה!</h2>
+          <p class="muted" style="margin-bottom:4px">העובד הותאם אישית ומחכה שתפעיל אותו. בחר אמצעי תשלום:</p>
+          <div class="pw-price">₪${price} <small>לחודש</small></div>
+
+          <div class="pw-methods">
+            ${BIT_PHONE ? `
+            <div class="pw-method">
+              <div class="pm-icon" style="background:rgba(0,153,204,.15);color:#0099cc">${icon('zap', 18)}</div>
+              <div class="pm-info">
+                <div class="pm-title">Bit</div>
+                <div class="pm-desc">שלם ל-${BIT_PHONE} וציין "תשלום עובד AI"</div>
+              </div>
+            </div>` : ''}
+            ${PAYPAL_ME ? `
+            <div class="pw-method">
+              <div class="pm-icon" style="background:rgba(0,150,200,.15);color:#0099cc">${icon('globe', 18)}</div>
+              <div class="pm-info">
+                <div class="pm-title">PayPal</div>
+                <div class="pm-desc">שלם ב-paypal.me/${PAYPAL_ME}</div>
+              </div>
+            </div>` : ''}
+            ${BANK_ACCOUNT ? `
+            <div class="pw-method">
+              <div class="pm-icon" style="background:rgba(110,159,94,.15);color:var(--green)">${icon('shield', 18)}</div>
+              <div class="pm-info">
+                <div class="pm-title">העברה בנקאית</div>
+                <div class="pm-desc">${BANK_NAME} סניף ${BANK_BRANCH} חשבון ${BANK_ACCOUNT}</div>
+              </div>
+            </div>` : ''}
+            ${(!BIT_PHONE && !PAYPAL_ME && !BANK_ACCOUNT) ? `
+            <div class="pw-method">
+              <div class="pm-icon" style="background:var(--accent-glow);color:var(--accent)">${icon('alert', 18)}</div>
+              <div class="pm-info">
+                <div class="pm-title">צור קשר עם האדמין</div>
+                <div class="pm-desc">בקש סימון תשלום מהאדמין</div>
+              </div>
+            </div>` : ''}
+          </div>
+
+          <button class="btn btn-outline" id="pw-check" style="margin-top:8px">${icon('check', 14)} בדקתי, אפשר כניסה</button>
+          <div id="pw-status" class="muted" style="margin-top:8px"></div>
+
+          <div class="card" style="margin-top:18px;text-align:right;padding:16px">
+            <h3 style="font-size:15px;margin-bottom:10px">${icon('shield', 16)} שלח בקשת הפעלה</h3>
+            <div class="row" style="align-items:flex-start">
+              <div style="flex:1;min-width:130px">
+                <label>אמצעי תשלום</label>
+                <select id="pay-channel">
+                  <option value="bit">Bit</option>
+                  <option value="paypal">PayPal</option>
+                  <option value="bank-transfer">העברה בנקאית</option>
+                  <option value="manual">אחר</option>
+                </select>
+              </div>
+              <div style="flex:1;min-width:160px">
+                <label>אסמכתא / מספר העברה</label>
+                <input id="pay-reference" placeholder="למשל PP-123 / Bit screenshot" style="direction:ltr;text-align:left" />
+              </div>
+            </div>
+            <div class="fld" style="margin-top:10px">
+              <label>פרטי קשר לאישור</label>
+              <input id="pay-contact" placeholder="אימייל או טלפון" style="direction:ltr;text-align:left" />
+            </div>
+            <div class="fld">
+              <label>הערה לאדמין</label>
+              <textarea id="pay-note" placeholder="שם משלם, שעה, או פרטים שיעזרו לזהות את התשלום" style="min-height:56px"></textarea>
+            </div>
+            <button class="btn btn-primary" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
+            <div id="pay-submit-status" class="muted" style="margin-top:8px;min-height:20px"></div>
+          </div>
+
+          <div class="pw-note">
+            ${icon('clock', 14)} לאחר התשלום, לחץ "בדקתי" כדי לאמת. האדמין יסמן את העובד כפעיל ותוכל להתחיל לצ'וטט מיד.
+          </div>
+        </div>
+      `;
+      document.getElementById('pay-submit').onclick = async () => {
+        const st = document.getElementById('pay-submit-status');
+        const contact = document.getElementById('pay-contact').value.trim();
+        if (!contact) {
+          st.innerHTML = '<span class="err">' + icon('alert', 14) + ' הכנס אימייל או טלפון לאישור</span>';
+          return;
+        }
+        st.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח בקשה...';
+        const r = await api('/api/workers/' + workerId + '/activation-request', {
+          method: 'POST',
+          body: JSON.stringify({
+            channel: document.getElementById('pay-channel').value,
+            reference: document.getElementById('pay-reference').value.trim(),
+            contact,
+            note: document.getElementById('pay-note').value.trim(),
+          }),
+        });
+        if (r.ok) {
+          st.innerHTML = icon('check', 14) + ' הבקשה נשלחה. מספר בקשה: ' + escapeHtml(r.body.requestId);
+          toast('בקשת ההפעלה נשלחה לאישור', 'success');
+        } else {
+          st.innerHTML = '<span class="err">' + icon('alert', 14) + ' ' + escapeHtml(JSON.stringify(r.body)) + '</span>';
+        }
+      };
+      document.getElementById('pw-check').onclick = async () => {
+        const st = document.getElementById('pw-status');
+        st.innerHTML = icon('loading', 14, 'icon-spin') + ' בודק...';
+        const r = await api('/api/workers/' + workerId);
+        if (r.ok && r.body.worker.isActive) {
+          st.innerHTML = icon('check', 14) + ' העובד פעיל!';
+          setTimeout(() => renderChat(workerId), 500);
+        } else {
+          st.innerHTML = icon('alert', 14) + ' עדיין לא אושר. שלם ואז לחץ שוב.';
+        }
+      };
+      return;
+    }
+
+    const mr = await api('/api/workers/' + workerId + '/messages');
+    const messages = mr.ok ? mr.body.messages : [];
+
+    const CUST_LS = 'paid-agent.customerId';
+    function getCustomerId() { return localStorage.getItem(CUST_LS) || ''; }
+    function setCustomerId(id) {
+      if (id) localStorage.setItem(CUST_LS, id);
+      else localStorage.removeItem(CUST_LS);
+    }
+
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
+        <span class="pill ${w.status === 'active' ? 'active' : 'pending'}">${escapeHtml(w.status)}</span>
+        <a href="#/workers/edit/${w.id}" style="margin-right:auto">${icon('edit', 14)} עריכה</a>
+      </div>
+      <div class="muted" style="margin-bottom:10px">תבנית: ${escapeHtml(w.templateId)} · בתשלום עד: ${fmtDate(w.paidUntil)}</div>
+      <div class="key-bar" style="margin-bottom:10px">
+        <label>לקוח</label>
+        <input id="c-customer-id" value="${escapeHtml(getCustomerId())}" placeholder="מזהה לקוח (או ריק)" style="flex:1;max-width:220px;font-family:monospace" />
+        <span class="muted">נשמר מקומית</span>
+      </div>
+      <div id="chat-window" class="chat-window">
+        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' אין הודעות עדיין. תגיד שלום</div>' : ''}
+        ${messages.map((m) => `<div class="msg ${m.role}">${escapeHtml(m.content)}</div>`).join('')}
+      </div>
+      <div id="tool-log" style="margin-top:10px;display:none"></div>
+      <div class="composer">
+        <textarea id="c-input" placeholder="כתוב הודעה... (Enter לשליחה, Shift+Enter לשורה חדשה)"></textarea>
+        <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
+      </div>
+    `;
+    const custInput = document.getElementById('c-customer-id');
+    custInput.onchange = () => setCustomerId(custInput.value.trim());
+    const win = document.getElementById('chat-window');
+    win.scrollTop = win.scrollHeight;
+    const input = document.getElementById('c-input');
+    const send = document.getElementById('c-send');
+    const toolLog = document.getElementById('tool-log');
+    async function doSend() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um); win.scrollTop = win.scrollHeight;
+      send.disabled = true; send.innerHTML = icon('loading', 16, 'icon-spin');
+      const r = await api('/api/workers/' + workerId + '/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: text, customerId: getCustomerId() }),
+      });
+      send.disabled = false; send.innerHTML = icon('send', 16) + ' שלח';
+      if (r.ok) {
+        const am = document.createElement('div'); am.className = 'msg assistant'; am.textContent = r.body.reply; win.appendChild(am);
+        const meta = document.createElement('div'); meta.className = 'msg system'; meta.innerHTML = icon('zap', 12) + ' מנוע: ' + escapeHtml(r.body.runtime) + (r.body.error ? ', שגיאה: ' + escapeHtml(r.body.error) : ''); win.appendChild(meta);
+        if (r.body.toolCalls && r.body.toolCalls.length > 0) {
+          toolLog.style.display = 'block';
+          toolLog.innerHTML = '<details open><summary style="cursor:pointer;font-size:14px;color:var(--muted)">' + icon('zap', 16) + ' כלים שהופעלו (' + r.body.toolCalls.length + ')</summary><div style="margin-top:8px;font-size:13px">' +
+            r.body.toolCalls.map((tc) => '<div style="background:#0a0a12;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px">' +
+              '<b style="color:var(--accent)">' + escapeHtml(tc.name) + '</b>' +
+              '<pre style="margin:6px 0 0;font-size:11px">' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</pre>' +
+              '<div class="muted" style="margin-top:4px">→ ' + escapeHtml((tc.result ?? '').slice(0, 200)) + ((tc.result ?? '').length > 200 ? '…' : '') + '</div>' +
+            '</div>').join('') +
+          '</div></details>';
+        } else {
+          toolLog.style.display = 'none';
+        }
+      } else {
+        const em = document.createElement('div'); em.className = 'msg system'; em.style.color = 'var(--red)';
+        em.innerHTML = r.body.error === 'payment_required' ? icon('alert', 14) + ' נדרש תשלום — ' + escapeHtml(r.body.message) : icon('alert', 14) + ' ' + escapeHtml(JSON.stringify(r.body));
+        win.appendChild(em);
+      }
+      win.scrollTop = win.scrollHeight;
+    }
+    send.onclick = doSend;
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+    };
+  }
+
+  // ---- Admin ----
+  async function renderAdmin() {
+    setActive('admin');
+    const ADMIN_LS = 'paid-agent.adminToken';
+    const adminTok = localStorage.getItem(ADMIN_LS) || '';
+    if (!adminTok) {
+      app.innerHTML = `
+        <div class="empty" style="max-width:460px;margin:60px auto">
+          <h2>${icon('lock', 20)} נדרש טוקן אדמין</h2>
+          <p>הכנס טוקן אדמין כדי לנהל עובדים ותשלומים.</p>
+          <div style="display:flex;gap:8px;margin-top:18px">
+            <input id="admin-token-input" type="password" placeholder="ADMIN_TOKEN" style="direction:ltr;text-align:left;font-family:monospace" />
+            <button class="btn btn-primary" id="admin-token-save">${icon('check', 14)} שמור</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('admin-token-save').onclick = () => {
+        const v = document.getElementById('admin-token-input').value.trim();
+        if (v) localStorage.setItem(ADMIN_LS, v);
+        renderAdmin();
+      };
+      return;
+    }
+    app.innerHTML = '<div class="empty">טוען...</div>';
+    const adminHeaders = { authorization: 'Bearer ' + adminTok };
+    const adminResp = await fetch('/api/admin/workers', { headers: adminHeaders });
+    if (adminResp.status === 401) {
+      localStorage.removeItem(ADMIN_LS);
+      app.innerHTML = '<div class="empty err"><h2>' + icon('alert', 20) + ' טוקן אדמין לא תקין</h2><p>נסה שוב עם טוקן מעודכן.</p></div>';
+      setTimeout(renderAdmin, 1200);
+      return;
+    }
+    const r = await adminResp.json();
+    const reqResp = await fetch('/api/admin/activation-requests?status=pending', { headers: adminHeaders });
+    const activationRequests = reqResp.ok ? (await reqResp.json()).requests ?? [] : [];
+    const auditResp = await fetch('/api/admin/audit-events?limit=12', { headers: adminHeaders });
+    const auditEvents = auditResp.ok ? (await auditResp.json()).events ?? [] : [];
+    const workers = r.workers ?? [];
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>ניהול עובדים</h2>
+        <span class="muted">${workers.length} ${icon('users', 14)} עובדים בסך הכל</span>
+        <button class="btn btn-outline btn-sm" id="admin-token-clear" style="margin-right:auto">${icon('x', 14)} נקה טוקן</button>
+      </div>
+      <p class="muted" style="margin-bottom:16px">אשר בקשות תשלום ואז העובד ייפתח לצ'אט.</p>
+
+      <div class="b-sec">
+        <div class="toolbar" style="margin-bottom:10px">
+          <h3>${icon('activity', 16)} פעילות אדמין אחרונה</h3>
+          <span class="muted">${auditEvents.length} אירועים</span>
+        </div>
+        ${auditEvents.length === 0 ? '<div class="muted">אין עדיין אירועי אדמין.</div>' : `
+          <div class="stack">
+            ${auditEvents.map((evt) => `
+              <div class="row" style="align-items:flex-start;border-bottom:1px solid var(--border);padding:8px 0">
+                <span class="pill ${evt.status === 'ok' ? 'active' : 'pending'}">${escapeHtml(evt.status)}</span>
+                <div style="flex:1;min-width:180px">
+                  <div style="font-weight:700;color:var(--text);font-size:13px">${escapeHtml(evt.action)}</div>
+                  <div class="muted">${escapeHtml(evt.method)} ${escapeHtml(evt.path)} · ${escapeHtml(evt.targetType || 'system')}${evt.targetId ? ' · ' + escapeHtml(evt.targetId) : ''}</div>
+                </div>
+                <span class="muted" style="white-space:nowrap">${fmtDate(evt.at)}</span>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="b-sec">
+        <div class="toolbar" style="margin-bottom:10px">
+          <h3>${icon('shield', 16)} בקשות הפעלה</h3>
+          <span class="muted">${activationRequests.length} בהמתנה</span>
+        </div>
+        ${activationRequests.length === 0 ? '<div class="muted">אין בקשות הפעלה בהמתנה.</div>' : `
+          <div class="stack">
+            ${activationRequests.map((req) => `
+              <div class="card" style="padding:16px 18px">
+                <div class="row">
+                  <h3 style="margin:0;font-size:15px">${escapeHtml(req.workerName)}</h3>
+                  <span class="pill pending">${escapeHtml(req.channel)}</span>
+                  <span class="muted" style="margin-right:auto">${fmtDate(req.at)}</span>
+                </div>
+                <div class="muted" style="margin-top:6px">
+                  tenant: <code>${escapeHtml(req.tenantId)}</code> · worker: <code>${escapeHtml(req.workerId)}</code> · ${escapeHtml(req.templateId)}
+                </div>
+                <div class="row" style="margin-top:10px">
+                  <span class="pill">₪${Number(req.amountIls || 0)}</span>
+                  <span class="muted">אסמכתא: ${escapeHtml(req.reference || '—')}</span>
+                  <span class="muted">קשר: ${escapeHtml(req.contact)}</span>
+                </div>
+                ${req.note ? `<div class="muted" style="margin-top:8px">${escapeHtml(req.note)}</div>` : ''}
+                <div class="row" style="margin-top:12px">
+                  <input id="req-days-${req.id}" type="number" value="30" min="1" max="365" style="width:80px" />
+                  <span class="muted">ימים</span>
+                  <button class="btn btn-primary btn-sm" data-approve-request="${escapeHtml(req.id)}">${icon('check', 14)} אשר והפעל</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      ${workers.length === 0 ? '<div class="empty">אין עדיין עובדים.</div>' : ''}
+      <div class="stack">
+        ${workers.map((w) => `
+          <div class="card" style="flex-direction:row;flex-wrap:wrap;padding:18px 20px">
+            <div style="flex:1;min-width:200px">
+              <div class="row">
+                <h3 style="margin:0;font-size:15px">${escapeHtml(w.name)}</h3>
+                <span class="pill ${w.status === 'active' ? 'active' : 'pending'}">${escapeHtml(w.status)}</span>
+              </div>
+              <div class="muted" style="margin-top:4px">tenant: <code>${escapeHtml(w.tenantId)}</code> · ${escapeHtml(w.templateId)}</div>
+              <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
+            </div>
+            <div class="row" style="gap:8px">
+              <input id="days-${w.id}" type="number" value="30" min="1" max="365" style="width:70px" />
+              <span class="muted">ימים</span>
+              <input id="chan-${w.id}" placeholder="אמצעי תשלום" style="width:130px" />
+              <input id="ref-${w.id}" placeholder="אסמכתא" style="width:120px" />
+              <button class="btn btn-primary" data-mark="${w.id}" style="white-space:nowrap">${icon('check', 14)} סמן כשולם</button>
+              <button class="btn btn-outline" data-recover-tenant="${escapeHtml(w.tenantId)}" data-worker-name="${escapeHtml(w.name)}" style="white-space:nowrap">${icon('shield', 14)} שחזר מפתח</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    document.getElementById('admin-token-clear').onclick = () => {
+      localStorage.removeItem(ADMIN_LS);
+      renderAdmin();
+    };
+    app.querySelectorAll('button[data-approve-request]').forEach((b) => {
+      b.onclick = async () => {
+        const req = activationRequests.find((x) => x.id === b.dataset.approveRequest);
+        if (!req) return;
+        const days = +document.getElementById('req-days-' + req.id).value || 30;
+        const r = await fetch('/api/admin/mark-worker-paid', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({
+            workerId: req.workerId,
+            tenantId: req.tenantId,
+            days,
+            paymentChannel: req.channel,
+            paymentReference: req.reference,
+            amountIls: req.amountIls,
+            activationRequestId: req.id,
+          }),
+        }).then((x) => x.json());
+        if (r.ok) { toast(icon('check', 14) + ' הבקשה אושרה', 'success'); renderAdmin(); }
+        else toast('נכשל: ' + JSON.stringify(r), 'error');
+      };
+    });
+    app.querySelectorAll('button[data-mark]').forEach((b) => {
+      b.onclick = async () => {
+        const id = b.dataset.mark;
+        const days = +document.getElementById('days-' + id).value || 30;
+        const channel = document.getElementById('chan-' + id).value || 'manual';
+        const reference = document.getElementById('ref-' + id).value || null;
+        const r = await fetch('/api/admin/mark-worker-paid', {
+          method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({ workerId: id, tenantId: b.closest('.card').querySelector('code').textContent, days, paymentChannel: channel, paymentReference: reference }),
+        }).then((x) => x.json());
+        if (r.ok) { toast(icon('check', 14) + ' סומן כשולם עד ' + r.paidUntil, 'success'); renderAdmin(); }
+        else toast('נכשל: ' + JSON.stringify(r), 'error');
+      };
+    });
+    app.querySelectorAll('button[data-recover-tenant]').forEach((b) => {
+      b.onclick = async () => {
+        const tenantId = b.dataset.recoverTenant;
+        const workerName = b.dataset.workerName || tenantId;
+        if (!confirm('להנפיק מפתח חדש עבור ' + workerName + '? כל המפתחות הישנים של הטננט יבוטלו.')) return;
+        const r = await fetch('/api/admin/replace-tenant-key', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({ tenantId, label: workerName }),
+        }).then(async (x) => ({ ok: x.ok, body: x.headers.get('content-type')?.includes('json') ? await x.json() : await x.text() }));
+        if (!r.ok) {
+          toast('שחזור נכשל: ' + JSON.stringify(r.body), 'error');
+          return;
+        }
+        openModal(`
+          <div class="modal-hdr">
+            <span class="icon-big">${icon('shield', 24)}</span>
+            <h3>מפתח חדש לטננט</h3>
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x', 16)}</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">שלח את המפתח רק בערוץ תמיכה מאומת. המפתחות הישנים בוטלו.</p>
+            <label>Tenant</label>
+            <input value="${escapeHtml(r.body.tenantId)}" readonly style="direction:ltr;text-align:left;font-family:monospace;margin-bottom:10px" />
+            <label>API key</label>
+            <textarea readonly style="direction:ltr;text-align:left;font-family:monospace;min-height:72px">${escapeHtml(r.body.key)}</textarea>
+          </div>
+        `);
+        renderAdmin();
+      };
+    });
+  }
+
+  return { render: route };
+})();
+window.addEventListener('hashchange', APP.render);
+APP.render();
+</script>
+</body>
+</html>

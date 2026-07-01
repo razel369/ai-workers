@@ -1,205 +1,114 @@
-# Paid-Agent Demo (v0.4.0) — Israel-friendly edition
+# AI Workers — AI Employees for Israeli Businesses
 
-A paid AI agent that works **without a registered business**.
+Hire AI employees — pick a template, customize it, deploy it. Your worker handles customers 24/7 on web chat. WhatsApp coming soon.
 
-Three ways to get an API key:
-1. **Pay via PayPal.me / Bit / Buy Me a Coffee / bank transfer** (oldschool, no business needed in Israel) → owner issues key within 24h
-2. **Pay per call with USDC** via x402 (crypto, instant, no signup)
-3. **Subscribe via GitHub Sponsors** (after you publish the code)
+- **B2B Lead Qualifier** — qualifies Hebrew/English leads, books meetings
+- **Hebrew Customer Support** — answers FAQs from your knowledge base, escalates when needed
+- **Data Entry Clerk** — extracts structured data from emails/forms/invoices
+- **Hebrew Content Writer** — writes blog posts, LinkedIn, ads in natural Hebrew
+- **Real Estate Agent** — handles apartment inquiries, schedules viewings
+- **Clinic Receptionist** — books appointments, answers FAQs, handles cancellations
+- **Restaurant Manager** — takes reservations, answers menu questions, handles takeaway
+- **E-Commerce Support** — order tracking, returns, product questions
+- **Property Manager** — maintenance requests, rent inquiries, contractor coordination
 
-Zero npm dependencies. Single Node.js process.
+## Quick start
 
-## Live demo
-
-A public demo is running on a Cloudflare quick tunnel right now (URL is printed by `npm run tunnel` and changes per restart):
-
-```
-Dashboard:    https://individually-threatening-disable-bottom.trycloudflare.com/
-Invoice:      https://individually-threatening-disable-bottom.trycloudflare.com/invoice
-Agent card:   https://individually-threatening-disable-bottom.trycloudflare.com/.well-known/agent.json
-Health:       https://individually-threatening-disable-bottom.trycloudflare.com/health
-```
-
-The tunnel is courtesy of [cloudflared](https://github.com/cloudflare/cloudflared) (free, no account needed for `--url` mode). Tunnel URLs are ephemeral; for permanent hosting see "Deploy options" below.
-
-## What's new in v0.4.0 (Israel edition)
-
-- **Stripe removed** (not viable in Israel without a business entity)
-- **PayPal.me** as primary fiat channel (Israeli individuals can receive)
-- **Bit** (Israeli payment app) link
-- **Buy Me a Coffee** + **Ko-fi** (international, pay to Israeli bank)
-- **Bank transfer / masheh** with Israeli-friendly fields (bank, branch, account, IBAN, SWIFT)
-- **Gumroad** support (sell the source as a one-time template — Gumroad is merchant-of-record and pays out to Israeli bank accounts)
-- **GitHub Sponsors** link
-- **Auto-generated invoice** at `/invoice` (plain text, ready to email)
-- **Admin endpoint** to issue API keys after off-platform payment (with ADMIN_TOKEN)
-- **Tip jar endpoint** to log incoming tips
-- x402 (crypto) path still works alongside for AI agents
-- **`X-Forwarded-*` honored** so the invoice / dashboard always show the public URL behind any reverse proxy
-
-## Quick start (mock mode, zero setup)
-
-```powershell
-# Generate an admin token (for issuing API keys later)
-$env:ADMIN_TOKEN = -join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
-Write-Host "ADMIN_TOKEN=$env:ADMIN_TOKEN"
-
-npm test    # runs 31 tests against a fresh server
-npm start   # starts on :3000
+```bash
+npm install
+npm test           # starts an isolated server and runs API + browser flow tests
+npm start          # starts on :8765
 ```
 
-Open http://localhost:3000/ for the dashboard.
+Open http://localhost:8765/ for the dashboard, then /marketplace to browse workers.
 
-## Expose it to the internet (one command, zero account)
+## How it works
 
-```powershell
-npm run tunnel
+1. **Start from the marketplace** — buyers can create a tenant key without admin help.
+2. **Pick a template** from the marketplace (one-time buy: 99-199 ₪).
+3. **Customize** persona, tasks, knowledge, skills, and MCP tools in the Builder.
+4. **Pay monthly rental** (149-299 ₪/mo) via PayPal, Bit, or bank transfer.
+5. **Submit payment proof** from the worker paywall.
+6. **Admin approves the activation request** from `#/admin`.
+7. **Chat with the worker** — it handles customers using its persona + your knowledge.
+
+Workers use the platform-provided LLM configured on the server. If no `LLM_API_KEY` is set, the app runs in mock mode for demos and local testing.
+
+## Architecture
+
+```
+src/
+├── server.js        # HTTP server, dashboard, admin routes, payment channels
+├── workers.js       # Worker engine: templates, CRUD, chat, LLM runtime, encryption
+├── workers-ui.html  # Marketplace + Builder + Chat SPA
+├── test.js              # platform/API tests
+├── worker-tests.js      # worker lifecycle/API tests
+├── browser-flow-test.js # rendered buy -> activate -> chat regression
+└── run-tests.js         # isolated test runner used by npm test
 ```
 
-Prints a public `https://*.trycloudflare.com` URL connected to your local server. Cloudflare's Tel Aviv edge is the closest region. Free. No signup. The URL changes every restart; for a permanent URL, sign up for Cloudflare and bind a named tunnel (instructions in the script output).
+Zero runtime npm dependencies. Uses Node 22 built-ins: `node:http`, `node:sqlite`, `node:crypto`. Playwright is a dev dependency for browser-flow verification.
 
-## Configure it for Israel (10 minutes)
+## Configure
 
-Edit `.env` (or set env vars) and fill in **only the ones you want to enable**:
+Edit `.env` or set env vars:
 
-```powershell
-$env:AGENT_NAME              = "Razel's AI Tools"
-$env:AGENT_DESCRIPTION       = "Smart AI agent for Hebrew/English text"
-$env:AGENT_OWNER_CONTACT     = "razel@example.com"
-
-# Oldschool channels (any subset)
-$env:PAYPAL_ME               = "razel"            # -> paypal.me/razel
-$env:BUY_ME_A_COFFEE         = "https://buymeacoffee.com/razel"
-$env:KO_FI                   = "https://ko-fi.com/razel"
-$env:BIT_PHONE               = "972541234567"     # -> bitpay.co.il link
-$env:GITHUB_SPONSORS         = "razel"
-$env:GUMROAD_URL             = "https://razel.gumroad.com/l/paid-agent-template"
-
-# Israeli bank invoice
-$env:PAYEE_NAME              = "Razel M."
-$env:BANK_NAME               = "Bank Hapoalim"
-$env:BANK_BRANCH             = "620"
-$env:BANK_ACCOUNT            = "123456"
-$env:IBAN                    = "IL62 0126 2000 0000 1234 567"
-$env:SWIFT                   = "POALILIT"
-
-# x402 (crypto path, optional)
-$env:NETWORK                 = "base-sepolia"    # for real money: "base"
-$env:WALLET_ADDRESS          = "0xYourAddress"
-$env:PRICE_USDC              = "0.05"
-
-# Admin
-$env:ADMIN_TOKEN             = "your-secret-token"
+```bash
+set ADMIN_TOKEN=your-secret-token   # admin panel access
+set PAYPAL_ME=your-username          # payment channel
+set BIT_PHONE=972541234567           # Israeli Bit payments
+set BANK_ACCOUNT=123456              # bank transfer details
 ```
 
-Then `npm start` (or `npm run tunnel` for public access).
+Admin API calls must use bearer auth:
 
-## How the oldschool path actually works
-
-1. Customer opens `https://your-host/invoice`
-2. They pick a plan (`credits-100`, `monthly-1k`, `power-10k`)
-3. They pay via **any channel listed** (PayPal.me, Bit, bank transfer, etc.)
-4. They email you the screenshot + plan id
-5. **You issue their key** (one curl):
-
-```powershell
-Invoke-WebRequest -Uri "https://your-host/admin/issue-key?token=$env:ADMIN_TOKEN" `
-  -Method POST -Headers @{ "content-type" = "application/json" } `
-  -Body '{"planId":"monthly-1k","channel":"paypal","reference":"PP-12345","label":"John D."}'
+```bash
+curl -H "Authorization: Bearer %ADMIN_TOKEN%" http://localhost:8765/earnings
 ```
 
-Response:
-```json
-{ "ok": true, "key": "sk_a1b2c3d4...", "plan": "monthly-1k", "callsLimit": 1000 }
-```
+Query-string admin tokens are intentionally rejected so secrets do not leak through logs, history, or copied URLs.
 
-6. You paste that key into an email to the customer.
-7. Customer uses it:
+## Operator Flow
 
-```powershell
-curl -X POST https://your-host/entrypoints/summarize/invoke `
-  -H "authorization: Bearer sk_a1b2c3d4..." `
-  -H "content-type: application/json" `
-  -d '{"text":"hello world"}'
-```
+- New buyers use `/api/signup` through the marketplace UI to create a tenant key.
+- Tenant IDs are stable across API key rotation; customers can rotate the browser-stored key from the key bar.
+- Admins can replace a lost tenant key from `#/admin`; old active keys for that tenant are revoked.
+- Unpaid workers stay in `pending_payment` and cannot chat.
+- Buyers submit proof through `/api/workers/:id/activation-request`.
+- Admins review pending requests at `/marketplace#/admin` and approve with `/api/admin/mark-worker-paid`.
+- Private telemetry endpoints such as `/earnings` and `/earnings.csv` require admin bearer auth.
+- MCP discovery and website-learning URLs are restricted to public `http`/`https`
+  destinations by default to prevent SSRF. Use `ALLOW_PRIVATE_NETWORK_URLS=1`
+  only in isolated local labs.
 
-## Deploy options (permanent hosting)
+## Deploy
 
-All configs are committed in the repo:
+Production deployments must persist `/app/data`; it contains the platform SQLite
+database (`earnings.db`) and per-tenant worker databases (`tenants/*/workers.db`).
+If this directory is ephemeral, customers will lose keys, workers, audit events,
+payment status, and chat history on restart.
 
-| Platform | Files | Cost | Time to live |
-|---|---|---|---|
-| **Cloudflare Tunnel (this machine)** | `bin/cloudflared.exe` + `npm run tunnel` | free | 1 min |
-| **Railway** | `railway.toml`, `Dockerfile` | free tier + ~$5/mo | 5 min |
-| **Fly.io** | `fly.toml`, `Dockerfile` | free tier (3 VMs) | 5 min |
-| **Render** | `render.yaml`, `Dockerfile` | free tier (sleeps) | 5 min |
-| **Any VPS** (Hetzner, DigitalOcean) | `Dockerfile` | ~$4/mo | 15 min |
+| Platform | Config | Time |
+|---|---|---|
+| Railway | `railway.toml` + `Dockerfile` | 5 min |
+| Fly.io | `fly.toml` + `Dockerfile` | 5 min |
+| Render | `render.yaml` + `Dockerfile` | 5 min |
+| Any VPS | `Dockerfile` | 15 min |
 
-### Railway
-```powershell
-npm install -g @railway/cli
-railway login
-railway init
-railway up
-# Then in dashboard: set env vars (see .env.example)
-```
+Deployment checklist:
 
-### Fly.io
-```powershell
-irm https://fly.io/install.ps1 | iex
-fly auth signup
-fly launch --no-deploy
-fly secrets set ADMIN_TOKEN=... WALLET_ADDRESS=0x... PAYPAL_ME=razel BIT_PHONE=...
-fly deploy
-```
+- Set `ADMIN_TOKEN` from a secret manager, never in source.
+- Set `LLM_API_KEY` for real worker replies; without it the app intentionally runs in mock mode.
+- Mount persistent storage at `/app/data` or set `DB_PATH` and `TENANTS_DIR` to another persistent path.
+- Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy/load balancer that overwrites `X-Forwarded-*` headers.
+- Verify `/health` after deploy and run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
+- Roll back by redeploying the previous image/revision, then verify `/health` and the admin audit panel.
 
-### Render
-Push the repo to GitHub, then in Render dashboard: New → Web Service → Connect repo. Render reads `render.yaml` automatically and prompts for the env vars.
+## Why this is worth paying for (2026)
 
-## Endpoints
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| GET | `/` | none | dashboard |
-| GET | `/health` | none | config |
-| GET | `/.well-known/agent.json` | none | A2A agent card |
-| GET | `/requirements` | none | x402 requirements |
-| GET | `/billing/plans` | none | plans + payment channels |
-| GET | `/invoice` | none | plain-text invoice |
-| POST | `/tip` | none | log an incoming tip |
-| GET | `/earnings` | none | summary + recent calls |
-| GET | `/earnings.csv` | none | CSV export |
-| POST | `/entrypoints/:key/invoke` | API key OR x402 | paid call |
-| POST | `/admin/issue-key` | `ADMIN_TOKEN` | issue an API key |
-| GET | `/admin/keys` | `ADMIN_TOKEN` | list issued keys (no secrets) |
-| POST | `/admin/revoke` | `ADMIN_TOKEN` | revoke a key |
-
-## Revenue math (Israeli pricing)
-
-| Plan | Calls | ILS | USD |
-|---|---|---|---|
-| credits-100 | 100 | 18 ₪ | ~$5 |
-| monthly-1k | 1,000 | 35 ₪ | ~$9 |
-| power-10k | 10,000 | 280 ₪ | ~$75 |
-
-100 monthly-1k customers = 3,500 ₪/month.
-
-## File map
-
-| File | Purpose |
-|---|---|
-| `server.js` | Paid agent: HTTP, x402, API keys, admin, invoice, dashboard |
-| `test.js` | 31 E2E tests |
-| `package.json` | zero runtime deps |
-| `Dockerfile` | container for Railway/Fly/Render/any VPS |
-| `railway.toml` | Railway config |
-| `fly.toml` | Fly.io config |
-| `render.yaml` | Render config |
-| `bin/cloudflared.exe` | Cloudflare Tunnel binary |
-| `bin/tunnel.js` | Quick-tunnel launcher |
-| `.env.example` | config template |
-| `data/earnings.db` | SQLite (auto-created) |
-
-## License
-
-MIT
+AI models are commodity. The value is in **vertical integration**:
+- Pre-built Hebrew-first templates tuned for Israeli business culture
+- No-code builder — businesses customize without developers
+- Israeli payment methods (PayPal, Bit, bank transfer — no Stripe needed)
+- Per-tenant worker isolation with stable tenant IDs, key rotation, recovery, and admin audit events
+- WhatsApp integration (coming soon) — the #1 business channel in Israel

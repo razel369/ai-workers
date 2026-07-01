@@ -1,69 +1,68 @@
-// Minimal paid AI agent — Israel-friendly edition.
+// AI Workers — Israeli businesses hire AI employees, not APIs.
 //
-// Three payment paths:
-//   1. x402 / USDC          (crypto, for AI agents)
-//   2. PayPal.me / Bit / Buy Me a Coffee / bank invoice / Ko-fi
-//                            (oldschool, no business needed in Israel)
-//   3. Free with API key    (issued after off-platform payment)
-//
-// Auth on POST /entrypoints/:key/invoke:
-//   - Authorization: Bearer sk_...  -> consumes one API key credit
-//   - X-PAYMENT: <x402 proof>       -> verifies on-chain USDC payment
-//   - otherwise                     -> 402 with both options listed
+// Businesses pick a worker template (Lead Qualifier, Hebrew Support, etc.),
+// customize it, and deploy it. Workers chat with customers 24/7 on web chat
+// (WhatsApp coming soon). Monthly subscription covers all usage and tokens.
 //
 // ENV:
-//   PORT=3000
-//   NETWORK=base-sepolia                 (x402 only)
-//   WALLET_ADDRESS=0x...                 (x402 receiver)
-//   PRICE_USDC=0.05                      (x402 default price)
-//   FACILITATOR_URL=https://x402.org/facilitator
+//   PORT=8765
 //   PUBLIC_BASE_URL=https://your.host
-//   AGENT_NAME, AGENT_DESCRIPTION, AGENT_VERSION, AGENT_OWNER_CONTACT
+//   AGENT_NAME=AI Workers
+//   AGENT_OWNER_CONTACT=you@example.com
 //
-//   -- Tip jar / contact (any combination) --
-//   PAYPAL_ME=razel                                 -> https://paypal.me/razel
-//   BUY_ME_A_COFFEE=https://buymeacoffee.com/razel
-//   KO_FI=https://ko-fi.com/razel
+//   -- Server LLM (required for real AI replies) --
+//   LLM_API_KEY=sk-...                              # OpenAI / Anthropic API key
+//   LLM_PROVIDER=openai_compatible                  # or: anthropic
+//   LLM_MODEL=gpt-5.5                               # model name
+//   LLM_BASE_URL=https://api.openai.com             # base URL (change for Ollama, Groq, etc.)
+//
+//   -- Oldschool payment channels (any subset) --
+//   PAYPAL_ME=you                                  -> https://paypal.me/you
+//   BUY_ME_A_COFFEE=https://buymeacoffee.com/you
+//   KO_FI=https://ko-fi.com/you
 //   BIT_PHONE=972541234567                         -> shows a Bit payment link
-//   GITHUB_SPONSORS=razel                           -> https://github.com/sponsors/razel
-//   GUMROAD_URL=https://razel.gumroad.com/l/paid-agent
+//   GITHUB_SPONSORS=you
+//   GUMROAD_URL=https://you.gumroad.com/l/ai-workers
 //
 //   -- Bank invoice (Israeli-friendly) --
-//   PAYEE_NAME=Razel M.
+//   PAYEE_NAME=Your Name
 //   BANK_NAME=Bank Hapoalim
 //   BANK_BRANCH=620
 //   BANK_ACCOUNT=123456
 //   IBAN=IL62...  (optional, for cross-border)
 //   SWIFT=POALILIT  (optional)
 //
-//   -- Admin (issue API keys after off-platform payment) --
+//   -- Admin (issue API keys, manage workers) --
 //   ADMIN_TOKEN=some-long-random-string
 //   DB_PATH=./data/earnings.db
 
 import http from 'node:http';
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import * as workers from './workers.js';
+import * as mcpClient from './mcp-client.js';
+import { SKILLS, getSkill } from './skills.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PORT = Number(process.env.PORT ?? 3000);
-const NETWORK = process.env.NETWORK ?? 'base-sepolia';
-const PRICE_USDC = process.env.PRICE_USDC ?? '0.05';
-const WALLET_ADDRESS = process.env.WALLET_ADDRESS ?? '';
-const FACILITATOR_URL = process.env.FACILITATOR_URL ?? '';
-const PAYMENT_MODE = process.env.PAYMENT_MODE ?? (FACILITATOR_URL ? 'live' : 'mock');
+const PORT = Number(process.env.PORT ?? 8765);
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
-const AGENT_NAME = process.env.AGENT_NAME ?? 'Paid Agent Demo';
-const AGENT_DESCRIPTION = process.env.AGENT_DESCRIPTION ?? 'AI agent with x402 (USDC) and oldschool payment options.';
-const AGENT_VERSION = process.env.AGENT_VERSION ?? '0.4.0';
+const AGENT_NAME = process.env.AGENT_NAME ?? 'AI Workers';
+const AGENT_DESCRIPTION = process.env.AGENT_DESCRIPTION ?? 'AI employees for Israeli businesses.';
 const AGENT_OWNER_CONTACT = process.env.AGENT_OWNER_CONTACT ?? '';
 const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 120);
-const DB_PATH = process.env.DB_PATH ?? join(__dirname, 'data', 'earnings.db');
+const SIGNUP_LIMIT_PER_HOUR = Number(process.env.SIGNUP_LIMIT_PER_HOUR ?? 12);
+const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, 'data', 'earnings.db');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
+const CORS_ALLOW_ORIGIN = process.env.CORS_ALLOW_ORIGIN ?? '';
+const ALLOW_PRIVATE_NETWORK_URLS = process.env.ALLOW_PRIVATE_NETWORK_URLS === '1';
+const TRUST_PROXY_HEADERS = process.env.TRUST_PROXY_HEADERS === '1';
 
 // Oldschool channels
 const PAYPAL_ME = process.env.PAYPAL_ME ?? '';
@@ -81,46 +80,26 @@ const BANK_ACCOUNT = process.env.BANK_ACCOUNT ?? '';
 const IBAN = process.env.IBAN ?? '';
 const SWIFT = process.env.SWIFT ?? '';
 
-// --- USDC config ----------------------------------------------------------
+// Server LLM (not BYOK — the platform provides the AI)
+const LLM_API_KEY = process.env.LLM_API_KEY ?? '';
+const LLM_PROVIDER = process.env.LLM_PROVIDER ?? 'openai_compatible';
+const LLM_MODEL = process.env.LLM_MODEL ?? 'gpt-5.5';
+const LLM_BASE_URL = process.env.LLM_BASE_URL ?? '';
 
-const USDC_ADDRESSES = {
-  'base':           { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
-  'base-sepolia':   { address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', decimals: 6 },
-  'ethereum':       { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-  'sepolia':        { address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', decimals: 6 },
-  'polygon':        { address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', decimals: 6 },
-  'solana':         { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 },
-};
+// --- Named constants ------------------------------------------------------
 
-const NETWORK_META = {
-  'base':         { chainId: 8453,     scheme: 'exact', tokenStandard: 'ERC-20' },
-  'base-sepolia': { chainId: 84532,    scheme: 'exact', tokenStandard: 'ERC-20' },
-  'ethereum':     { chainId: 1,        scheme: 'exact', tokenStandard: 'ERC-20' },
-  'sepolia':      { chainId: 11155111, scheme: 'exact', tokenStandard: 'ERC-20' },
-  'polygon':      { chainId: 137,      scheme: 'exact', tokenStandard: 'ERC-20' },
-  'solana':       { chainId: 101,      scheme: 'exact', tokenStandard: 'SPL'  },
-};
-
-function priceToAtomic(usdc) {
-  const m = USDC_ADDRESSES[NETWORK] ?? USDC_ADDRESSES['base-sepolia'];
-  return String(BigInt(Math.round(parseFloat(usdc) * 10 ** m.decimals)));
-}
-
-function buildPaymentRequirements(resourcePath) {
-  const cfg = NETWORK_META[NETWORK];
-  if (!cfg) throw new Error(`Unsupported network: ${NETWORK}`);
-  const m = USDC_ADDRESSES[NETWORK] ?? USDC_ADDRESSES['base-sepolia'];
-  return {
-    x402Version: 1,
-    accepts: [{
-      scheme: cfg.scheme, network: NETWORK, chainId: cfg.chainId, tokenStandard: cfg.tokenStandard,
-      maxAmountRequired: priceToAtomic(PRICE_USDC), resource: resourcePath,
-      description: `${AGENT_NAME} \u2014 paid endpoint`, mimeType: 'application/json',
-      payTo: WALLET_ADDRESS,
-      extra: { name: 'USD Coin', version: '2', asset: m.address },
-    }],
-  };
-}
+const UNLIMITED_CALLS = 999_999_999;
+const BODY_TINY = 1024 * 16;
+const BODY_SMALL = 1024 * 64;
+const BODY_LARGE = 1024 * 256;
+const STATS_POLL_MS = 10000;
+const TEMPLATE_ANIM_DELAY = 0.08;
+const RECENT_CALLS_DEFAULT = 50;
+const CSV_EXPORT_LIMIT = 1000;
+const ADMIN_KEYS_LIMIT = 200;
+const ADMIN_AUDIT_LIMIT = 200;
+const ASSETS_CACHE_MAX_AGE = 86400;
+const DEFAULT_RENT_DAYS = 30;
 
 // --- SQLite ---------------------------------------------------------------
 
@@ -136,6 +115,7 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+    tenant_id TEXT,
     plan TEXT NOT NULL, calls_limit INTEGER NOT NULL, calls_used INTEGER NOT NULL DEFAULT 0,
     period_start TEXT NOT NULL, period_end TEXT,
     payment_channel TEXT NOT NULL DEFAULT 'manual',
@@ -147,13 +127,54 @@ db.exec(`
     at TEXT NOT NULL, channel TEXT NOT NULL, amount TEXT,
     note TEXT, donor TEXT
   );
+  CREATE TABLE IF NOT EXISTS activation_requests (
+    id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    worker_name TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    amount_ils INTEGER NOT NULL DEFAULT 0,
+    channel TEXT NOT NULL,
+    reference TEXT,
+    contact TEXT NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS admin_audit_events (
+    id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    status TEXT NOT NULL,
+    metadata TEXT
+  );
   CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+  CREATE INDEX IF NOT EXISTS idx_activation_requests_status ON activation_requests(status, at);
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_events_at ON admin_audit_events(at);
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_events_action ON admin_audit_events(action, at);
 `);
+try { db.exec(`ALTER TABLE api_keys ADD COLUMN tenant_id TEXT`); } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)`); } catch {}
 
 // --- Helpers --------------------------------------------------------------
 
 const newId = (p) => `${p}_${crypto.randomBytes(16).toString('hex')}`;
 const hashKey = (k) => crypto.createHash('sha256').update(k).digest('hex');
+
+// API key validation: check the key exists in the api_keys table (not just any sk_ string)
+function requireAuth(req) {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+  if (!token.startsWith('sk_')) return null;
+  const check = validateApiKey(token);
+  return check.valid ? check.tenantId : null;
+}
 
 function recordCall(o) {
   db.prepare('INSERT INTO calls (at, endpoint, network, amount_usdc, payer, tx_hash, mock, input_chars, auth_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
@@ -162,6 +183,229 @@ function recordCall(o) {
 }
 function recordTip(o) {
   db.prepare('INSERT INTO tips (at, channel, amount, note, donor) VALUES (?, ?, ?, ?, ?)').run(new Date().toISOString(), o.channel, o.amount ?? null, o.note ?? null, o.donor ?? null);
+}
+
+function cleanText(value, max = 160) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function ipv4ToInt(address) {
+  const parts = address.split('.').map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null;
+  return parts.reduce((acc, p) => ((acc << 8) + p) >>> 0, 0);
+}
+
+function ipv4InCidr(address, base, bits) {
+  const ip = ipv4ToInt(address);
+  const baseIp = ipv4ToInt(base);
+  if (ip === null || baseIp === null) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ip & mask) === (baseIp & mask);
+}
+
+function isPrivateOrReservedIp(address) {
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return isPrivateOrReservedIp(mapped[1]);
+  const family = net.isIP(address);
+  if (family === 4) {
+    return [
+      ['0.0.0.0', 8],
+      ['10.0.0.0', 8],
+      ['100.64.0.0', 10],
+      ['127.0.0.0', 8],
+      ['169.254.0.0', 16],
+      ['172.16.0.0', 12],
+      ['192.0.0.0', 24],
+      ['192.168.0.0', 16],
+      ['198.18.0.0', 15],
+      ['224.0.0.0', 4],
+      ['240.0.0.0', 4],
+    ].some(([base, bits]) => ipv4InCidr(address, base, bits));
+  }
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe8') ||
+      normalized.startsWith('fe9') ||
+      normalized.startsWith('fea') ||
+      normalized.startsWith('feb') ||
+      normalized.startsWith('ff');
+  }
+  return false;
+}
+
+async function validatePublicHttpUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(String(rawUrl ?? '')); }
+  catch { return { ok: false, error: 'invalid_url' }; }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'unsupported_protocol' };
+  if (!parsed.hostname) return { ok: false, error: 'host_required' };
+  if (parsed.username || parsed.password) return { ok: false, error: 'credentials_not_allowed' };
+  if (String(rawUrl).length > 2048) return { ok: false, error: 'url_too_long' };
+  if (ALLOW_PRIVATE_NETWORK_URLS) return { ok: true, url: parsed.toString() };
+
+  const literalFamily = net.isIP(parsed.hostname);
+  let resolved = [];
+  if (literalFamily) {
+    resolved = [{ address: parsed.hostname, family: literalFamily }];
+  } else {
+    try {
+      resolved = await dns.lookup(parsed.hostname, { all: true, verbatim: false });
+    } catch {
+      return { ok: false, error: 'host_resolution_failed' };
+    }
+  }
+  if (resolved.length === 0) return { ok: false, error: 'host_resolution_failed' };
+  if (resolved.some((r) => isPrivateOrReservedIp(r.address))) return { ok: false, error: 'private_network_blocked' };
+  return { ok: true, url: parsed.toString(), resolved };
+}
+
+function pinnedLookup(resolved) {
+  return (hostname, options, callback) => {
+    if (typeof options === 'function') { callback = options; options = {}; }
+    const family = Number(options?.family || 0);
+    const allowed = family ? resolved.filter((r) => r.family === family) : resolved;
+    if (allowed.length === 0) {
+      const err = new Error('No allowed public address for host');
+      err.code = 'ENOTFOUND';
+      return callback(err);
+    }
+    if (options?.all) return callback(null, allowed);
+    return callback(null, allowed[0].address, allowed[0].family);
+  };
+}
+
+const SENSITIVE_AUDIT_KEYS = new Set(['key', 'apiKey', 'token', 'authorization', 'password', 'secret']);
+function redactAuditMetadata(value, depth = 0) {
+  if (value === null || value === undefined) return value ?? null;
+  if (depth > 4) return '[depth_limit]';
+  if (Array.isArray(value)) return value.slice(0, 20).map((v) => redactAuditMetadata(v, depth + 1));
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value).slice(0, 40)) {
+      out[k] = SENSITIVE_AUDIT_KEYS.has(k) ? '[redacted]' : redactAuditMetadata(v, depth + 1);
+    }
+    return out;
+  }
+  if (typeof value === 'string') return cleanText(value, 300);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  return cleanText(String(value), 120);
+}
+
+function recordAdminAudit(req, { action, targetType = null, targetId = null, status = 'ok', metadata = null }) {
+  try {
+    const pathOnly = new URL(req.url, `http://${req.headers.host}`).pathname;
+    db.prepare(
+      `INSERT INTO admin_audit_events
+        (id, at, ip, method, path, action, target_type, target_id, status, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      newId('audit'),
+      new Date().toISOString(),
+      cleanText(clientIp(req), 80),
+      cleanText(req.method, 12),
+      cleanText(pathOnly, 160),
+      cleanText(action, 80),
+      targetType ? cleanText(targetType, 80) : null,
+      targetId ? cleanText(targetId, 160) : null,
+      cleanText(status, 40),
+      metadata ? JSON.stringify(redactAuditMetadata(metadata)).slice(0, 4000) : null
+    );
+  } catch (e) {
+    console.error('recordAdminAudit failed:', e);
+  }
+}
+
+function listAdminAuditEvents({ limit = ADMIN_AUDIT_LIMIT } = {}) {
+  const limitSafe = Math.max(1, Math.min(Number(limit) || ADMIN_AUDIT_LIMIT, ADMIN_AUDIT_LIMIT));
+  const rows = db.prepare(
+    `SELECT id, at, ip, method, path, action, target_type AS targetType,
+            target_id AS targetId, status, metadata
+       FROM admin_audit_events
+      ORDER BY at DESC
+      LIMIT ?`
+  ).all(limitSafe);
+  return rows.map((r) => {
+    let metadata = null;
+    if (r.metadata) {
+      try { metadata = JSON.parse(r.metadata); } catch { metadata = null; }
+    }
+    return { ...r, metadata };
+  });
+}
+
+function issueSelfServeTenant({ businessName, contact }) {
+  const label = cleanText(businessName, 80) || 'Self-serve tenant';
+  const contactClean = cleanText(contact, 120);
+  const issued = issueApiKey({
+    plan: 'worker-tenant',
+    callsLimit: UNLIMITED_CALLS,
+    paymentChannel: 'self-serve-signup',
+    paymentReference: contactClean || null,
+    label,
+  });
+  return { ...issued, label, contact: contactClean };
+}
+
+function recordActivationRequest({ tenantId, worker, channel, reference, contact, note, amountIls }) {
+  const id = newId('act');
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO activation_requests
+      (id, at, tenant_id, worker_id, worker_name, template_id, amount_ils, channel, reference, contact, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id, now, tenantId, worker.id, worker.name, worker.templateId,
+    amountIls ?? 0, cleanText(channel, 40) || 'manual', cleanText(reference, 120) || null,
+    cleanText(contact, 160), cleanText(note, 300) || null
+  );
+  return { id, at: now };
+}
+
+function listActivationRequests({ status = '', limit = 200 } = {}) {
+  const limitSafe = Math.max(1, Math.min(Number(limit) || 200, 500));
+  if (status) {
+    return db.prepare(
+      `SELECT id, at, tenant_id AS tenantId, worker_id AS workerId, worker_name AS workerName,
+              template_id AS templateId, amount_ils AS amountIls, channel, reference, contact,
+              note, status, reviewed_at AS reviewedAt
+         FROM activation_requests
+        WHERE status = ?
+        ORDER BY at DESC
+        LIMIT ?`
+    ).all(status, limitSafe);
+  }
+  return db.prepare(
+    `SELECT id, at, tenant_id AS tenantId, worker_id AS workerId, worker_name AS workerName,
+            template_id AS templateId, amount_ils AS amountIls, channel, reference, contact,
+            note, status, reviewed_at AS reviewedAt
+       FROM activation_requests
+      ORDER BY status = 'pending' DESC, at DESC
+      LIMIT ?`
+  ).all(limitSafe);
+}
+
+function markActivationRequestReviewed(id, status) {
+  if (!id) return;
+  db.prepare('UPDATE activation_requests SET status = ?, reviewed_at = ? WHERE id = ?').run(status, new Date().toISOString(), id);
+}
+
+function validateActivationRequestForPayment({ id, tenantId, workerId }) {
+  if (!id) return { ok: true };
+  const req = db.prepare(
+    `SELECT id, tenant_id AS tenantId, worker_id AS workerId, status
+       FROM activation_requests
+      WHERE id = ?`
+  ).get(id);
+  if (!req) return { ok: false, error: 'activation_request_not_found' };
+  if (req.status !== 'pending') return { ok: false, error: 'activation_request_not_pending', status: req.status };
+  if (req.tenantId !== tenantId || req.workerId !== workerId) {
+    return { ok: false, error: 'activation_request_mismatch' };
+  }
+  return { ok: true, request: req };
 }
 
 function getEarningsSummary() {
@@ -194,93 +438,159 @@ function rateLimit(ip) {
   b.tokens -= 1; buckets.set(ip, b); return true;
 }
 
-// --- Entrypoints ----------------------------------------------------------
-
-const entrypoints = [
-  { key: 'summarize', description: 'Condense long text into a short summary.',
-    inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
-    handler: async ({ text }) => {
-      const w = String(text ?? '').trim().split(/\s+/).filter(Boolean);
-      return { summary: w.slice(0, 25).join(' ') + (w.length > 25 ? '...' : ''), wordCount: w.length };
-    } },
-  { key: 'translate', description: 'Translate text. Stub.',
-    inputSchema: { type: 'object', required: ['text', 'to'], properties: { text: { type: 'string' }, to: { type: 'string' } } },
-    handler: async ({ text, to }) => ({ translation: `[${to}] ${text}`, targetLang: to }) },
-  { key: 'sentiment', description: 'Score sentiment on -1..1.',
-    inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
-    handler: async ({ text }) => {
-      const pos=['good','great','love','awesome','excellent','happy','win'], neg=['bad','hate','terrible','awful','sad','lose','bug'];
-      const lower=String(text??'').toLowerCase();
-      const s=pos.reduce((n,w)=>n+(lower.includes(w)?0.2:0),0)-neg.reduce((n,w)=>n+(lower.includes(w)?0.2:0),0);
-      return { score: Math.max(-1,Math.min(1,Number(s.toFixed(2)))), label: s>0.1?'positive':s<-0.1?'negative':'neutral' };
-    } },
-  { key: 'extract-entities', description: 'Pull capitalized noun phrases.',
-    inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
-    handler: async ({ text }) => {
-      const m = String(text ?? '').match(/\b[A-Z][a-zA-Z]{2,}\b/g) ?? [];
-      const u = [...new Set(m)];
-      return { entities: u.slice(0, 50), count: u.length };
-    } },
-  { key: 'word-count', description: 'Free-tier stats.', priceUsdc: '0.001',
-    inputSchema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
-    handler: async ({ text }) => {
-      const s = String(text ?? '');
-      const w = s.trim().split(/\s+/).filter(Boolean);
-      return { chars: s.length, words: w.length, sentences: (s.match(/[.!?]+/g)??[]).length, paragraphs: s.split(/\n\s*\n/).filter(Boolean).length, readingMinutes: Math.max(1, Math.round(w.length / 220)) };
-    } },
-];
-const findEntrypoint = (k) => entrypoints.find((e) => e.key === k);
-
-// --- x402 verification ----------------------------------------------------
-
-async function verifyPayment(reqs, header) {
-  if (PAYMENT_MODE === 'mock') return { valid: true, payer: '0xMOCK' + crypto.randomBytes(8).toString('hex'), txHash: '0xMOCKTX' + crypto.randomBytes(24).toString('hex'), mock: true };
-  if (!FACILITATOR_URL) return { valid: false, reason: 'no facilitator' };
-  const res = await fetch(`${FACILITATOR_URL}/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ x402Version: 1, paymentHeader: header, paymentRequirements: reqs }) });
-  if (!res.ok) return { valid: false, reason: `facilitator ${res.status}` };
-  const j = await res.json();
-  return { valid: !!j.isValid, payer: j.payer, txHash: j.transaction ?? j.txHash, mock: false };
+const signupBuckets = new Map();
+function signupRateLimit(ip) {
+  const now = Date.now();
+  const b = signupBuckets.get(ip) ?? { tokens: SIGNUP_LIMIT_PER_HOUR, last: now };
+  const elapsed = (now - b.last) / 3_600_000;
+  b.tokens = Math.min(SIGNUP_LIMIT_PER_HOUR, b.tokens + elapsed * SIGNUP_LIMIT_PER_HOUR);
+  b.last = now;
+  if (b.tokens < 1) { signupBuckets.set(ip, b); return false; }
+  b.tokens -= 1; signupBuckets.set(ip, b); return true;
 }
+
+// --- Entrypoints (reserved for future use) --------------------------------
 
 // --- API keys -------------------------------------------------------------
 
-function issueApiKey({ plan, callsLimit, paymentChannel, paymentReference, label }) {
+function issueApiKey({ plan, callsLimit, callsUsed = 0, periodEnd = null, paymentChannel, paymentReference, label, tenantId }) {
   const key = newId('sk');
   const id = newId('key');
+  const tenant = tenantId || newId('ten');
   db.prepare(
-    `INSERT INTO api_keys (id, key_hash, label, plan, calls_limit, calls_used, period_start, payment_channel, payment_reference, created_at)
-     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
-  ).run(id, hashKey(key), label ?? 'Customer', plan, callsLimit, new Date().toISOString(), paymentChannel ?? 'manual', paymentReference ?? null, new Date().toISOString());
-  return { id, key };
+    `INSERT INTO api_keys (id, key_hash, label, tenant_id, plan, calls_limit, calls_used, period_start, period_end, payment_channel, payment_reference, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, hashKey(key), label ?? 'Customer', tenant, plan, callsLimit, callsUsed, new Date().toISOString(), periodEnd, paymentChannel ?? 'manual', paymentReference ?? null, new Date().toISOString());
+  return { id, key, tenantId: tenant };
+}
+function validateApiKey(token) {
+  const kh = hashKey(token);
+  const r = db.prepare('SELECT id, tenant_id AS tenantId, calls_used, calls_limit, plan, label, period_end, revoked_at FROM api_keys WHERE key_hash = ?').get(kh);
+  if (!r) return { valid: false, reason: 'unknown_key' };
+  if (r.revoked_at) return { valid: false, reason: 'revoked' };
+  if (r.period_end && new Date(r.period_end) < new Date()) return { valid: false, reason: 'expired' };
+  const tenantId = r.tenantId || workers.tenantIdFromApiKey(token);
+  if (!r.tenantId) db.prepare('UPDATE api_keys SET tenant_id = ? WHERE id = ?').run(tenantId, r.id);
+  return { valid: true, plan: r.plan, label: r.label, keyId: r.id, tenantId, calls_used: r.calls_used, calls_limit: r.calls_limit, period_end: r.period_end };
 }
 function consumeApiCall(kh) {
-  const r = db.prepare('SELECT id, calls_used, calls_limit, plan, label FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL').get(kh);
+  const r = db.prepare('SELECT id, tenant_id AS tenantId, calls_used, calls_limit, plan, label FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL').get(kh);
   if (!r) return { valid: false, reason: 'unknown_key' };
   if (r.calls_used >= r.calls_limit) return { valid: false, reason: 'quota_exceeded', used: r.calls_used, limit: r.calls_limit };
   db.prepare('UPDATE api_keys SET calls_used = calls_used + 1 WHERE id = ?').run(r.id);
-  return { valid: true, plan: r.plan, used: r.calls_used + 1, limit: r.calls_limit, label: r.label };
+  return { valid: true, plan: r.plan, used: r.calls_used + 1, limit: r.calls_limit, label: r.label, tenantId: r.tenantId };
+}
+function rotateApiKey(token) {
+  const current = validateApiKey(token);
+  if (!current.valid) return current;
+  const issued = issueApiKey({
+    tenantId: current.tenantId,
+    plan: current.plan,
+    callsLimit: current.calls_limit,
+    callsUsed: current.calls_used,
+    periodEnd: current.period_end,
+    paymentChannel: 'key-rotation',
+    paymentReference: current.keyId,
+    label: current.label,
+  });
+  db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(new Date().toISOString(), current.keyId);
+  return { valid: true, ...issued, oldKeyId: current.keyId };
+}
+
+function replaceTenantKey({ tenantId, label }) {
+  const tenant = cleanText(tenantId, 80);
+  if (!tenant) return { ok: false, error: 'tenantId_required' };
+  const template = db.prepare(
+    `SELECT label, plan, calls_limit AS callsLimit, calls_used AS callsUsed, period_end AS periodEnd
+       FROM api_keys
+      WHERE tenant_id = ?
+      ORDER BY revoked_at IS NULL DESC, created_at DESC
+      LIMIT 1`
+  ).get(tenant);
+  const tenantHasWorkers = workers.adminListAllWorkers().some((w) => w.tenantId === tenant);
+  if (!template && !tenantHasWorkers) return { ok: false, error: 'unknown_tenant' };
+  const issued = issueApiKey({
+    tenantId: tenant,
+    plan: template?.plan ?? 'worker-tenant',
+    callsLimit: template?.callsLimit ?? UNLIMITED_CALLS,
+    callsUsed: template?.callsUsed ?? 0,
+    periodEnd: template?.periodEnd ?? null,
+    paymentChannel: 'admin-recovery',
+    paymentReference: 'tenant-key-replacement',
+    label: cleanText(label, 80) || template?.label || `Recovered ${tenant}`,
+  });
+  const now = new Date().toISOString();
+  db.prepare('UPDATE api_keys SET revoked_at = ? WHERE tenant_id = ? AND id <> ? AND revoked_at IS NULL').run(now, tenant, issued.id);
+  return { ok: true, ...issued, revokedExisting: true };
+}
+
+function gatherWorkerStats() {
+  const all = workers.adminListAllWorkers();
+  const active = all.filter((w) => w.status === 'active' && w.paidUntil && new Date(w.paidUntil) > new Date());
+  const uniqueTenants = new Set(all.map((w) => w.tenantId));
+  let monthlyRevenueIls = 0;
+  for (const w of active) {
+    const tpl = workers.getTemplate(w.templateId);
+    if (tpl) monthlyRevenueIls += tpl.rentPriceIls;
+  }
+  return { activeWorkers: active.length, tenantCount: uniqueTenants.size, monthlyRevenueIls };
+}
+
+function getPublicMarketplaceStats() {
+  const prices = workers.TEMPLATES.map((t) => t.buyPriceIls).filter((n) => Number.isFinite(n));
+  return {
+    templateCount: workers.TEMPLATES.length,
+    categoryCount: new Set(workers.TEMPLATES.map((t) => t.category).filter(Boolean)).size,
+    startingPriceIls: prices.length ? Math.min(...prices) : 0,
+    paymentChannelCount: buildAcquireChannels().length,
+  };
 }
 
 // --- HTTP helpers ---------------------------------------------------------
+
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data:",
+  "font-src 'self' https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "script-src 'self' 'unsafe-inline'",
+  "connect-src 'self'",
+].join('; ');
 
 function send(res, status, body, h = {}) {
   let payload; const ct = h['content-type'] ?? 'application/json';
   if (ct === 'application/json' && body !== null && typeof body !== 'string' && !Buffer.isBuffer(body)) payload = JSON.stringify(body, null, 2);
   else if (typeof body === 'string' || Buffer.isBuffer(body)) payload = body;
   else payload = '';
+  const securityHeaders = {
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'no-referrer',
+    'permissions-policy': 'geolocation=(), microphone=(), camera=()',
+    'content-security-policy': CONTENT_SECURITY_POLICY,
+    'strict-transport-security': 'max-age=31536000; includeSubDomains',
+    'cross-origin-opener-policy': 'same-origin',
+  };
+  const corsHeaders = CORS_ALLOW_ORIGIN ? {
+    'access-control-allow-origin': CORS_ALLOW_ORIGIN,
+    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  } : {};
   res.writeHead(status, {
     'content-type': ct, 'content-length': Buffer.byteLength(payload),
-    'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
-    'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'content-type, x-payment, authorization',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    ...securityHeaders,
+    ...corsHeaders,
     ...h,
   });
   res.end(payload);
 }
 function clientIp(req) {
   const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
+  if (TRUST_PROXY_HEADERS && typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
   return req.socket?.remoteAddress ?? 'unknown';
 }
 
@@ -288,8 +598,8 @@ function clientIp(req) {
 // Trusts X-Forwarded-* headers (set by Cloudflare Tunnel, Fly, Render, Railway)
 // so the dashboard and invoice always show the real public URL, not localhost.
 function resolveBaseUrl(req) {
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host;
-  const proto = req.headers['x-forwarded-proto'] ?? 'http';
+  const host = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-host'] ?? req.headers.host) : req.headers.host;
+  const proto = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-proto'] ?? 'http') : 'http';
   if (host) return `${proto}://${host}`;
   return PUBLIC_BASE_URL;
 }
@@ -299,40 +609,9 @@ async function readBody(req, max = 1024 * 64) {
   return { text: Buffer.concat(cs).toString('utf8') };
 }
 
-// --- A2A Agent Card -------------------------------------------------------
-
-function buildAgentCard(baseUrl = PUBLIC_BASE_URL) {
-  const skills = entrypoints.map((e) => ({
-    id: e.key, name: e.key.replace(/-/g, ' '), description: e.description,
-    inputSchema: e.inputSchema, outputSchema: { type: 'object' },
-    pricing: {
-      model: 'per-call',
-      amount: e.priceUsdc ?? PRICE_USDC,
-      currency: e.priceUsdc ? 'USDC' : 'USD',
-      network: e.priceUsdc ? NETWORK : null,
-      payTo: e.priceUsdc ? WALLET_ADDRESS : null,
-      alternativeAuth: 'api-key',
-      protocol: e.priceUsdc ? 'x402' : 'https',
-      note: e.priceUsdc ? null : 'Pay via PayPal.me / Bit / bank invoice, then admin issues an API key.',
-    },
-  }));
-  return {
-    schema: 'a2a-agent-card/v1',
-    name: AGENT_NAME, description: AGENT_DESCRIPTION, version: AGENT_VERSION,     url: baseUrl,
-    provider: { organization: AGENT_NAME, contact: AGENT_OWNER_CONTACT || undefined },
-    capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
-    authentication: {
-      schemes: ['x402-usdc', 'bearer-api-key'],
-      x402: { network: NETWORK, payTo: WALLET_ADDRESS, facilitator: FACILITATOR_URL || null, defaultPriceUsdc: PRICE_USDC },
-      apiKey: { acquireVia: buildAcquireChannels() },
-    },
-    skills, defaultInputModes: ['text'], defaultOutputModes: ['json'],
-  };
-}
-
 function buildAcquireChannels() {
   const list = [];
-  if (PAYPAL_ME) list.push({ kind: 'paypal', url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Pay any amount, send screenshot to ' + (AGENT_OWNER_CONTACT || 'owner'), note: 'API key issued within 24h' });
+  if (PAYPAL_ME) list.push({ kind: 'paypal', url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
   if (BUY_ME_A_COFFEE) list.push({ kind: 'buymeacoffee', url: BUY_ME_A_COFFEE });
   if (KO_FI) list.push({ kind: 'kofi', url: KO_FI });
   if (BIT_PHONE) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
@@ -342,166 +621,409 @@ function buildAcquireChannels() {
   return list;
 }
 
-// --- Plans (oldschool, manually issued) -----------------------------------
-
-const PLANS = [
-  { id: 'credits-100', name: '100 calls', callsLimit: 100,  priceIls: 18, priceUsd: 5 },
-  { id: 'monthly-1k', name: '1,000 calls / month', callsLimit: 1000, priceIls: 35, priceUsd: 9, recurring: 'monthly' },
-  { id: 'power-10k',  name: '10,000 calls / month', callsLimit: 10000, priceIls: 280, priceUsd: 75, recurring: 'monthly' },
-];
-
 // --- HTML pages -----------------------------------------------------------
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
 function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
-  const channels = buildAcquireChannels();
-  const channelButtons = channels.map((c) => {
-    if (c.kind === 'paypal') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">PayPal</div><div class="price">any amount</div><div class="muted">paypal.me/${escapeHtml(PAYPAL_ME)}</div></a>`;
-    if (c.kind === 'buymeacoffee') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">Buy Me a Coffee</div><div class="price">tip jar</div><div class="muted">${escapeHtml(c.url)}</div></a>`;
-    if (c.kind === 'kofi') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">Ko-fi</div><div class="price">tip jar</div><div class="muted">${escapeHtml(c.url)}</div></a>`;
-    if (c.kind === 'bit') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">Bit (Israeli)</div><div class="price">QR / link</div><div class="muted">${escapeHtml(c.phone)}</div></a>`;
-    if (c.kind === 'github-sponsors') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">GitHub Sponsors</div><div class="price">monthly</div><div class="muted">github.com/sponsors/${escapeHtml(GITHUB_SPONSORS)}</div></a>`;
-    if (c.kind === 'gumroad') return `<a class="plan" href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><div class="muted">Gumroad (one-time)</div><div class="price">template</div><div class="muted">${escapeHtml(c.url)}</div></a>`;
-    if (c.kind === 'bank-transfer') return `<div class="plan"><div class="muted">Bank transfer (masheh)</div><div style="font-size:13px;line-height:1.7"><b>${escapeHtml(c.payee || '')}</b><br>${escapeHtml(c.bank || '')} \u2014 branch ${escapeHtml(c.branch || '')}<br>Account: <code>${escapeHtml(c.account || '')}</code>${c.iban ? `<br>IBAN: <code>${escapeHtml(c.iban)}</code>` : ''}${c.swift ? `<br>SWIFT: <code>${escapeHtml(c.swift)}</code>` : ''}</div><div class="muted">Send screenshot to ${escapeHtml(AGENT_OWNER_CONTACT || 'owner')}</div></div>`;
-    return '';
-  }).join('');
-
   return `<!doctype html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${escapeHtml(AGENT_NAME)}</title>
+  <title>עובדי AI — העסק שלך עובד 24/7</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    :root { color-scheme: dark; }
-    body { font: 14px/1.5 system-ui, -apple-system, sans-serif; max-width: 960px; margin: 32px auto; padding: 0 16px; background: #0b0b10; color: #e7e7ea; }
-    h1 { font-size: 22px; margin: 0 0 4px; }
-    .sub { color: #9aa0a6; margin-bottom: 24px; }
-    .card { background: #15151c; border: 1px solid #2a2a35; border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-    .stat { background: #15151c; border: 1px solid #2a2a35; border-radius: 12px; padding: 14px; }
-    .stat .v { font-size: 22px; font-weight: 700; }
-    .stat .k { color: #9aa0a6; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-    code { background: #0f0f15; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-    pre { background: #0f0f15; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
-    a { color: #7cc4ff; text-decoration: none; }
+    :root {
+      color-scheme: dark;
+      --bg: #0c0a08;
+      --surface: #161310;
+      --surface2: #211c17;
+      --border: #2d2720;
+      --text: #ece4d8;
+      --body: #b0a69a;
+      --muted: #756c62;
+      --accent: #c9953e;
+      --accent2: #a87d30;
+      --green: #6e8f5e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font: 16px/1.7 'Assistant', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--body);
+      overflow-x: hidden;
+    }
+
+    /* === Ambient background layers === */
+
+    /* 1. Animated mesh — warm amber/copper glow */
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 70% 50% at 30% 25%, rgba(201,149,62,.08), transparent 55%),
+        radial-gradient(ellipse 55% 45% at 75% 50%, rgba(168,125,48,.05), transparent 50%);
+      animation: meshPulse 12s ease-in-out infinite alternate;
+    }
+    @keyframes meshPulse { 0% { opacity: .5; } 50% { opacity: 1; } 100% { opacity: .5; } }
+
+    /* 2. Dot grid with radial fade-out */
+    body::after {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
+      background-size: 32px 32px;
+      -webkit-mask-image: radial-gradient(circle at 50% 25%, black 30%, transparent 75%);
+      mask-image: radial-gradient(circle at 50% 25%, black 30%, transparent 75%);
+    }
+
+    /* 3. Floating particles */
+    .particles { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .particles span {
+      position: absolute; width: 2px; height: 2px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 4px var(--accent), 0 0 12px rgba(201,149,62,.12);
+      animation: particleUp 20s linear infinite; opacity: 0; bottom: -10px;
+    }
+    @keyframes particleUp {
+      0% { transform: translateY(0); opacity: 0; }
+      8% { opacity: .3; }
+      92% { opacity: .3; }
+      100% { transform: translateY(-110vh); opacity: 0; }
+    }
+
+    a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #2a2a35; font-size: 12px; margin-right: 4px; }
-    .pill.live { background: #143a1f; color: #6ff09d; }
-    .pill.mock { background: #3a1f14; color: #ffaa6f; }
-    button { background: #2a2a35; color: #e7e7ea; border: 0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
-    button:hover { background: #3a3a48; }
-    button.primary { background: #2563eb; }
-    button.primary:hover { background: #1d4ed8; }
-    textarea { width: 100%; box-sizing: border-box; background: #0f0f15; color: #e7e7ea; border: 1px solid #2a2a35; border-radius: 6px; padding: 8px; font: inherit; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .muted { color: #9aa0a6; font-size: 12px; }
-    .err { color: #ff8a8a; }
-    .ok { color: #6ff09d; }
-    .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-    .plan { display: block; border: 1px solid #2a2a35; border-radius: 12px; padding: 16px; background: #0f0f15; }
-    .plan .price { font-size: 22px; font-weight: 700; margin: 4px 0; }
-    .plan:hover { border-color: #3a3a48; }
+    .container { max-width: 1040px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    /* === Nav === */
+    nav { display: flex; align-items: center; gap: 24px; padding: 14px 0; flex-wrap: wrap; position: relative; z-index: 2; }
+    nav .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    nav .logo .logo-icon { font-size: 26px; line-height: 1; }
+    nav .logo .logo-text { display: flex; flex-direction: column; line-height: 1.2; }
+    nav .logo .logo-main { font-size: 19px; font-weight: 800; letter-spacing: -.02em; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    nav .logo .logo-sub { font-size: 10px; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
+    nav .links { display: flex; gap: 2px; margin-right: auto; flex-wrap: wrap; }
+    nav .links a { color: var(--muted); padding: 6px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; transition: .15s; }
+    nav .links a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
+
+    /* === Glass base for cards === */
+    .tpl-card, .stat-card, .pillar-card, .step-card, .faq-item {
+      background: rgba(22,19,16,.65);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      border: 1px solid var(--border);
+      position: relative;
+    }
+
+    /* Gradient border via mask — appears on hover */
+    .tpl-card::before, .stat-card::before, .pillar-card::before, .step-card::before, .faq-item::before {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+      background: linear-gradient(135deg, rgba(201,149,62,.4), rgba(168,125,48,.3), rgba(201,149,62,.1));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      mask-composite: exclude;
+      pointer-events: none; opacity: 0; transition: opacity .35s ease;
+    }
+    .tpl-card:hover::before, .stat-card:hover::before, .pillar-card:hover::before, .step-card:hover::before, .faq-item:hover::before { opacity: 1; }
+
+    /* Shimmer sweep on hover */
+    .tpl-card::after, .pillar-card::after, .stat-card::after {
+      content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: linear-gradient(110deg, transparent 38%, rgba(255,255,255,.015) 48%, transparent 58%);
+      transform: translateX(-130%) skewX(-12deg); pointer-events: none; border-radius: inherit;
+    }
+    .tpl-card:hover::after, .pillar-card:hover::after, .stat-card:hover::after { animation: shimmerSweep 1.2s ease forwards; }
+    @keyframes shimmerSweep { 0% { transform: translateX(-130%) skewX(-12deg); } 100% { transform: translateX(130%) skewX(-12deg); } }
+
+    /* === Hero === */
+    .hero { text-align: center; padding: 80px 0 50px; position: relative; overflow: hidden; }
+    .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 500px 350px at 50% 30%, rgba(201,149,62,.1), transparent 60%); pointer-events: none; }
+    .hero .badge { display: inline-block; background: rgba(110,143,94,.1); color: var(--green); font-size: 13px; font-weight: 600; padding: 6px 18px; border-radius: 999px; margin-bottom: 24px; border: 1px solid rgba(110,143,94,.15); }
+    .hero h1 { font-size: clamp(32px, 5vw, 56px); font-weight: 800; line-height: 1.15; margin-bottom: 16px; color: var(--text); letter-spacing: -.02em; }
+    .hero h1 .highlight { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero .subtitle { font-size: 17px; color: var(--body); max-width: 580px; margin: 0 auto 28px; line-height: 1.6; }
+    .hero .cta-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
+    .hero .cta { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; padding: 14px 32px; border-radius: 12px; font-size: 17px; font-weight: 700; transition: .25s; box-shadow: 0 0 0 0 rgba(201,149,62,0); }
+    .hero .cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(201,149,62,.35); text-decoration: none; }
+    .hero .cta-secondary { display: inline-flex; align-items: center; gap: 8px; background: rgba(22,19,16,.65); backdrop-filter: blur(8px); color: var(--text); padding: 14px 28px; border-radius: 12px; font-size: 17px; font-weight: 600; border: 1px solid var(--border); transition: .2s; }
+    .hero .cta-secondary:hover { background: var(--surface2); border-color: rgba(201,149,62,.3); text-decoration: none; }
+    .hero .trust { margin-top: 20px; font-size: 14px; color: var(--muted); display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
+    .hero .trust span { display: flex; align-items: center; gap: 4px; }
+
+    /* === Animations === */
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    .anim { animation: fadeUp .6s cubic-bezier(.22,1,.36,1) both; }
+    .anim-1 { animation-delay: .05s; }
+    .anim-2 { animation-delay: .15s; }
+    .anim-3 { animation-delay: .25s; }
+    .anim-4 { animation-delay: .35s; }
+
+    /* === Sections === */
+    section { padding: 64px 0; }
+    .section-title { font-size: 28px; font-weight: 700; text-align: center; margin-bottom: 8px; color: var(--text); letter-spacing: -.02em; }
+    .section-sub { text-align: center; color: var(--body); font-size: 16px; margin-bottom: 40px; }
+
+    /* === Stats === */
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    @media (max-width: 700px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    .stat-card { border-radius: 14px; padding: 22px 16px; text-align: center; transition: .25s; }
+    .stat-card:hover { transform: translateY(-2px); }
+    .stat-card .v { font-size: 28px; font-weight: 800; letter-spacing: -.02em; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .stat-card .k { color: var(--muted); font-size: 13px; margin-top: 2px; font-weight: 500; }
+
+    /* === Pillars (how it works) === */
+    .pillars-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 700px) { .pillars-grid { grid-template-columns: 1fr; } }
+    .pillar-card { border-radius: 16px; padding: 32px 24px; text-align: center; transition: .25s; overflow: hidden; }
+    .pillar-card:hover { transform: translateY(-3px); }
+    .pillar-card .icon { font-size: 40px; margin-bottom: 14px; display: block; }
+    .pillar-card h3 { font-size: 18px; margin-bottom: 8px; font-weight: 700; color: var(--text); }
+    .pillar-card p { color: var(--body); font-size: 14px; line-height: 1.7; margin: 0; }
+
+    /* === Templates grid === */
+    .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .tpl-card { border-radius: 14px; padding: 24px; transition: .25s; display: flex; flex-direction: column; overflow: hidden; }
+    .tpl-card:hover { transform: translateY(-3px); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+    .tpl-card .icon { font-size: 28px; margin-bottom: 8px; }
+    .tpl-card h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+    .tpl-card .desc { color: var(--body); font-size: 13px; line-height: 1.6; margin-bottom: 12px; flex: 1; }
+    .tpl-card .price { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+    .tpl-card .price b { color: var(--green); font-weight: 700; }
+    .tpl-card .cta-sm { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; background: var(--accent); color: white; padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; transition: .2s; }
+    .tpl-card .cta-sm:hover { background: #b88430; text-decoration: none; }
+
+    /* === Steps === */
+    .steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 700px) { .steps-grid { grid-template-columns: 1fr; } }
+    .step-card { border-radius: 16px; padding: 32px 24px; text-align: center; overflow: hidden; }
+    .step-card .num { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; margin-bottom: 14px; }
+    .step-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+    .step-card p { color: var(--body); font-size: 14px; line-height: 1.7; margin: 0; }
+
+    /* === FAQ === */
+    .faq-grid { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+    .faq-item { border-radius: 12px; overflow: hidden; transition: .2s; }
+    .faq-item:hover { border-color: rgba(201,149,62,.2); }
+    .faq-item summary { cursor: pointer; padding: 16px 20px; font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 10px; color: var(--text); }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::before { content: '+'; font-size: 16px; font-weight: 700; color: var(--accent); transition: .2s; }
+    .faq-item[open] summary::before { content: '−'; }
+    .faq-item .content { padding: 0 20px 16px; color: var(--body); font-size: 14px; line-height: 1.7; }
+
+    /* === Footer === */
+    .footer { text-align: center; padding: 40px 0; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
+    .footer a { color: var(--accent); }
+    .footer .fm { display: flex; gap: 14px; justify-content: center; margin-bottom: 12px; flex-wrap: wrap; }
+
+    /* === Utilities === */
+    code { background: var(--surface2); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+    .btn-mkt { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; padding: 14px 32px; border-radius: 12px; font-size: 16px; font-weight: 700; transition: .25s; box-shadow: 0 0 0 0 rgba(201,149,62,0); }
+    .btn-mkt:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(201,149,62,.3); text-decoration: none; }
+    .text-center { text-align: center; }
+    .mt-8 { margin-top: 32px; }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(AGENT_NAME)}</h1>
-  <div class="sub">${escapeHtml(AGENT_DESCRIPTION)}</div>
-  <div class="row" style="margin-bottom: 16px">
-    <span class="pill ${PAYMENT_MODE === 'live' ? 'live' : 'mock'}">x402: ${PAYMENT_MODE}</span>
-    <span class="pill">${escapeHtml(NETWORK)}</span>
-    <span class="pill">${escapeHtml(PRICE_USDC)} USDC/call</span>
-    <span class="pill">v${escapeHtml(AGENT_VERSION)}</span>
+  <div class="particles">
+    <span style="left:15%;animation-delay:0s;animation-duration:18s"></span>
+    <span style="left:30%;animation-delay:3s;animation-duration:22s;width:1px;height:1px;background:var(--accent2);box-shadow:0 0 3px var(--accent2)"></span>
+    <span style="left:50%;animation-delay:1s;animation-duration:16s;width:3px;height:3px;background:var(--green);box-shadow:0 0 6px var(--green)"></span>
+    <span style="left:70%;animation-delay:5s;animation-duration:20s;width:1px;height:1px;background:var(--accent2);box-shadow:0 0 3px var(--accent2)"></span>
+    <span style="left:85%;animation-delay:2s;animation-duration:17s"></span>
   </div>
+  <div class="container">
+    <nav>
+      <span class="logo">
+        <span class="logo-icon">🤖</span>
+        <span class="logo-text">
+          <span class="logo-main">עובדי AI</span>
+          <span class="logo-sub">עובדים חכמים 24/7</span>
+        </span>
+      </span>
+      <div class="links">
+        <a href="/marketplace">שוק העובדים</a>
+        <a href="/marketplace#/workers">העובדים שלי</a>
+        <a href="/invoice">חשבונית</a>
+      </div>
+    </nav>
 
-  <div class="grid" id="stats">
-    <div class="stat"><div class="k">Total calls</div><div class="v" id="s-calls">-</div></div>
-    <div class="stat"><div class="k">USDC received</div><div class="v" id="s-usdc">-</div></div>
-    <div class="stat"><div class="k">Unique payers</div><div class="v" id="s-payers">-</div></div>
-    <div class="stat"><div class="k">Tips</div><div class="v" id="s-tips">-</div></div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin-top:0">Pay for API access (oldschool, no Stripe needed)</h3>
-    <div class="muted" style="margin-bottom:12px">Pick any channel. After payment, the owner emails you an API key within 24h. Or use x402 below for instant access.</div>
-    <div class="pricing" style="margin-bottom:14px">
-      ${PLANS.map((p) => `<div class="plan">
-        <div class="muted">${escapeHtml(p.name)}</div>
-        <div class="price">${escapeHtml(String(p.priceIls))} ILS${p.recurring ? ' / ' + escapeHtml(p.recurring) : ''} <span style="font-size:13px;color:#9aa0a6">(~$${p.priceUsd})</span></div>
-        <div class="muted">plan id: <code>${escapeHtml(p.id)}</code></div>
-      </div>`).join('')}
+    <div class="hero anim anim-1">
+      <div class="badge">🔥 עובדים חכמים 24/7 — בלי חוזים, בלי הפתעות</div>
+      <h1>שכור <span class="highlight">עובד AI</span><br>לעסק שלך בישראל</h1>
+      <p class="subtitle">בוחרים תבנית, מתאימים אישית, ומקבלים עובד וירטואלי שמנהל שיחות עם לקוחות — מסנן לידים, עונה בשאלות, מתאם פגישות, ועוד. חיסכון של אלפי שקלים בחודש.</p>
+      <div class="cta-group">
+        <a href="/marketplace" class="cta">לעבור לשוק העובדים ←</a>
+        <a href="/invoice" class="cta-secondary">מחירון ←</a>
+      </div>
+      <div class="trust">
+        <span>✓ משלמים ב-PayPal, Bit, או בנק</span>
+        <span>✓ 9+ תבניות לבחירה</span>
+        <span>✓ קנייה חד-פעמית + שכירות חודשית</span>
+      </div>
     </div>
-    <div class="pricing">${channelButtons}</div>
-    <div class="muted" style="margin-top:10px">Pay via any channel above, then email <code>${escapeHtml(AGENT_OWNER_CONTACT || AGENT_OWNER_CONTACT || 'owner')}</code> with the plan id and payment proof. You'll get an API key like <code>sk_abc123...</code> to call this agent.</div>
+
+    <section class="anim anim-2">
+      <div class="stats-grid" id="stats">
+        <div class="stat-card"><div class="v" id="s-workers">-</div><div class="k">תבניות מוכנות</div></div>
+        <div class="stat-card"><div class="v" id="s-tenants">-</div><div class="k">קטגוריות עסקיות</div></div>
+        <div class="stat-card"><div class="v" id="s-revenue">-</div><div class="k">מחיר התחלה</div></div>
+        <div class="stat-card"><div class="v" id="s-tips">-</div><div class="k">אמצעי תשלום</div></div>
+      </div>
+    </section>
+
+    <section class="anim anim-3">
+      <h2 class="section-title">ככה זה עובד</h2>
+      <p class="section-sub">שלושה צעדים פשוטים — ותוך דקות יש לך עובד AI</p>
+      <div class="pillars-grid">
+        <div class="pillar-card">
+          <div class="icon">🛒</div>
+          <h3>קונים תבנית</h3>
+          <p>משלמים מחיר חד-פעמי (מ-50 ₪) + דמי שכירות חודשיים (מ-30 ₪). אין עלויות נסתרות, אין חוזים.</p>
+        </div>
+        <div class="pillar-card">
+          <div class="icon">🎨</div>
+          <h3>מתאימים אישית</h3>
+          <p>קובעים אישיות, משימות וידע. יכולות השפה כלולות במנוי — מצב הדגמה חינמי זמין מיד.</p>
+        </div>
+        <div class="pillar-card">
+          <div class="icon">💬</div>
+          <h3>פורסים ומרוויחים</h3>
+          <p>העובד שלך פעיל 24/7 בצ'אט. חוסך לך אלפי שקלים בחודש בעובדים אנושיים.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="anim anim-3">
+      <h2 class="section-title">🧑‍💼 התבניות הפופולריות</h2>
+      <p class="section-sub">תבניות מוכנות — בוחרים, מתאימים, ומפעילים</p>
+      <div class="tpl-grid" id="tpl-list">
+        <div style="text-align:center;grid-column:1/-1;color:var(--muted);padding:40px">טוען תבניות...</div>
+      </div>
+      <div class="text-center mt-8">
+        <a href="/marketplace" class="btn-mkt">לכל התבניות ←</a>
+      </div>
+    </section>
+
+    <section class="anim anim-4">
+      <h2 class="section-title">איך עובדי AI עובדים?</h2>
+      <p class="section-sub">הכל אוטומטי — אתה רק מגדיר והעובד עושה את השאר</p>
+      <div class="steps-grid">
+        <div class="step-card">
+          <div class="num">1</div>
+          <h3>בוחרים תבנית</h3>
+          <p>מסנני לידים, נציג שירות בעברית, מזכירה רפואית, ניהול מסעדה, ועוד תבניות רבות.</p>
+        </div>
+        <div class="step-card">
+          <div class="num">2</div>
+          <h3>מתאימים אישית</h3>
+          <p>כותבים אישיות, משימות וידע ספציפי לעסק. יכולות השפה מסופקות אוטומטית — בלי מפתחות, בלי הגדרות.</p>
+        </div>
+        <div class="step-card">
+          <div class="num">3</div>
+          <h3>פורסים ומתחילים</h3>
+          <p>העובד פעיל 24/7. משלמים ב-PayPal, Bit, או העברה בנקאית.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="anim anim-4">
+      <h2 class="section-title">שאלות נפוצות</h2>
+      <p class="section-sub">כל מה שרצית לדעת על עובדי AI</p>
+      <div class="faq-grid">
+        <details class="faq-item">
+          <summary>מה זה "עובד AI"?</summary>
+          <div class="content">עובד AI הוא עובד וירטואלי שמבוסס על בינה מלאכותית. הוא מנהל שיחות עם לקוחות, עונה על שאלות, מסנן לידים, מתאם פגישות ומבצע משימות שירות — בדיוק כמו עובד אנושי, אבל זול בהרבה ועובד 24/7.</div>
+        </details>
+        <details class="faq-item">
+          <summary>כמה זה עולה?</summary>
+          <div class="content">קונים תבנית במחיר חד-פעמי (מ-50 ₪) ואז משלמים דמי שכירות חודשיים (מ-30 ₪ לחודש). אין עלויות נוספות. אפשר לשלם ב-PayPal, Bit, או העברה בנקאית.</div>
+        </details>
+        <details class="faq-item">
+          <summary>האם אני צריך כרטיס אשראי?</summary>
+          <div class="content">לא. אנחנו תומכים ב-PayPal, Bit, והעברה בנקאית. מתאים במיוחד לבעלי עסקים בישראל.</div>
+        </details>
+        <details class="faq-item">
+          <summary>איך העובד לומד על העסק שלי?</summary>
+          <div class="content">אתה כותב לו ידע ספציפי — שאלות נפוצות, מחירונים, מדיניות. יכולות השפה מסופקות אוטומטית על ידי הפלטפורמה — בלי צורך במפתח אישי.</div>
+        </details>
+        <details class="faq-item">
+          <summary>האם העובד זוכר לקוחות?</summary>
+          <div class="content">כן! העובד זוכר עובדות על לקוחות לאורך שיחות — העדפות, פרטי קשר, היסטוריית רכישות. הכל מאובטח בשרת שלך.</div>
+        </details>
+      </div>
+    </section>
   </div>
 
-  <div class="card">
-    <h3 style="margin-top:0">Pay per call (x402 / USDC, instant)</h3>
-    <div class="muted" style="margin-bottom:8px">No signup. Any AI agent or x402 client can call this directly.</div>
-    <pre>curl -X POST ${escapeHtml(baseUrl)}/entrypoints/summarize/invoke \\
-  -H "x-payment: &lt;x402-payment-proof&gt;" \\
-  -H "content-type: application/json" \\
-  -d '{"text":"hello world"}'</pre>
-    <div class="muted">Per call: <b>${escapeHtml(PRICE_USDC)} USDC</b> on <b>${escapeHtml(NETWORK)}</b> to <code>${escapeHtml(WALLET_ADDRESS || '<set WALLET_ADDRESS>')}</code></div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin-top:0">Try an endpoint (mock-paid)</h3>
-    <div class="muted" style="margin-bottom:6px">In mock mode, any <code>x-payment</code> header is accepted.</div>
-    <div class="row" style="margin-bottom:8px">
-      <select id="ep" style="background:#0f0f15;color:#e7e7ea;border:1px solid #2a2a35;border-radius:6px;padding:6px"></select>
+  <div class="footer">
+    <div class="fm">
+      <a href="/marketplace">שוק העובדים</a>
+      <a href="/invoice">חשבונית</a>
+      <a href="/marketplace#/admin">ניהול</a>
+      ${AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">צור קשר</a>` : ''}
     </div>
-    <textarea id="ep-input" placeholder='{"text":"hello world"}'></textarea>
-    <div style="margin-top:8px"><button id="ep-go">Invoke</button> <span id="ep-out" class="muted"></span></div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin-top:0">For AI agents (discoverability)</h3>
-    <ul style="margin:0;padding-left:18px">
-      <li><a href="/.well-known/agent.json">/.well-known/agent.json</a> (A2A agent card)</li>
-      <li><a href="/requirements">/requirements</a> (x402 payment requirements)</li>
-      <li><a href="/billing/plans">/billing/plans</a> (plans + payment channels)</li>
-      <li><a href="/invoice">/invoice</a> (text invoice with bank details)</li>
-      <li><a href="/earnings.csv">/earnings.csv</a> (accounting export)</li>
-    </ul>
+    <p>${escapeHtml(AGENT_NAME)} · ${escapeHtml(AGENT_DESCRIPTION)}</p>
   </div>
 
   <script>
+    function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+    function animateValue(el, start, end, suffix, duration) {
+      if (!el) return;
+      let startTime = null;
+      const step = (time) => {
+        if (!startTime) startTime = time;
+        const p = Math.min((time - startTime) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        const val = Math.floor(start + (end - start) * ease);
+        el.textContent = val + (suffix || '');
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
     async function loadStats() {
       try {
-        const r = await fetch('/earnings'); const j = await r.json();
-        document.getElementById('s-calls').textContent = j.summary?.totalCalls ?? 0;
-        document.getElementById('s-usdc').textContent = (j.summary?.totalUsdcReceived ?? 0) + ' USDC';
-        document.getElementById('s-payers').textContent = j.summary?.uniquePayers ?? 0;
-        document.getElementById('s-tips').textContent = j.summary?.tipCount ?? 0;
-        const epSel = document.getElementById('ep');
-        if (!epSel.options.length) {
-          const card = await (await fetch('/.well-known/agent.json')).json();
-          for (const s of card.skills) { const o = document.createElement('option'); o.value = s.id; o.textContent = s.id; epSel.appendChild(o); }
-        }
+        const r = await fetch('/api/public/stats');
+        if (!r.ok) return;
+        const j = await r.json();
+        animateValue(document.getElementById('s-workers'), 0, j.templateCount ?? 0, '', 800);
+        animateValue(document.getElementById('s-tenants'), 0, j.categoryCount ?? 0, '', 800);
+        const priceEl = document.getElementById('s-revenue');
+        if (priceEl) priceEl.textContent = (j.startingPriceIls ?? 0) + ' ₪+';
+        animateValue(document.getElementById('s-tips'), 0, j.paymentChannelCount ?? 0, '', 600);
+      } catch (e) { console.error('loadStats failed:', e); }
+    }
+    async function loadTemplates() {
+      try {
+        const r = await fetch('/api/workers/templates'); const j = await r.json();
+        const tpls = j.templates ?? [];
+        const container = document.getElementById('tpl-list');
+        if (!tpls.length) { container.innerHTML = '<div style="text-align:center;grid-column:1/-1;color:var(--muted);padding:40px">אין תבניות כרגע</div>'; return; }
+        container.innerHTML = tpls.map((t, i) => \`
+          <div class="tpl-card anim" style="animation-delay:\${i * ${TEMPLATE_ANIM_DELAY}}s">
+            <div class="icon">\${esc(t.icon)}</div>
+            <h4>\${esc(t.nameHe || t.name)}</h4>
+            <div class="desc">\${esc(t.description)}</div>
+            <div class="price">רכישה: <b>\${t.buyPriceIls} ₪</b> · שכירות: <b>\${t.rentPriceIls} ₪/חודש</b></div>
+            <a href="/marketplace" class="cta-sm">לפרטים ←</a>
+          </div>
+        \`).join('');
       } catch (e) { console.error(e); }
     }
-    document.getElementById('ep-go').onclick = async () => {
-      const ep = document.getElementById('ep').value;
-      const inp = document.getElementById('ep-input').value;
-      const out = document.getElementById('ep-out');
-      out.textContent = '...';
-      try {
-        const r = await fetch('/entrypoints/' + ep + '/invoke', { method: 'POST', headers: { 'content-type': 'application/json', 'x-payment': 'mock' }, body: inp });
-        const j = await r.json();
-        out.className = r.ok ? 'ok' : 'err';
-        out.textContent = (r.ok ? '\u2713 ' : '\u2717 ') + r.status + ' \u2014 ' + JSON.stringify(j).slice(0, 240);
-        loadStats();
-      } catch (e) { out.className = 'err'; out.textContent = String(e); }
-    };
-    loadStats(); setInterval(loadStats, 5000);
+    loadStats(); setInterval(loadStats, ${STATS_POLL_MS});
+    loadTemplates();
   </script>
 </body>
 </html>`;
 }
 
 function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
+  const TEMPLATES = workers.TEMPLATES ?? [];
+  const tplRows = TEMPLATES.map((t) =>
+    `  ${(t.name + ' (' + t.nameHe + ')').padEnd(50)}  buy ${String(t.buyPriceIls).padStart(4)} ILS  |  rent ${String(t.rentPriceIls).padStart(4)} ILS/mo`
+  ).join('\n');
+
   const lines = [];
   lines.push(`INVOICE / HATZAMAT HESHBON`);
   lines.push('='.repeat(60));
@@ -511,12 +1033,9 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   if (baseUrl) lines.push(`URL:     ${baseUrl}`);
   lines.push(`Date:    ${new Date().toISOString().slice(0, 10)}`);
   lines.push('');
-  lines.push('SERVICES');
+  lines.push('AI WORKER TEMPLATES');
   lines.push('-'.repeat(60));
-  for (const p of PLANS) {
-    lines.push(`  ${p.name.padEnd(30)}  ${String(p.priceIls).padStart(6)} ILS  (~$${p.priceUsd})  ${p.recurring ?? 'one-time'}`);
-    lines.push(`     plan id: ${p.id}`);
-  }
+  lines.push(tplRows);
   lines.push('');
   lines.push('PAYMENT OPTIONS');
   lines.push('-'.repeat(60));
@@ -536,28 +1055,37 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
     if (BANK_ACCOUNT) lines.push(`  Account #:    ${BANK_ACCOUNT}`);
     if (IBAN) lines.push(`  IBAN:         ${IBAN}`);
     if (SWIFT) lines.push(`  SWIFT/BIC:    ${SWIFT}`);
-    lines.push('  Reference:    include the plan id (e.g. "monthly-1k") so I can match the payment.');
+    lines.push('  Reference:    include the template id (e.g. "real-estate-il") so I can match the payment.');
     lines.push('');
   }
-  lines.push('HOW TO GET YOUR API KEY');
+  lines.push('HOW TO ORDER');
   lines.push('-'.repeat(60));
-  lines.push(`  1. Pay via any channel above.`);
-  lines.push(`  2. Send the payment confirmation + plan id to ${AGENT_OWNER_CONTACT || 'the owner'}.`);
-  lines.push(`  3. You'll receive an API key (sk_...) within 24 hours.`);
-  lines.push(`  4. Use it:  curl -H "authorization: Bearer sk_..." \\`);
-  lines.push(`                ${baseUrl}/entrypoints/summarize/invoke ...`);
+  lines.push(`  1. Open the marketplace and create your tenant key: ${baseUrl}/marketplace`);
+  lines.push(`  2. Pick a worker template and customize it.`);
+  lines.push(`  3. Pay the first month's rent via any channel above.`);
+  lines.push(`  4. Submit payment proof from the worker paywall.`);
+  lines.push(`  5. Admin approves the request and your worker opens for chat.`);
   return lines.join('\n');
 }
 
 // --- Admin ----------------------------------------------------------------
 
-function isAdmin(req) {
+function isAdmin(req, parsedUrl) {
   if (!ADMIN_TOKEN) return false;
   const auth = req.headers['authorization'];
-  if (auth?.startsWith('Bearer ')) return crypto.timingSafeEqual(Buffer.from(auth.slice(7)), Buffer.from(ADMIN_TOKEN));
-  // Also allow ?token=... in query for easy curl from terminal
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  return url.searchParams.get('token') === ADMIN_TOKEN;
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice('Bearer '.length);
+    const ok = token.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+    if (!ok) recordAdminAudit(req, { action: 'admin_auth_failed', status: 'denied', metadata: { reason: 'invalid_bearer' } });
+    return ok;
+  }
+  if (parsedUrl.searchParams.has('token')) {
+    console.warn('Rejected admin token in query string');
+    recordAdminAudit(req, { action: 'admin_auth_failed', status: 'denied', metadata: { reason: 'query_token_rejected' } });
+  } else {
+    recordAdminAudit(req, { action: 'admin_auth_failed', status: 'denied', metadata: { reason: 'missing_bearer' } });
+  }
+  return false;
 }
 
 // --- Routes ---------------------------------------------------------------
@@ -573,146 +1101,554 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     return send(res, 200, {
-      ok: true, agent: AGENT_NAME, version: AGENT_VERSION, network: NETWORK,
-      paymentMode: PAYMENT_MODE, priceUsdc: PRICE_USDC, walletAddress: WALLET_ADDRESS || null,
+      ok: true, agent: AGENT_NAME,
       channels: buildAcquireChannels().map((c) => c.kind),
       adminEnabled: !!ADMIN_TOKEN,
+      llmConfigured: !!LLM_API_KEY,
+      llmProvider: LLM_PROVIDER,
+      llmModel: LLM_MODEL,
       publicBaseUrl: resolveBaseUrl(req),
     });
   }
-  if (req.method === 'GET' && url.pathname === '/.well-known/agent.json') return send(res, 200, buildAgentCard(resolveBaseUrl(req)));
-  if (req.method === 'GET' && url.pathname === '/requirements') return send(res, 200, buildPaymentRequirements('/entrypoints/*/invoke'));
-  if (req.method === 'GET' && url.pathname === '/earnings') return send(res, 200, { agent: AGENT_NAME, summary: getEarningsSummary(), recent: getRecentCalls(50) });
-  if (req.method === 'GET' && url.pathname === '/earnings.csv') {
-    const rows = getRecentCalls(1000);
-    const header = 'id,at,endpoint,network,amount_usdc,payer,tx_hash,mock,input_chars,auth_method\n';
-    const body = rows.map((r) => [r.id, r.at, r.endpoint, r.network, r.amountUsdc, r.payer, r.txHash, r.mock, r.inputChars, r.authMethod].join(',')).join('\n');
-    return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
+  if (req.method === 'GET' && url.pathname === '/api/public/stats') {
+    return send(res, 200, getPublicMarketplaceStats());
   }
-  if (req.method === 'GET' && url.pathname === '/billing/plans') {
-    return send(res, 200, { plans: PLANS, channels: buildAcquireChannels() });
+  if (req.method === 'GET' && url.pathname === '/earnings') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    let workerStats = { activeWorkers: 0, tenantCount: 0, monthlyRevenueIls: 0 };
+    try { workerStats = gatherWorkerStats(); } catch (e) { console.error('gatherWorkerStats failed:', e); }
+    return send(res, 200, { agent: AGENT_NAME, workerStats, summary: getEarningsSummary(), recent: getRecentCalls(RECENT_CALLS_DEFAULT) });
+  }
+  if (req.method === 'GET' && url.pathname === '/earnings.csv') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const escCsv = (v) => {
+      const s = String(v ?? '');
+      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const rows = getRecentCalls(CSV_EXPORT_LIMIT);
+    const header = 'id,at,endpoint,network,amount_usdc,payer,tx_hash,mock,input_chars,auth_method\n';
+    const body = rows.map((r) => [r.id, r.at, r.endpoint, r.network, r.amountUsdc, r.payer, r.txHash, r.mock, r.inputChars, r.authMethod].map(escCsv).join(',')).join('\n');
+    return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
   }
   if (req.method === 'GET' && url.pathname === '/invoice') {
     return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
   }
   if (req.method === 'GET' && url.pathname === '/invoice.txt') return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
 
-  // Admin: issue an API key after off-platform payment
+  // Admin: issue an API key for a new tenant
   if (req.method === 'POST' && url.pathname === '/admin/issue-key') {
-    if (!isAdmin(req)) return send(res, 401, { error: 'admin_only' });
-    const { text: raw } = await readBody(req, 1024 * 16);
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw } = await readBody(req, BODY_TINY);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
-    const plan = PLANS.find((p) => p.id === body.planId);
-    if (!plan) return send(res, 400, { error: 'unknown_plan', planIds: PLANS.map((p) => p.id) });
     const issued = issueApiKey({
-      plan: plan.id, callsLimit: plan.callsLimit,
+      plan: 'worker-tenant', callsLimit: UNLIMITED_CALLS,
       paymentChannel: body.channel ?? 'manual', paymentReference: body.reference ?? null,
-      label: body.label ?? `${plan.name} (${body.channel ?? 'manual'})`,
+      label: body.label ?? `Tenant (${body.channel ?? 'manual'})`,
     });
-    return send(res, 200, { ok: true, key: issued.key, keyId: issued.id, plan: plan.id, callsLimit: plan.callsLimit, note: 'Send this key to the customer once. They will use it as: authorization: Bearer <key>' });
+    recordAdminAudit(req, {
+      action: 'admin_issue_key',
+      targetType: 'tenant',
+      targetId: issued.tenantId,
+      metadata: { keyId: issued.id, label: body.label, channel: body.channel, reference: body.reference },
+    });
+    return send(res, 200, { ok: true, key: issued.key, keyId: issued.id, tenantId: issued.tenantId, note: 'API key for the worker marketplace. Paste it in the marketplace to manage your workers.' });
   }
 
   // Admin: list issued keys (no secrets)
   if (req.method === 'GET' && url.pathname === '/admin/keys') {
-    if (!isAdmin(req)) return send(res, 401, { error: 'admin_only' });
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
     const rows = db.prepare(
       `SELECT id, label, plan, calls_limit AS callsLimit, calls_used AS callsUsed,
+              tenant_id AS tenantId,
               payment_channel AS paymentChannel, payment_reference AS paymentReference,
               created_at AS createdAt, revoked_at AS revokedAt
-       FROM api_keys ORDER BY created_at DESC LIMIT 200`
+               FROM api_keys ORDER BY created_at DESC LIMIT ${ADMIN_KEYS_LIMIT}`
     ).all();
     return send(res, 200, { keys: rows });
   }
 
   // Admin: revoke a key
   if (req.method === 'POST' && url.pathname === '/admin/revoke') {
-    if (!isAdmin(req)) return send(res, 401, { error: 'admin_only' });
-    const { text: raw } = await readBody(req, 1024 * 16);
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw } = await readBody(req, BODY_TINY);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.keyId) return send(res, 400, { error: 'keyId_required' });
     db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(new Date().toISOString(), body.keyId);
+    recordAdminAudit(req, { action: 'admin_revoke_key', targetType: 'api_key', targetId: body.keyId });
     return send(res, 200, { ok: true });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/replace-tenant-key') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const result = replaceTenantKey({ tenantId: body.tenantId, label: body.label });
+    if (!result.ok) {
+      recordAdminAudit(req, { action: 'admin_replace_tenant_key', targetType: 'tenant', targetId: body.tenantId, status: 'failed', metadata: { error: result.error } });
+      return send(res, 400, result);
+    }
+    recordAdminAudit(req, {
+      action: 'admin_replace_tenant_key',
+      targetType: 'tenant',
+      targetId: result.tenantId,
+      metadata: { keyId: result.id, label: body.label, revokedExisting: result.revokedExisting },
+    });
+    return send(res, 200, {
+      ok: true,
+      key: result.key,
+      keyId: result.id,
+      tenantId: result.tenantId,
+      revokedExisting: result.revokedExisting,
+      note: 'Send this key through a verified support channel. It is shown only in this response.',
+    });
   }
 
   // Tip jar endpoint (records a tip; doesn't issue a key)
   if (req.method === 'POST' && url.pathname === '/tip') {
-    const { text: raw } = await readBody(req, 1024 * 16);
+    const { text: raw } = await readBody(req, BODY_TINY);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     recordTip({ channel: body.channel ?? 'unknown', amount: body.amount, note: body.note, donor: body.donor });
     return send(res, 200, { ok: true, thanks: true });
   }
 
-  // Entrypoint invocation
-  const epMatch = url.pathname.match(/^\/entrypoints\/([a-z0-9-]+)\/invoke$/);
-  if (req.method === 'POST' && epMatch) {
-    const ep = findEntrypoint(epMatch[1]);
-    if (!ep) return send(res, 404, { error: 'unknown_entrypoint', key: epMatch[1] });
-    const { text: raw, tooLarge } = await readBody(req);
-    if (tooLarge) return send(res, 413, { error: 'payload_too_large' });
+  // Self-serve tenant signup. The key can create/configure workers, but chat
+  // remains payment-gated until an admin approves a rental.
+  if (req.method === 'POST' && url.pathname === '/api/signup') {
+    if (!signupRateLimit(clientIp(req))) return send(res, 429, { error: 'signup_rate_limited' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const businessName = cleanText(body.businessName, 80);
+    const contact = cleanText(body.contact, 160);
+    if (!businessName) return send(res, 400, { error: 'business_name_required' });
+    if (!contact) return send(res, 400, { error: 'contact_required' });
+    const issued = issueSelfServeTenant({ businessName, contact });
+    return send(res, 200, {
+      ok: true,
+      key: issued.key,
+      keyId: issued.id,
+      tenantId: issued.tenantId,
+      label: issued.label,
+      note: 'Store this key locally. It lets you configure workers; activation still requires payment approval.',
+    });
+  }
 
-    // 1. API key path
-    const authHeader = req.headers['authorization'];
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7).trim();
-      const result = consumeApiCall(hashKey(token));
-      if (!result.valid) {
-        if (result.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: result.used, limit: result.limit, message: 'Quota exhausted. Pay at /invoice to top up.' });
-        return send(res, 401, { error: 'invalid_api_key' });
+  // --- Workers: marketplace + builder + chat -----------------------------
+  // HTML pages
+  if (req.method === 'GET' && (url.pathname === '/marketplace' || url.pathname === '/builder' || url.pathname.startsWith('/workers/') || url.pathname === '/workers')) {
+    let html = fs.readFileSync(path.join(__dirname, 'workers-ui.html'), 'utf8');
+    const payCfg = JSON.stringify({
+      bitPhone: BIT_PHONE || '',
+      paypalMe: PAYPAL_ME || '',
+      bankName: BANK_NAME || '',
+      bankBranch: BANK_BRANCH || '',
+      bankAccount: BANK_ACCOUNT || '',
+      payeeName: PAYEE_NAME || '',
+    });
+    html = html.replace('</body>', `<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;</script></body>`);
+    return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
+  }
+
+  // API: learn from website (generate worker config)
+  if (req.method === 'POST' && url.pathname === '/api/workers/learn-from-site') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.url) return send(res, 400, { error: 'url_required' });
+    const checked = await validatePublicHttpUrl(body.url);
+    if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+    const result = workers.generateFromUrl(checked.url);
+    return send(res, 200, result);
+  }
+
+  // API: list templates
+  if (req.method === 'GET' && url.pathname === '/api/workers/templates') {
+    return send(res, 200, {
+      templates: workers.TEMPLATES.map((t) => ({
+        id: t.id, name: t.name, nameHe: t.nameHe, description: t.description,
+        icon: t.icon, category: t.category, buyPriceIls: t.buyPriceIls, rentPriceIls: t.rentPriceIls,
+        defaultPersona: t.defaultPersona, defaultTasks: t.defaultTasks,
+        defaultKnowledge: t.defaultKnowledge, defaultTools: t.defaultTools,
+      })),
+    });
+  }
+
+  // API: buy template (creates worker in pending_payment state)
+  if (req.method === 'POST' && url.pathname === '/api/workers/buy') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required', message: 'Send Authorization: Bearer sk_...' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
+    const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId, paymentChannel: body.paymentChannel, paymentReference: body.paymentReference });
+    if (!res2.ok) return send(res, 400, res2);
+    return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Pay via /invoice and ask the admin to mark the worker paid.' });
+  }
+
+  // API: create worker from template (used by Builder "new" flow)
+  if (req.method === 'POST' && url.pathname === '/api/workers') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_LARGE);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
+    const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId });
+    if (!res2.ok) return send(res, 400, res2);
+    // apply builder-provided overrides immediately
+    workers.updateWorker(tenantId, res2.workerId, {
+      name: body.name, persona: body.persona, tasks: body.tasks,
+      knowledge: body.knowledge, tools: body.tools,
+      llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
+    });
+    return send(res, 200, { ok: true, workerId: res2.workerId });
+  }
+
+  // API: list my workers
+  if (req.method === 'GET' && url.pathname === '/api/workers') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, { workers: workers.listWorkers(tenantId) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/account') {
+    const auth = req.headers['authorization'] || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+    const check = token ? validateApiKey(token) : { valid: false };
+    if (!check.valid) return send(res, 401, { error: 'auth_required' });
+    return send(res, 200, {
+      keyId: check.keyId,
+      tenantId: check.tenantId,
+      label: check.label,
+      plan: check.plan,
+      callsUsed: check.calls_used,
+      callsLimit: check.calls_limit,
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/account/rotate-key') {
+    const auth = req.headers['authorization'] || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+    if (!token.startsWith('sk_')) return send(res, 401, { error: 'auth_required' });
+    const rotated = rotateApiKey(token);
+    if (!rotated.valid) return send(res, 401, { error: 'auth_required', reason: rotated.reason });
+    return send(res, 200, {
+      ok: true,
+      key: rotated.key,
+      keyId: rotated.id,
+      tenantId: rotated.tenantId,
+      oldKeyId: rotated.oldKeyId,
+      note: 'Replace your stored key with this new key. The old key has been revoked.',
+    });
+  }
+
+  // API: get worker
+  const getWorkerMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)$/);
+  if (req.method === 'GET' && getWorkerMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const w = workers.getWorker(tenantId, getWorkerMatch[1]);
+    if (!w) return send(res, 404, { error: 'not_found' });
+    return send(res, 200, { worker: w });
+  }
+
+  // API: update worker
+  if (req.method === 'PATCH' && getWorkerMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_LARGE);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (body.mcpServers !== undefined) {
+      if (!Array.isArray(body.mcpServers) || body.mcpServers.length > 10) return send(res, 400, { error: 'invalid_mcp_servers' });
+      const safeServers = [];
+      for (const srv of body.mcpServers) {
+        const checked = await validatePublicHttpUrl(srv?.url);
+        if (!checked.ok) return send(res, 400, { error: 'unsafe_mcp_server_url', reason: checked.error, url: cleanText(srv?.url, 160) });
+        safeServers.push({ ...srv, url: checked.url });
       }
-      let input; try { input = raw ? JSON.parse(raw) : {}; } catch { input = {}; }
-      try {
-        const output = await ep.handler(input);
-        recordCall({ endpoint: ep.key, network: 'api-key', amountUsdc: '0', payer: 'api-key:' + result.label, txHash: 'manual', mock: 0, inputChars: (raw ?? '').length, authMethod: 'api-key' });
-        return send(res, 200, { endpoint: ep.key, output, payment: { method: 'api-key', plan: result.plan, callsUsed: result.used, callsLimit: result.limit } });
-      } catch (err) { return send(res, 500, { error: 'handler_failed', message: String(err?.message ?? err) }); }
+      body.mcpServers = safeServers;
     }
+    const res2 = workers.updateWorker(tenantId, getWorkerMatch[1], body);
+    if (!res2.ok) return send(res, res2.error === 'not_found' ? 404 : 400, res2);
+    return send(res, 200, { ok: true });
+  }
 
-    // 2. x402 paywall
-    const price = ep.priceUsdc ?? PRICE_USDC;
-    const resourcePath = `/entrypoints/${ep.key}/invoke`;
-    const requirements = buildPaymentRequirements(resourcePath);
-    if (price !== PRICE_USDC) requirements.accepts[0].maxAmountRequired = priceToAtomic(price);
+  // API: delete worker
+  if (req.method === 'DELETE' && getWorkerMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const ok = workers.deleteWorker(tenantId, getWorkerMatch[1]);
+    if (!ok) return send(res, 404, { error: 'not_found' });
+    return send(res, 200, { ok: true });
+  }
 
-    const paymentHeader = req.headers['x-payment'];
-    if (!paymentHeader) {
-      return send(res, 402, {
-        error: 'payment_required',
-        message: `Pay via PayPal/Bit/bank (see /invoice) for an API key, OR pay ${price} USDC on ${NETWORK} and retry with X-PAYMENT.`,
-        invoiceUrl: `${resolveBaseUrl(req)}/invoice`,
-        plansUrl: `${resolveBaseUrl(req)}/billing/plans`,
-        ...requirements,
-      }, { 'x-payment-required': Buffer.from(JSON.stringify(requirements)).toString('base64') });
+  // API: list messages
+  const msgMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/messages$/);
+  if (req.method === 'GET' && msgMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const messages = workers.listMessages(tenantId, msgMatch[1]);
+    return send(res, 200, { messages });
+  }
+
+  // API: chat with worker
+  const chatMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat$/);
+  if (req.method === 'POST' && chatMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+    const res2 = await workers.chatWithWorker({ tenantId, workerId: chatMatch[1], userMessage: body.message, customerId: body.customerId ?? '' });
+    return send(res, res2.status ?? 200, res2);
+  }
+
+  // API: request activation after payment/proof submission
+  const activateMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/activation-request$/);
+  if (req.method === 'POST' && activateMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const worker = workers.getWorker(tenantId, activateMatch[1]);
+    if (!worker) return send(res, 404, { error: 'not_found' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const contact = cleanText(body.contact, 160);
+    if (!contact) return send(res, 400, { error: 'contact_required' });
+    const tpl = workers.getTemplate(worker.templateId);
+    const req2 = recordActivationRequest({
+      tenantId,
+      worker,
+      channel: body.channel,
+      reference: body.reference,
+      contact,
+      note: body.note,
+      amountIls: tpl?.rentPriceIls ?? 0,
+    });
+    return send(res, 200, { ok: true, requestId: req2.id, status: 'pending', message: 'Activation request received. Admin review is next.' });
+  }
+
+  // API: list customer memories for a worker
+  const memMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/memories$/);
+  if (req.method === 'GET' && memMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const customerId = url.searchParams.get('customerId') ?? '';
+    const memories = workers.getCustomerMemories(tenantId, memMatch[1], customerId);
+    return send(res, 200, { memories });
+  }
+
+  // API: list leads for a worker
+  const leadsMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/leads$/);
+  if (req.method === 'GET' && leadsMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const leads = workers.getLeads(tenantId, leadsMatch[1]);
+    return send(res, 200, { leads });
+  }
+
+  // API: list escalations for a worker
+  const escMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/escalations$/);
+  if (req.method === 'GET' && escMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const escalations = workers.getEscalations(tenantId, escMatch[1]);
+    return send(res, 200, { escalations });
+  }
+
+  // API: list outbox (sent emails) for a worker
+  const outboxMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/outbox$/);
+  if (req.method === 'GET' && outboxMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const outbox = workers.getOutbox(tenantId, outboxMatch[1]);
+    return send(res, 200, { outbox });
+  }
+
+  // API (admin): list all workers across all tenants
+  if (req.method === 'GET' && url.pathname === '/api/admin/workers') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const rows = workers.adminListAllWorkers();
+    return send(res, 200, { workers: rows });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/activation-requests') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { requests: listActivationRequests({ status: url.searchParams.get('status') ?? '' }) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/audit-events') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { events: listAdminAuditEvents({ limit: url.searchParams.get('limit') ?? ADMIN_AUDIT_LIMIT }) });
+  }
+
+  // API (admin): mark worker paid (extend rental)
+  if (req.method === 'POST' && url.pathname === '/api/admin/mark-worker-paid') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.workerId || !body.tenantId) return send(res, 400, { error: 'workerId_and_tenantId_required' });
+    const activationCheck = validateActivationRequestForPayment({
+      id: body.activationRequestId,
+      tenantId: body.tenantId,
+      workerId: body.workerId,
+    });
+    if (!activationCheck.ok) {
+      recordAdminAudit(req, {
+        action: 'admin_mark_worker_paid',
+        targetType: 'worker',
+        targetId: body.workerId,
+        status: 'failed',
+        metadata: { tenantId: body.tenantId, activationRequestId: body.activationRequestId, error: activationCheck.error },
+      });
+      return send(res, 400, activationCheck);
     }
+    const res2 = workers.adminMarkPaid({
+      workerId: body.workerId, tenantId: body.tenantId,
+      days: Number(body.days) || DEFAULT_RENT_DAYS,
+      paymentChannel: body.paymentChannel, paymentReference: body.paymentReference,
+      amountIls: body.amountIls,
+    });
+    if (!res2.ok) {
+      recordAdminAudit(req, {
+        action: 'admin_mark_worker_paid',
+        targetType: 'worker',
+        targetId: body.workerId,
+        status: 'failed',
+        metadata: { tenantId: body.tenantId, error: res2.error },
+      });
+      return send(res, 400, res2);
+    }
+    markActivationRequestReviewed(body.activationRequestId, 'approved');
+    recordAdminAudit(req, {
+      action: 'admin_mark_worker_paid',
+      targetType: 'worker',
+      targetId: body.workerId,
+      metadata: {
+        tenantId: body.tenantId,
+        days: Number(body.days) || DEFAULT_RENT_DAYS,
+        paymentChannel: body.paymentChannel,
+        paymentReference: body.paymentReference,
+        amountIls: body.amountIls,
+        activationRequestId: body.activationRequestId,
+        paidUntil: res2.paidUntil,
+      },
+    });
+    return send(res, 200, res2);
+  }
 
-    const verification = await verifyPayment(requirements, paymentHeader);
-    if (!verification.valid) return send(res, 402, { error: 'payment_invalid', reason: verification.reason ?? 'unknown' });
+  // --- MCP & Skills API ---
 
-    let input; try { input = raw ? JSON.parse(raw) : {}; } catch { input = {}; }
+  // API: discover tools from an MCP server
+  if (req.method === 'GET' && url.pathname === '/api/mcp/discover') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const mcpUrl = url.searchParams.get('url');
+    if (!mcpUrl) return send(res, 400, { error: 'url_required' });
+    const checked = await validatePublicHttpUrl(mcpUrl);
+    if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
     try {
-      const output = await ep.handler(input);
-      recordCall({ endpoint: ep.key, network: NETWORK, amountUsdc: price, payer: verification.payer, txHash: verification.txHash, mock: verification.mock, inputChars: (raw ?? '').length, authMethod: 'x402' });
-      return send(res, 200, { endpoint: ep.key, output, payment: { method: 'x402', received: true, amountUsdc: price, network: NETWORK, txHash: verification.txHash, payer: verification.payer } },
-        { 'x-payment-receipt': Buffer.from(JSON.stringify({ txHash: verification.txHash, amount: price, network: NETWORK, endpoint: ep.key })).toString('base64') });
-    } catch (err) { return send(res, 500, { error: 'handler_failed', message: String(err?.message ?? err) }); }
+      const tools = await mcpClient.discoverMcpTools(checked.url, {}, { lookup: pinnedLookup(checked.resolved) });
+      return send(res, 200, { server: checked.url, tools: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) });
+    } catch (e) {
+      return send(res, 400, { error: 'mcp_discovery_failed', message: e.message });
+    }
+  }
+
+  // API: list all skills
+  if (req.method === 'GET' && url.pathname === '/api/skills') {
+    return send(res, 200, { skills: SKILLS });
+  }
+
+  // API: install a skill on a worker (adds tools + knowledge to the worker's config)
+  if (req.method === 'POST' && url.pathname === '/api/workers/skill-install') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.workerId || !body.skillId) return send(res, 400, { error: 'workerId_and_skillId_required' });
+    const skill = getSkill(body.skillId);
+    if (!skill) return send(res, 400, { error: 'unknown_skill' });
+    const w = workers.getWorker(tenantId, body.workerId);
+    if (!w) return send(res, 404, { error: 'not_found' });
+    const mergedTools = [...new Set([...(w.tools ?? []), ...skill.addTools])];
+    const wasInstalled = (w.skills ?? []).includes(skill.id);
+    const mergedKnowledge = wasInstalled
+      ? (w.knowledge ?? '')
+      : (w.knowledge ?? '') + '\n\n' + skill.addKnowledge;
+    const mergedSkills = [...new Set([...(w.skills ?? []), skill.id])];
+    const res2 = workers.updateWorker(tenantId, body.workerId, { tools: mergedTools, knowledge: mergedKnowledge, skills: mergedSkills });
+    return send(res, res2.ok ? 200 : 400, res2);
+  }
+
+  // API: uninstall a skill from a worker
+  if (req.method === 'POST' && url.pathname === '/api/workers/skill-uninstall') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.workerId || !body.skillId) return send(res, 400, { error: 'workerId_and_skillId_required' });
+    const w = workers.getWorker(tenantId, body.workerId);
+    if (!w) return send(res, 404, { error: 'not_found' });
+    const skill = getSkill(body.skillId);
+    const filteredTools = skill
+      ? (w.tools ?? []).filter((t) => !skill.addTools.includes(t))
+      : (w.tools ?? []);
+    const mergedSkills = (w.skills ?? []).filter((s) => s !== body.skillId);
+    const res2 = workers.updateWorker(tenantId, body.workerId, { tools: filteredTools, skills: mergedSkills });
+    return send(res, res2.ok ? 200 : 400, res2);
+  }
+
+  // Serve static assets from ./assets/
+  if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
+    const rawPath = path.join(__dirname, url.pathname);
+    const filePath = path.resolve(rawPath);
+    const assetsDir = path.resolve(path.join(__dirname, 'assets'));
+    if (!filePath.startsWith(assetsDir)) return send(res, 403, { error: 'forbidden' });
+    try {
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = { '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.gif':'image/gif', '.ico':'image/x-icon', '.webp':'image/webp' };
+      res.writeHead(200, { 'content-type': mime[ext] || 'application/octet-stream', 'cache-control': 'public,max-age=' + ASSETS_CACHE_MAX_AGE });
+      res.end(content);
+    } catch {
+      return send(res, 404, { error: 'not_found', path: url.pathname });
+    }
+    return;
   }
 
   return send(res, 404, { error: 'not_found', path: url.pathname });
 });
 
-server.listen(PORT, () => {
-  console.log(`${AGENT_NAME} v${AGENT_VERSION} listening on ${PUBLIC_BASE_URL}`);
-  console.log(`  x402: ${PAYMENT_MODE} on ${NETWORK} \u2014 ${PRICE_USDC} USDC/call`);
-  console.log(`  x402 wallet: ${WALLET_ADDRESS || '(none set)'}`);
-  console.log(`  Oldschool channels:`);
-  if (PAYPAL_ME) console.log(`    - PayPal.me/${PAYPAL_ME}`);
-  if (BUY_ME_A_COFFEE) console.log(`    - Buy Me a Coffee: ${BUY_ME_A_COFFEE}`);
-  if (KO_FI) console.log(`    - Ko-fi: ${KO_FI}`);
-  if (BIT_PHONE) console.log(`    - Bit: ${BIT_PHONE}`);
-  if (GITHUB_SPONSORS) console.log(`    - GitHub Sponsors: ${GITHUB_SPONSORS}`);
-  if (GUMROAD_URL) console.log(`    - Gumroad: ${GUMROAD_URL}`);
-  if (BANK_ACCOUNT) console.log(`    - Bank transfer: ${BANK_NAME} branch ${BANK_BRANCH} acct ${BANK_ACCOUNT}`);
-  console.log(`  Admin (key issuance): ${ADMIN_TOKEN ? 'ENABLED (set ADMIN_TOKEN to gate)' : 'DISABLED (set ADMIN_TOKEN to enable)'}`);
-  console.log(`  Invoice: ${PUBLIC_BASE_URL}/invoice`);
+workers.setServerLlmConfig({
+  apiKey: LLM_API_KEY, provider: LLM_PROVIDER,
+  model: LLM_MODEL, baseUrl: LLM_BASE_URL,
 });
+console.log(`${AGENT_NAME} — platform-provided LLM (no BYOK)`);
+if (LLM_API_KEY) console.log(`  LLM: ${LLM_PROVIDER} / ${LLM_MODEL} (configured)`);
+else console.warn(`  WARN: no LLM_API_KEY set — workers will use mock replies`);
 
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { console.log(`\n${sig}, shutting down`); server.close(() => { db.close(); process.exit(0); }); });
+function startServer() {
+  server.listen(PORT, () => {
+    console.log(`${AGENT_NAME} listening on ${PUBLIC_BASE_URL}`);
+    console.log(`  Marketplace: ${PUBLIC_BASE_URL}/marketplace`);
+    console.log(`  Payment channels:`);
+    if (PAYPAL_ME) console.log(`    - PayPal.me/${PAYPAL_ME}`);
+    if (BUY_ME_A_COFFEE) console.log(`    - Buy Me a Coffee: ${BUY_ME_A_COFFEE}`);
+    if (KO_FI) console.log(`    - Ko-fi: ${KO_FI}`);
+    if (BIT_PHONE) console.log(`    - Bit: ${BIT_PHONE}`);
+    if (GITHUB_SPONSORS) console.log(`    - GitHub Sponsors: ${GITHUB_SPONSORS}`);
+    if (GUMROAD_URL) console.log(`    - Gumroad: ${GUMROAD_URL}`);
+    if (BANK_ACCOUNT) console.log(`    - Bank transfer: ${BANK_NAME} branch ${BANK_BRANCH} acct ${BANK_ACCOUNT}`);
+    console.log(`  Admin: ${ADMIN_TOKEN ? 'ENABLED' : 'DISABLED (set ADMIN_TOKEN to enable)'}`);
+    console.log(`  Invoice: ${PUBLIC_BASE_URL}/invoice`);
+  });
+
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => { console.log(`\n${sig}, shutting down`); server.close(() => { db.close(); process.exit(0); }); });
+  }
+}
+
+// Vercel serverless: export the HTTP server; do not bind a port.
+export default server;
+if (!process.env.VERCEL) startServer();

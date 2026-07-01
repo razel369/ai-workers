@@ -6,3 +6,9 @@ node_modules/
 *.log
 .DS_Store
 data/
+server.out
+server.err
+landing_raw.txt
+_check.cjs
+.vercel
+.codex-audit/**/*.db
