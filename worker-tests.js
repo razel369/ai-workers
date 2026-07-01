@@ -134,6 +134,50 @@ let activationRequestId = null;
   });
   expect('demoMode chat while pending -> 200', r.status === 200);
   expect('  has reply', typeof r.body.reply === 'string' && r.body.reply.length > 5);
+  expect('  qualityScore present', !!r.body.qualityScore?.labelHe);
+}
+
+// 6a1. workers enhancements — suggestions, health, smart knowledge, learn correction
+{
+  const tr = await req('/api/workers/templates');
+  const clinic = tr.body.templates?.find((t) => t.id === 'clinic-receptionist-he');
+  expect('template has suggestions', Array.isArray(clinic?.suggestions) && clinic.suggestions.length === 3);
+  expect('  clinic suggestion includes appointment', clinic?.suggestions?.some((s) => /תור/.test(s)));
+}
+{
+  const r = await req('/api/workers/smart-knowledge?templateId=clinic-receptionist-he&businessName=מרפאת%20שמש');
+  expect('smart-knowledge -> 200', r.status === 200);
+  expect('  includes business name', String(r.body.knowledge).includes('מרפאת שמש'));
+  expect('  includes hours boilerplate', /שעות/.test(r.body.knowledge));
+}
+{
+  const r = await req('/api/workers', { headers: auth() });
+  expect('workers list includes health', r.body.workers?.[0]?.health?.labelHe?.length > 2);
+}
+{
+  const r = await req(`/api/workers/${firstWorkerId}`, { headers: auth() });
+  expect('get worker includes suggestions', Array.isArray(r.body.suggestions) && r.body.suggestions.length >= 1);
+  expect('  get worker includes health', !!r.body.health?.labelHe);
+}
+{
+  const r = await req(`/api/workers/${firstWorkerId}/learn-correction`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ userMessage: 'מה השעות?', original: 'לא יודע', corrected: 'א-ה 09:00-18:00' }),
+  });
+  expect('learn-correction -> 200', r.status === 200 && r.body.ok === true);
+  const w = await req(`/api/workers/${firstWorkerId}`, { headers: auth() });
+  expect('  knowledge contains correction', String(w.body.worker?.knowledge).includes('09:00-18:00'));
+}
+{
+  const r = await fetch(BASE + `/api/workers/${firstWorkerId}/chat/stream`, {
+    method: 'POST',
+    headers: { ...auth(), accept: 'text/event-stream' },
+    body: JSON.stringify({ message: 'שלום', demoMode: true }),
+  });
+  const text = await r.text();
+  expect('chat stream -> 200', r.status === 200);
+  expect('  SSE token events', text.includes('event: token'));
+  expect('  SSE done event', text.includes('event: done'));
 }
 
 // 6a2. public pre-signup template demo chat
@@ -273,7 +317,7 @@ let mismatchedActivationRequestId = null;
   expect('  tasks array non-empty', r.body.worker?.tasks?.length >= 3);
   expect('  starter worker name is Hebrew-first', /מוקדן|ישראלי/.test(r.body.worker?.name ?? ''));
   expect('  starter tasks are business-owner friendly Hebrew', /עברית|לאסוף/.test(r.body.worker?.tasks?.[0] ?? ''));
-  expect('  starter knowledge asks for business basics', /שם העסק/.test(r.body.worker?.knowledge ?? ''));
+  expect('  starter knowledge asks for business basics', /שם (העסק|החברה)/.test(r.body.worker?.knowledge ?? ''));
   expect('  llm.provider = mock by default', r.body.worker?.llm?.provider === 'mock');
   expect('  llm.hasApiKey = false', r.body.worker?.llm?.hasApiKey === false);
   expect('  never returns apiKey value', r.body.worker?.llm?.apiKey === undefined);
@@ -327,9 +371,9 @@ let mismatchedActivationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
   expect('GET messages -> 200', r.status === 200);
-  expect('  has 4 messages (demo + paid chat)', r.body.messages?.length === 4);
-  expect('  third role=user', r.body.messages?.[2]?.role === 'user');
-  expect('  fourth role=assistant', r.body.messages?.[3]?.role === 'assistant');
+  expect('  has 6 messages (demo + stream + paid chat)', r.body.messages?.length === 6);
+  expect('  fifth role=user', r.body.messages?.[4]?.role === 'user');
+  expect('  sixth role=assistant', r.body.messages?.[5]?.role === 'assistant');
 }
 
 // 13. Second chat — context preserved
@@ -355,7 +399,7 @@ let mismatchedActivationRequestId = null;
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
-  expect('  now 6 messages', r.body.messages?.length === 6);
+  expect('  now 8 messages', r.body.messages?.length === 8);
 }
 
 // 14. Per-tenant isolation: another tenant cannot see this worker
