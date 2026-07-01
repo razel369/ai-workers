@@ -64,7 +64,7 @@ You never discuss competitors.`,
 Refund policy: (the tenant fills this in)
 Support hours: Sun-Thu 09:00-18:00 IL time
 Escalation email: support@<tenant-domain>`,
-    defaultTools: ['escalate-to-human', 'search-kb'],
+    defaultTools: ['save_lead', 'escalate_to_human', 'search_knowledge', 'export_leads_csv'],
   },
   {
     id: 'data-entry',
@@ -144,7 +144,7 @@ Areas served: (the tenant fills this in)
 Agent license number: (the tenant fills this in)
 Office hours: Sun-Thu 09:00-19:00, Fri 09:00-13:00 IL time
 Viewing booking link: (the tenant fills this in)`,
-    defaultTools: ['calendar-link', 'capture-lead'],
+    defaultTools: ['save_lead', 'export_leads_json', 'notify_webhook', 'get_current_time'],
   },
   {
     id: 'clinic-receptionist-he',
@@ -176,7 +176,7 @@ Insurance accepted: (list kupot cholim and plans)
 Services: (list services offered)
 Booking system: (how to book — e.g. "via this chat" or "call us at...")
 Cancellation policy: (how many hours notice required)`,
-    defaultTools: ['calendar-link', 'send-confirmation-sms'],
+    defaultTools: ['save_lead', 'get_appointment_slots', 'check_business_hours', 'notify_webhook'],
   },
   {
     id: 'restaurant-manager-he',
@@ -210,7 +210,7 @@ Kosher certification: (if applicable)
 Dietary options: (vegan, vegetarian, gluten-free, nut-free)
 Reservation policy: (how to book, cancellation policy)
 Takeaway: (minimum order, lead time, delivery area/charges)`,
-    defaultTools: ['capture-reservation', 'menu-lookup'],
+    defaultTools: ['save_lead', 'check_business_hours', 'notify_webhook', 'search_knowledge'],
   },
   {
     id: 'ecom-support-he',
@@ -411,7 +411,167 @@ const TOOL_DEFS = [
       return { result: `Email recorded for ${args.to} with subject "${args.subject}". It will be delivered when the email service is connected.` };
     },
   },
+  {
+    name: 'notify_webhook',
+    description: 'Send a JSON notification to the business webhook (new lead, escalation, reservation, etc.)',
+    parameters: {
+      type: 'object', properties: {
+        event: { type: 'string', description: 'Event type e.g. new_lead, escalation, reservation' },
+        payload: { type: 'object', description: 'Structured event data' },
+      }, required: ['event'],
+    },
+    handler: async (args, ctx) => {
+      const url = process.env.WEBHOOK_NOTIFY_URL || process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_WEBHOOK`] || '';
+      const body = { event: args.event, payload: args.payload ?? {}, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
+      if (!url) return { result: 'Webhook URL not configured (set WEBHOOK_NOTIFY_URL). Event logged locally only.', logged: body };
+      try {
+        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        return { result: r.ok ? `Webhook notified: ${args.event}` : `Webhook returned ${r.status}`, status: r.status };
+      } catch (e) {
+        return { result: `Webhook failed: ${e?.message ?? e}` };
+      }
+    },
+  },
+  {
+    name: 'export_leads_csv',
+    description: 'Export all captured leads for this worker as CSV text',
+    parameters: { type: 'object', properties: {}, required: [] },
+    handler: async (args, ctx) => {
+      const db = getTenantDb(ctx.tenantId);
+      const rows = db.prepare(`SELECT full_name, company, phone, email, notes, created_at FROM leads WHERE worker_id=? ORDER BY created_at DESC LIMIT 500`).all(ctx.workerId);
+      const esc = (v) => {
+        const s = String(v ?? '');
+        return /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = 'full_name,company,phone,email,notes,created_at\n';
+      const csv = header + rows.map((r) => [r.full_name, r.company, r.phone, r.email, r.notes, r.created_at].map(esc).join(',')).join('\n');
+      return { result: rows.length ? `Exported ${rows.length} leads as CSV:\n${csv}` : 'No leads captured yet.', csv, count: rows.length };
+    },
+  },
+  {
+    name: 'export_leads_json',
+    description: 'Return captured leads as a JSON array (useful for CRM handoff)',
+    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'Max rows (default 50)' } }, required: [] },
+    handler: async (args, ctx) => {
+      const db = getTenantDb(ctx.tenantId);
+      const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
+      const rows = db.prepare(`SELECT id, full_name AS fullName, company, phone, email, notes, created_at AS createdAt FROM leads WHERE worker_id=? ORDER BY created_at DESC LIMIT ?`).all(ctx.workerId, limit);
+      return { result: JSON.stringify(rows, null, 2), leads: rows, count: rows.length };
+    },
+  },
+  {
+    name: 'check_business_hours',
+    description: 'Check if the business is currently open (Israel timezone). Uses knowledge base hours or BUSINESS_HOURS env.',
+    parameters: { type: 'object', properties: {}, required: [] },
+    handler: async (args, ctx) => {
+      const open = isWithinBusinessHours(ctx.workerKnowledge);
+      const now = new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', hour: '2-digit', minute: '2-digit' });
+      return open
+        ? { result: `העסק פתוח כעת (${now}, שעון ישראל).`, open: true }
+        : { result: `העסק סגור כעת (${now}, שעון ישראל). הצע ללקוח להשאיר פרטים או לחזור בשעות הפעילות.`, open: false };
+    },
+  },
+  {
+    name: 'get_appointment_slots',
+    description: 'Suggest available appointment slots for the next few business days (clinic/reception use)',
+    parameters: {
+      type: 'object', properties: {
+        daysAhead: { type: 'number', description: 'How many days ahead to suggest (default 3)' },
+      }, required: [],
+    },
+    handler: async (args, ctx) => {
+      const slots = suggestAppointmentSlots(Number(args.daysAhead) || 3);
+      return { result: `Suggested slots (Israel time):\n${slots.map((s) => `  - ${s}`).join('\n')}`, slots };
+    },
+  },
+  {
+    name: 'save_conversation_summary',
+    description: 'Save a short summary of this conversation for future reference with this customer',
+    parameters: {
+      type: 'object', properties: {
+        summary: { type: 'string', description: '1-3 sentence summary of what was discussed and next steps' },
+      }, required: ['summary'],
+    },
+    handler: async (args, ctx) => {
+      if (!ctx.customerId) return { result: 'No customerId — summary not saved.' };
+      saveConversationSummary(ctx.tenantId, ctx.workerId, ctx.customerId, args.summary);
+      return { result: 'Conversation summary saved for this customer.' };
+    },
+  },
 ];
+
+const TOOL_ALIASES = {
+  'calendar-link': 'get_current_time',
+  'send-summary-email': 'send_email',
+  'send-confirmation-sms': 'notify_webhook',
+  'escalate-to-human': 'escalate_to_human',
+  'search-kb': 'search_knowledge',
+  'capture-lead': 'save_lead',
+  'capture-reservation': 'save_lead',
+  'json-output': 'export_leads_json',
+  'csv-append': 'export_leads_csv',
+  'menu-lookup': 'search_knowledge',
+  'track-order': 'search_knowledge',
+  'return-lookup': 'search_knowledge',
+  'create-ticket': 'escalate_to_human',
+  'schedule-visit': 'get_appointment_slots',
+  'headline-variants': 'remember_fact',
+};
+
+function resolveToolName(name) {
+  return TOOL_ALIASES[name] || name;
+}
+
+function isWithinBusinessHours(knowledge = '') {
+  const envHours = process.env.BUSINESS_HOURS ?? '';
+  const text = `${envHours}\n${knowledge}`;
+  const m = text.match(/שעות[^:\n]*:?\s*([^\n]+)/i) || text.match(/hours[^:\n]*:?\s*([^\n]+)/i);
+  if (!m) return true;
+  const line = m[1].toLowerCase();
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+  const day = now.getDay();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  if (/שבת|sat/i.test(line) && day === 6) return false;
+  if (/שישי|fri/i.test(line) && day === 5 && hour >= 13) return false;
+  if (day === 6) return false;
+  const range = line.match(/(\d{1,2})[:.]?(\d{0,2})?\s*[-–]\s*(\d{1,2})/);
+  if (range) {
+    const start = Number(range[1]) + (Number(range[2] || 0) / 60);
+    const end = Number(range[3]);
+    return hour >= start && hour < end;
+  }
+  if (/09|9:00|10/.test(line)) return hour >= 9 && hour < 18;
+  return true;
+}
+
+function suggestAppointmentSlots(daysAhead = 3) {
+  const slots = [];
+  const base = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+  for (let d = 1; d <= daysAhead && slots.length < 6; d++) {
+    const day = new Date(base);
+    day.setDate(day.getDate() + d);
+    const dow = day.getDay();
+    if (dow === 6 || dow === 5) continue;
+    const label = day.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jerusalem' });
+    slots.push(`${label} 10:00`, `${label} 14:30`, `${label} 16:00`);
+  }
+  return slots.slice(0, 6);
+}
+
+const MAX_CONVERSATION_SUMMARIES = 5;
+
+function saveConversationSummary(tenantId, workerId, customerId, summary) {
+  const db = getTenantDb(tenantId);
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO conversation_summaries (worker_id, customer_id, summary, created_at) VALUES (?, ?, ?, ?)`).run(workerId, customerId, String(summary).slice(0, 2000), now);
+  const extra = db.prepare(`SELECT id FROM conversation_summaries WHERE worker_id=? AND customer_id=? ORDER BY id DESC LIMIT -1 OFFSET ?`).all(workerId, customerId, MAX_CONVERSATION_SUMMARIES);
+  for (const row of extra) db.prepare(`DELETE FROM conversation_summaries WHERE id=?`).run(row.id);
+}
+
+export function getConversationSummaries(tenantId, workerId, customerId, limit = MAX_CONVERSATION_SUMMARIES) {
+  const db = getTenantDb(tenantId);
+  return db.prepare(`SELECT summary, created_at AS createdAt FROM conversation_summaries WHERE worker_id=? AND customer_id=? ORDER BY id DESC LIMIT ?`).all(workerId, customerId, limit);
+}
 
 export function getToolDefs() {
   return TOOL_DEFS;
@@ -570,6 +730,14 @@ function getTenantDb(tenantId) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_outbox_worker ON outbox(worker_id);
+    CREATE TABLE IF NOT EXISTS conversation_summaries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_conv_summaries_worker ON conversation_summaries(worker_id, customer_id);
   `);
   try { db.exec(`ALTER TABLE workers ADD COLUMN mcp_servers_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { db.exec(`ALTER TABLE workers ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
@@ -732,6 +900,7 @@ export function deleteWorker(tenantId, workerId) {
   db.prepare(`DELETE FROM leads WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM escalations WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM outbox WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM conversation_summaries WHERE worker_id = ?`).run(workerId);
   return r.changes > 0;
 }
 
@@ -751,6 +920,26 @@ export function adminMarkPaid({ workerId, tenantId, days, paymentChannel, paymen
   db.prepare(`INSERT INTO rentals (worker_id, tenant_id, days, amount_ils, payment_channel, payment_reference, paid_until, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(workerId, tenantId, days, amountIls ?? 0, paymentChannel ?? null, paymentReference ?? null, paidUntil, now);
   return { ok: true, paidUntil };
+}
+
+export function adminTenantUsageStats() {
+  if (!fs.existsSync(TENANTS_DIR)) return [];
+  const stats = [];
+  for (const tid of fs.readdirSync(TENANTS_DIR)) {
+    const dir = path.join(TENANTS_DIR, tid);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    const dbPath = path.join(dir, 'workers.db');
+    if (!fs.existsSync(dbPath)) continue;
+    const db = new DatabaseSync(dbPath);
+    const workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+    const activeWorkers = db.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active'`).get()?.c ?? 0;
+    const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+    const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+    const escalationCount = db.prepare(`SELECT COUNT(*) AS c FROM escalations`).get()?.c ?? 0;
+    stats.push({ tenantId: tid, workerCount, activeWorkers, messageCount, leadCount, escalationCount });
+    db.close();
+  }
+  return stats.sort((a, b) => b.messageCount - a.messageCount);
 }
 
 export function adminListAllWorkers() {
@@ -783,9 +972,19 @@ function appendMessage(tenantId, workerId, role, content) {
   db.prepare(`INSERT INTO messages (worker_id, role, content, created_at) VALUES (?, ?, ?, ?)`).run(workerId, role, content, new Date().toISOString());
 }
 
-function buildSystemPrompt(worker, memories = [], extraToolDefs = []) {
+function templateRuntimeHint(templateId) {
+  const hints = {
+    'clinic-receptionist-he': '\n\nTEMPLATE RULES (clinic): Use get_appointment_slots for scheduling. Never give medical advice. Escalate urgent symptoms.',
+    'real-estate-il': '\n\nTEMPLATE RULES (real estate): Use save_lead for every qualified inquiry. Use export_leads_json when agent asks for lead export.',
+    'support-he': '\n\nTEMPLATE RULES (support): Search knowledge first. Escalate if confidence is low, refund requested, or hostile tone. Urgency: high for legal/refund.',
+    'restaurant-manager-he': '\n\nTEMPLATE RULES (restaurant): Use check_business_hours before confirming reservations. Capture party size and dietary needs.',
+  };
+  return hints[templateId] ?? '';
+}
+
+function buildSystemPrompt(worker, memories = [], extraToolDefs = [], convSummaries = []) {
   const tasks = (worker.tasks ?? []).map((t, i) => `${i + 1}. ${t}`).join('\n');
-  const allToolNames = [...new Set([...(worker.tools ?? []), ...extraToolDefs.map((t) => t.name)])];
+  const allToolNames = [...new Set([...(worker.tools ?? []).map(resolveToolName), ...extraToolDefs.map((t) => t.name)])];
   const toolDesc = allToolNames.length
     ? '\n\nAVAILABLE TOOLS (you MAY invoke these to perform actions — you are not required to use them every turn):\n' +
       allToolNames.map((tn) => {
@@ -799,13 +998,17 @@ function buildSystemPrompt(worker, memories = [], extraToolDefs = []) {
   const memStr = memories.length
     ? '\n\nCUSTOMER FACTS (remembered about this customer):\n' + memories.map((m) => `- ${m.key}: ${m.value}`).join('\n')
     : '';
+  const sumStr = convSummaries.length
+    ? '\n\nPREVIOUS CONVERSATIONS (summaries with this customer):\n' + convSummaries.map((s) => `- [${s.createdAt?.slice(0, 10) ?? ''}] ${s.summary}`).join('\n')
+    : '';
+  const tplHint = templateRuntimeHint(worker.templateId);
   return `${worker.persona}
 
 YOUR TASKS (follow these in order):
 ${tasks || '(no specific tasks set; respond helpfully based on your persona)'}
 
 KNOWLEDGE BASE (treat as ground truth):
-${worker.knowledge || '(none provided)'}${memStr}${toolDesc}
+${worker.knowledge || '(none provided)'}${memStr}${sumStr}${toolDesc}${tplHint}
 
 RULES:
 - Stay in character at all times
@@ -975,6 +1178,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   appendMessage(tenantId, workerId, 'user', userMessage);
   const history = db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId);
   const memories = getCustomerMemories(tenantId, workerId, customerId);
+  const convSummaries = customerId ? getConversationSummaries(tenantId, workerId, customerId) : [];
 
   // --- MCP tool discovery ---
   let mcpToolDefs = [];
@@ -1006,14 +1210,16 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   for (const td of TOOL_DEFS) allToolDefs.set(td.name, td);
   for (const td of mcpToolDefs) allToolDefs.set(td.name, td);
 
-  const enabledToolNames = (worker.tools ?? []).filter((t) => allToolDefs.has(t));
+  const enabledToolNames = [...new Set(
+    (worker.tools ?? []).map(resolveToolName).filter((t) => allToolDefs.has(t))
+  )];
   // Add enabled MCP tool names that aren't already in the list
   for (const td of mcpToolDefs) {
     if (!enabledToolNames.includes(td.name)) enabledToolNames.push(td.name);
   }
 
   const allToolDefsArray = [...TOOL_DEFS, ...mcpToolDefs];
-  const systemPrompt = buildSystemPrompt(worker, memories, mcpToolDefs);
+  const systemPrompt = buildSystemPrompt(worker, memories, mcpToolDefs, convSummaries);
 
   let reply = '';
   let runtime = 'mock';
@@ -1070,15 +1276,19 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   }
 
   appendMessage(tenantId, workerId, 'assistant', reply);
+  if (customerId && history.length >= 2) {
+    const snippet = history.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 100)}`).join(' | ');
+    saveConversationSummary(tenantId, workerId, customerId, `Last exchange: ${snippet}`.slice(0, 500));
+  }
   return { ok: true, status: 200, reply, runtime, error, mcpErrors: mcpErrors.length ? mcpErrors : undefined, workerId, workerName: worker.name, customerId, toolCalls: toolCallsLog };
 }
 
 // --- Learn-from-website generator -----------------------------------------
 
 const URL_PATTERNS = [
-  { re: /מסעדה|restaurant|cafe|בר|בית קפה|אוכל|food|מטבח/i, industry: 'מסעדנות', tasks: ['לקבל הזמנות טלפוניות', 'לענות על שאלות תפריט', 'לתאם טייק אווי ומשלוחים', 'לטפל בהזמנות קבוצתיות'], tools: ['save_lead', 'escalate_to_human', 'get_current_time'] },
-  { re: /נדל"ן|real.?estate|דירה|בית|משרד|מגורים|נכס|קרקע/i, industry: 'נדל"ן', tasks: ['לסנן לידים נכנסים', 'לקבוע ביקורי נכסים', 'לענות על שאלות על נכסים', 'לתאם פגישות עם סוכנים'], tools: ['save_lead', 'calendar-link', 'send-summary-email'] },
-  { re: /בריאות|רופא|מרפאה|קופת חולים|רפואה|בית מרקחת|dentist|clinic|medical/i, industry: 'רפואה', tasks: ['לקבוע תורים', 'לענות על שאלות רפואיות נפוצות', 'לטפל בביטולים ושינויים', 'להזכיר למטופלים על תורים'], tools: ['save_lead', 'get_current_time'] },
+  { re: /מסעדה|restaurant|cafe|בר|בית קפה|אוכל|food|מטבח/i, industry: 'מסעדנות', tasks: ['לקבל הזמנות טלפוניות', 'לענות על שאלות תפריט', 'לתאם טייק אווי ומשלוחים', 'לטפל בהזמנות קבוצתיות'], tools: ['save_lead', 'check_business_hours', 'notify_webhook', 'escalate_to_human'] },
+  { re: /נדל"ן|real.?estate|דירה|בית|משרד|מגורים|נכס|קרקע/i, industry: 'נדל"ן', tasks: ['לסנן לידים נכנסים', 'לקבוע ביקורי נכסים', 'לענות על שאלות על נכסים', 'לתאם פגישות עם סוכנים'], tools: ['save_lead', 'export_leads_json', 'notify_webhook', 'get_current_time'] },
+  { re: /בריאות|רופא|מרפאה|קופת חולים|רפואה|בית מרקחת|dentist|clinic|medical/i, industry: 'רפואה', tasks: ['לקבוע תורים', 'לענות על שאלות רפואיות נפוצות', 'לטפל בביטולים ושינויים', 'להזכיר למטופלים על תורים'], tools: ['save_lead', 'get_appointment_slots', 'check_business_hours', 'escalate_to_human'] },
   { re: /משפט|court|lawyer|עורך דין|משרד|legal|law/i, industry: 'משפט', tasks: ['לתאם פגישות עם עורכי דין', 'לסנן פניות ראשוניות', 'לענות על שאלות כלליות'], tools: ['save_lead', 'calendar-link'] },
   { re: /סטארט.?אפ|startup|tech|הייטק|saas|software/i, industry: 'הייטק', tasks: ['לסנן לידים B2B', 'לקבוע הדגמות מוצר', 'לענות על שאלות מוצר', 'להעביר לידים חמים לצוות המכירות'], tools: ['save_lead', 'calendar-link', 'send-summary-email', 'escalate_to_human'] },
   { re: /מלון|hotel|צימר|אירוח|נופש|hostel|bnb/i, industry: 'תיירות ואירוח', tasks: ['לקבל הזמנות חדרים', 'לענות על שאלות זמינות', 'לתת המלצות מקומיות', 'לטפל בהזמנות קבוצתיות'], tools: ['save_lead', 'get_current_time'] },
@@ -1088,12 +1298,46 @@ const URL_PATTERNS = [
   { re: /נגר|קבלן|שיפוץ|בניין|תיקון|electrician|plumber|handyman/i, industry: 'בעלי מקצוע', tasks: ['לקבל פניות לקבלת הצעת מחיר', 'לתאם ביקור בשטח', 'לענות על שאלות על שירותים'], tools: ['save_lead', 'calendar-link'] },
 ];
 
-export function generateFromUrl(url) {
-  const domain = new URL(url).hostname.replace(/^www\./, '');
-  const businessName = domain.split('.')[0] || 'העסק';
-  const businessNameClean = businessName.charAt(0).toUpperCase() + businessName.slice(1);
+function extractPageSignals(html) {
+  const title = (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? '').trim();
+  const desc = (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1]
+    ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i)?.[1] ?? '').trim();
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 3500);
+  return { title, desc, text };
+}
 
-  const match = URL_PATTERNS.find((p) => p.re.test(domain + ' ' + businessName));
+export async function generateFromUrl(url) {
+  const domain = new URL(url).hostname.replace(/^www\./, '');
+  let businessName = domain.split('.')[0] || 'העסק';
+  let pageText = '';
+  let pageTitle = '';
+  let pageDesc = '';
+  try {
+    const r = await fetch(url, {
+      headers: { 'user-agent': 'AI-Workers/1.0 (+https://github.com/razel369/ai-workers)' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(12000),
+    });
+    if (r.ok) {
+      const html = await r.text();
+      const signals = extractPageSignals(html);
+      pageTitle = signals.title;
+      pageDesc = signals.desc;
+      pageText = signals.text;
+      if (pageTitle) businessName = pageTitle.split(/[|\-–]/)[0].trim() || businessName;
+    }
+  } catch {}
+
+  const businessNameClean = businessName.charAt(0).toUpperCase() + businessName.slice(1);
+  const scanText = `${domain} ${businessName} ${pageTitle} ${pageDesc} ${pageText.slice(0, 800)}`;
+
+  const match = URL_PATTERNS.find((p) => p.re.test(scanText));
   const industry = match?.industry || 'שירותים';
   const industryTasks = match?.tasks || [
     'לענות על שאלות של לקוחות',
@@ -1116,17 +1360,20 @@ You always end your replies with a clear next step or question.`;
     'At the end, always ask "Is there anything else I can help with?"',
   ];
 
+  const scraped = pageText
+    ? `\nScraped site content (verify before relying on it):\n${pageText.slice(0, 1200)}`
+    : '';
   const knowledge = `Business: ${businessNameClean}
 Website: ${url}
 Industry: ${industry}
-Main services: (upload your services and pricing here)
+${pageDesc ? `Site description: ${pageDesc}\n` : ''}Main services: (upload your services and pricing here)
 FAQ: (upload common questions and answers here)
-Hours: (fill in business hours)
-Contact: (fill in contact details for escalations)`;
+Hours: (fill in business hours, e.g. א-ה 09:00-18:00)
+Contact: (fill in contact details for escalations)${scraped}`;
 
-  const tools = [...new Set([...industryTools, 'search_knowledge', 'remember_fact', 'recall_facts', 'get_current_time'])];
+  const tools = [...new Set([...industryTools, 'search_knowledge', 'remember_fact', 'recall_facts', 'get_current_time', 'check_business_hours', 'notify_webhook'])];
 
-  return { persona, tasks, knowledge, tools, businessName: businessNameClean, industry };
+  return { persona, tasks, knowledge, tools, businessName: businessNameClean, industry, fetched: Boolean(pageText) };
 }
 
 // --- Auth helper ----------------------------------------------------------
