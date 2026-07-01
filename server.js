@@ -639,16 +639,16 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0c0a08;
-      --surface: #161310;
-      --surface2: #211c17;
-      --border: #2d2720;
-      --text: #ece4d8;
-      --body: #b0a69a;
-      --muted: #756c62;
-      --accent: #c9953e;
-      --accent2: #a87d30;
-      --green: #6e8f5e;
+      --bg: #0a0908;
+      --surface: #141210;
+      --surface2: #1e1a16;
+      --border: #3a332b;
+      --text: #f2ebe2;
+      --body: #c8bfb4;
+      --muted: #8f857a;
+      --accent: #d4a24a;
+      --accent2: #b8893a;
+      --green: #7da86a;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
@@ -661,37 +661,14 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     /* === Ambient background layers === */
 
-    /* 1. Animated mesh — warm amber/copper glow */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+      html { scroll-behavior: auto; }
+    }
+
     body::before {
       content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background:
-        radial-gradient(ellipse 70% 50% at 30% 25%, rgba(201,149,62,.08), transparent 55%),
-        radial-gradient(ellipse 55% 45% at 75% 50%, rgba(168,125,48,.05), transparent 50%);
-      animation: meshPulse 12s ease-in-out infinite alternate;
-    }
-    @keyframes meshPulse { 0% { opacity: .5; } 50% { opacity: 1; } 100% { opacity: .5; } }
-
-    /* 2. Dot grid with radial fade-out */
-    body::after {
-      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
-      background-size: 32px 32px;
-      -webkit-mask-image: radial-gradient(circle at 50% 25%, black 30%, transparent 75%);
-      mask-image: radial-gradient(circle at 50% 25%, black 30%, transparent 75%);
-    }
-
-    /* 3. Floating particles */
-    .particles { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-    .particles span {
-      position: absolute; width: 2px; height: 2px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 4px var(--accent), 0 0 12px rgba(201,149,62,.12);
-      animation: particleUp 20s linear infinite; opacity: 0; bottom: -10px;
-    }
-    @keyframes particleUp {
-      0% { transform: translateY(0); opacity: 0; }
-      8% { opacity: .3; }
-      92% { opacity: .3; }
-      100% { transform: translateY(-110vh); opacity: 0; }
+      background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(212,162,74,.06), transparent 65%);
     }
 
     a { color: var(--accent); text-decoration: none; }
@@ -709,46 +686,22 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     nav .links a { color: var(--muted); padding: 6px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; transition: .15s; }
     nav .links a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
 
-    /* === Glass base for cards === */
-    .tpl-card, .stat-card, .pillar-card, .step-card, .faq-item {
-      background: rgba(22,19,16,.65);
-      backdrop-filter: blur(16px) saturate(1.4);
-      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    .tpl-card, .stat-card, .pillar-card, .step-card, .faq-item, .vertical-card, .price-card {
+      background: var(--surface);
       border: 1px solid var(--border);
       position: relative;
     }
 
-    /* Gradient border via mask — appears on hover */
-    .tpl-card::before, .stat-card::before, .pillar-card::before, .step-card::before, .faq-item::before {
-      content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
-      background: linear-gradient(135deg, rgba(201,149,62,.4), rgba(168,125,48,.3), rgba(201,149,62,.1));
-      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-      -webkit-mask-composite: xor;
-      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-      mask-composite: exclude;
-      pointer-events: none; opacity: 0; transition: opacity .35s ease;
-    }
-    .tpl-card:hover::before, .stat-card:hover::before, .pillar-card:hover::before, .step-card:hover::before, .faq-item:hover::before { opacity: 1; }
-
-    /* Shimmer sweep on hover */
-    .tpl-card::after, .pillar-card::after, .stat-card::after {
-      content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: linear-gradient(110deg, transparent 38%, rgba(255,255,255,.015) 48%, transparent 58%);
-      transform: translateX(-130%) skewX(-12deg); pointer-events: none; border-radius: inherit;
-    }
-    .tpl-card:hover::after, .pillar-card:hover::after, .stat-card:hover::after { animation: shimmerSweep 1.2s ease forwards; }
-    @keyframes shimmerSweep { 0% { transform: translateX(-130%) skewX(-12deg); } 100% { transform: translateX(130%) skewX(-12deg); } }
-
     /* === Hero === */
-    .hero { text-align: center; padding: 80px 0 50px; position: relative; overflow: hidden; }
-    .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 500px 350px at 50% 30%, rgba(201,149,62,.1), transparent 60%); pointer-events: none; }
-    .hero .badge { display: inline-block; background: rgba(110,143,94,.1); color: var(--green); font-size: 13px; font-weight: 600; padding: 6px 18px; border-radius: 999px; margin-bottom: 24px; border: 1px solid rgba(110,143,94,.15); }
+    .hero { text-align: center; padding: 48px 0 32px; position: relative; }
+    @media (min-width: 768px) { .hero { padding: 72px 0 40px; } }
+    .hero .badge { display: inline-block; background: rgba(125,168,106,.12); color: var(--green); font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid rgba(125,168,106,.2); }
     .hero h1 { font-size: clamp(32px, 5vw, 56px); font-weight: 800; line-height: 1.15; margin-bottom: 16px; color: var(--text); letter-spacing: -.02em; }
     .hero h1 .highlight { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .hero .subtitle { font-size: 17px; color: var(--body); max-width: 580px; margin: 0 auto 28px; line-height: 1.6; }
+    .hero .subtitle { font-size: 17px; color: var(--body); max-width: 620px; margin: 0 auto 28px; line-height: 1.65; }
     .hero .cta-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
     .hero .cta { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; padding: 14px 32px; border-radius: 12px; font-size: 17px; font-weight: 700; transition: .25s; box-shadow: 0 0 0 0 rgba(201,149,62,0); }
-    .hero .cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(201,149,62,.35); text-decoration: none; }
+    .hero .cta:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(212,162,74,.25); text-decoration: none; }
     .hero .cta-secondary { display: inline-flex; align-items: center; gap: 8px; background: rgba(22,19,16,.65); backdrop-filter: blur(8px); color: var(--text); padding: 14px 28px; border-radius: 12px; font-size: 17px; font-weight: 600; border: 1px solid var(--border); transition: .2s; }
     .hero .cta-secondary:hover { background: var(--surface2); border-color: rgba(201,149,62,.3); text-decoration: none; }
     .hero .trust { margin-top: 20px; font-size: 14px; color: var(--muted); display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
@@ -787,7 +740,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     /* === Templates grid === */
     .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
     .tpl-card { border-radius: 14px; padding: 24px; transition: .25s; display: flex; flex-direction: column; overflow: hidden; }
-    .tpl-card:hover { transform: translateY(-3px); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+    .tpl-card:hover { border-color: rgba(212,162,74,.35); }
     .tpl-card .icon { font-size: 28px; margin-bottom: 8px; }
     .tpl-card h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--text); }
     .tpl-card .desc { color: var(--body); font-size: 13px; line-height: 1.6; margin-bottom: 12px; flex: 1; }
@@ -825,108 +778,167 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     .btn-mkt:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(201,149,62,.3); text-decoration: none; }
     .text-center { text-align: center; }
     .mt-8 { margin-top: 32px; }
+
+    .verticals-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 700px) { .verticals-grid { grid-template-columns: repeat(3, 1fr); } }
+    .vertical-card { border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px; }
+    .vertical-card .v-icon { font-size: 32px; }
+    .vertical-card h3 { font-size: 18px; color: var(--text); font-weight: 700; }
+    .vertical-card p { font-size: 14px; color: var(--body); line-height: 1.65; margin: 0; flex: 1; }
+    .vertical-card .v-price { font-size: 13px; color: var(--muted); }
+    .vertical-card .v-price b { color: var(--accent); }
+
+    .pricing-grid { display: grid; grid-template-columns: 1fr; gap: 12px; max-width: 720px; margin: 0 auto; }
+    @media (min-width: 600px) { .pricing-grid { grid-template-columns: repeat(2, 1fr); } }
+    .price-card { border-radius: 14px; padding: 28px 24px; text-align: center; }
+    .price-card.featured { border-color: rgba(212,162,74,.45); }
+    .price-card .amount { font-size: 36px; font-weight: 800; color: var(--text); }
+    .price-card .amount span { font-size: 16px; color: var(--muted); font-weight: 500; }
+    .price-card ul { list-style: none; margin: 16px 0 0; padding: 0; text-align: right; font-size: 14px; color: var(--body); }
+    .price-card li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+    .price-card li:last-child { border: 0; }
+
+    .proof-strip { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; padding: 20px 0 8px; }
+    .proof-item { font-size: 13px; color: var(--body); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; }
+
+    .section-order-templates { order: 1; }
+    .section-order-verticals { order: 2; }
+    .section-order-pricing { order: 3; }
+    .section-order-how { order: 4; }
+    .sections-flow { display: flex; flex-direction: column; }
+    @media (max-width: 699px) {
+      .section-order-hero-cta { margin-bottom: 8px; }
+    }
   </style>
 </head>
 <body>
-  <div class="particles">
-    <span style="left:15%;animation-delay:0s;animation-duration:18s"></span>
-    <span style="left:30%;animation-delay:3s;animation-duration:22s;width:1px;height:1px;background:var(--accent2);box-shadow:0 0 3px var(--accent2)"></span>
-    <span style="left:50%;animation-delay:1s;animation-duration:16s;width:3px;height:3px;background:var(--green);box-shadow:0 0 6px var(--green)"></span>
-    <span style="left:70%;animation-delay:5s;animation-duration:20s;width:1px;height:1px;background:var(--accent2);box-shadow:0 0 3px var(--accent2)"></span>
-    <span style="left:85%;animation-delay:2s;animation-duration:17s"></span>
-  </div>
   <div class="container">
     <nav>
       <span class="logo">
-        <span class="logo-icon">🤖</span>
+        <span class="logo-icon">AI</span>
         <span class="logo-text">
           <span class="logo-main">עובדי AI</span>
-          <span class="logo-sub">עובדים חכמים 24/7</span>
+          <span class="logo-sub">שירות לעסקים בישראל</span>
         </span>
       </span>
       <div class="links">
         <a href="/marketplace">שוק העובדים</a>
         <a href="/marketplace#/workers">העובדים שלי</a>
-        <a href="/invoice">חשבונית</a>
+        <a href="#pricing">מחירים</a>
       </div>
     </nav>
 
-    <div class="hero anim anim-1">
-      <div class="badge">🔥 עובדים חכמים 24/7 — בלי חוזים, בלי הפתעות</div>
-      <h1>שכור <span class="highlight">עובד AI</span><br>לעסק שלך בישראל</h1>
-      <p class="subtitle">בוחרים תבנית, מתאימים אישית, ומקבלים עובד וירטואלי שמנהל שיחות עם לקוחות — מסנן לידים, עונה בשאלות, מתאם פגישות, ועוד. חיסכון של אלפי שקלים בחודש.</p>
+    <div class="hero anim anim-1 section-order-hero-cta">
+      <div class="badge">פתרון B2B · עברית · תשלום מקומי</div>
+      <h1>עובד וירטואלי שמטפל ב<strong class="highlight">לקוחות 24/7</strong></h1>
+      <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — בוחרים תבנית מוכנה, מתאימים ידע ושעות פעילות, ומקבלים עובד שמסנן פניות, אוסף לידים ומעביר רק מה שחשוב.</p>
       <div class="cta-group">
-        <a href="/marketplace" class="cta">לעבור לשוק העובדים ←</a>
-        <a href="/invoice" class="cta-secondary">מחירון ←</a>
+        <a href="/marketplace" class="cta">בחר עובד בשוק ←</a>
+        <a href="#verticals" class="cta-secondary">לפי תחום עסק ←</a>
       </div>
-      <div class="trust">
-        <span>✓ משלמים ב-PayPal, Bit, או בנק</span>
-        <span>✓ 9+ תבניות לבחירה</span>
-        <span>✓ קנייה חד-פעמית + שכירות חודשית</span>
+      <div class="proof-strip">
+        <span class="proof-item">✓ ללא כרטיס אשראי — PayPal, Bit, בנק</span>
+        <span class="proof-item">✓ אישור הפעלה ידני לפני צ'אט</span>
+        <span class="proof-item">✓ ניסיון הדגמה מיידי</span>
       </div>
     </div>
 
-    <section class="anim anim-2">
-      <div class="stats-grid" id="stats">
-        <div class="stat-card"><div class="v" id="s-workers">-</div><div class="k">תבניות מוכנות</div></div>
-        <div class="stat-card"><div class="v" id="s-tenants">-</div><div class="k">קטגוריות עסקיות</div></div>
-        <div class="stat-card"><div class="v" id="s-revenue">-</div><div class="k">מחיר התחלה</div></div>
-        <div class="stat-card"><div class="v" id="s-tips">-</div><div class="k">אמצעי תשלום</div></div>
-      </div>
-    </section>
-
-    <section class="anim anim-3">
-      <h2 class="section-title">ככה זה עובד</h2>
-      <p class="section-sub">שלושה צעדים פשוטים — ותוך דקות יש לך עובד AI</p>
-      <div class="pillars-grid">
-        <div class="pillar-card">
-          <div class="icon">🛒</div>
-          <h3>קונים תבנית</h3>
-          <p>משלמים מחיר חד-פעמי (מ-50 ₪) + דמי שכירות חודשיים (מ-30 ₪). אין עלויות נסתרות, אין חוזים.</p>
-        </div>
-        <div class="pillar-card">
-          <div class="icon">🎨</div>
-          <h3>מתאימים אישית</h3>
-          <p>קובעים אישיות, משימות וידע. יכולות השפה כלולות במנוי — מצב הדגמה חינמי זמין מיד.</p>
-        </div>
-        <div class="pillar-card">
-          <div class="icon">💬</div>
-          <h3>פורסים ומרוויחים</h3>
-          <p>העובד שלך פעיל 24/7 בצ'אט. חוסך לך אלפי שקלים בחודש בעובדים אנושיים.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="anim anim-3">
-      <h2 class="section-title">🧑‍💼 התבניות הפופולריות</h2>
-      <p class="section-sub">תבניות מוכנות — בוחרים, מתאימים, ומפעילים</p>
+    <div class="sections-flow">
+    <section class="anim anim-2 section-order-templates" id="templates">
+      <h2 class="section-title">תבניות מוכנות להפעלה</h2>
+      <p class="section-sub">בחר תבנית, התאם אישית, שלח בקשת הפעלה — תוך דקות</p>
       <div class="tpl-grid" id="tpl-list">
-        <div style="text-align:center;grid-column:1/-1;color:var(--muted);padding:40px">טוען תבניות...</div>
+        <div style="text-align:center;grid-column:1/-1;color:var(--muted);padding:32px">טוען תבניות...</div>
       </div>
       <div class="text-center mt-8">
-        <a href="/marketplace" class="btn-mkt">לכל התבניות ←</a>
+        <a href="/marketplace" class="btn-mkt">לכל התבניות בשוק ←</a>
       </div>
     </section>
 
-    <section class="anim anim-4">
-      <h2 class="section-title">איך עובדי AI עובדים?</h2>
-      <p class="section-sub">הכל אוטומטי — אתה רק מגדיר והעובד עושה את השאר</p>
+    <section class="anim anim-2 section-order-verticals" id="verticals">
+      <h2 class="section-title">לפי תחום העסק</h2>
+      <p class="section-sub">תבניות מותאמות לשוק הישראלי — לא משחק, לא צעצוע</p>
+      <div class="verticals-grid">
+        <div class="vertical-card">
+          <div class="v-icon">🏥</div>
+          <h3>מרפאות וקליניקות</h3>
+          <p>קביעת תורים, שאלות על שעות וביטוח, ביטולים. ללא ייעוץ רפואי — מעביר מקרים דחופים לאדם.</p>
+          <div class="v-price">מ-<b>299 ₪</b>/חודש · מזכיר/ת רפואי/ת</div>
+          <a href="/marketplace" class="cta-sm">לתבנית המרפאה ←</a>
+        </div>
+        <div class="vertical-card">
+          <div class="v-icon">🏠</div>
+          <h3>נדל״ן ותיווך</h3>
+          <p>סינון מחפשי דירות, איסוף תקציב ואזור, תיאום ביקורים, ייצוא לידים ל-JSON/CSV לסוכן.</p>
+          <div class="v-price">מ-<b>249 ₪</b>/חודש · סוכן נדל״ן</div>
+          <a href="/marketplace" class="cta-sm">לתבנית הנדל״ן ←</a>
+        </div>
+        <div class="vertical-card">
+          <div class="v-icon">🍽️</div>
+          <h3>מסעדות ואירוח</h3>
+          <p>הזמנות, שאלות תפריט, טייק אווי. בודק שעות פעילות לפני אישור הזמנה.</p>
+          <div class="v-price">מ-<b>249 ₪</b>/חודש · מנהל מסעדה</div>
+          <a href="/marketplace" class="cta-sm">לתבנית המסעדה ←</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="anim anim-3 section-order-pricing" id="pricing">
+      <h2 class="section-title">מחירון שקוף</h2>
+      <p class="section-sub">ללא דמי הקמה · ללא חוזה ארוך · ביטול בכל עת</p>
+      <div class="pricing-grid">
+        <div class="price-card">
+          <div class="amount">₪199<span>/חודש</span></div>
+          <p class="muted" style="margin-top:8px;font-size:14px">תפעול ונתונים</p>
+          <ul>
+            <li>הזנת נתונים, מבנה JSON/CSV</li>
+            <li>זיכרון לקוח ו-webhook</li>
+            <li>צ'אט 24/7 לאחר אישור</li>
+          </ul>
+        </div>
+        <div class="price-card featured">
+          <div class="amount">₪249–299<span>/חודש</span></div>
+          <p class="muted" style="margin-top:8px;font-size:14px">מכירות · שירות · נדל״ן · מסעדות</p>
+          <ul>
+            <li>תבנית מותאמת לתחום</li>
+            <li>לידים, תורים, escalation</li>
+            <li>תמיכה בעברית מלאה</li>
+          </ul>
+          <div class="text-center mt-8"><a href="/marketplace" class="cta-sm">התחל עכשיו ←</a></div>
+        </div>
+      </div>
+      <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">חשבונית</a>.</p>
+    </section>
+
+    <section class="anim anim-3 section-order-how">
+      <h2 class="section-title">איך מתחילים</h2>
+      <p class="section-sub">שלושה צעדים — בלי מפתחות API ובלי מפתח</p>
       <div class="steps-grid">
         <div class="step-card">
           <div class="num">1</div>
           <h3>בוחרים תבנית</h3>
-          <p>מסנני לידים, נציג שירות בעברית, מזכירה רפואית, ניהול מסעדה, ועוד תבניות רבות.</p>
+          <p>נכנסים לשוק, יוצרים מפתח עסק, ובוחרים תבנית לפי תפקיד.</p>
         </div>
         <div class="step-card">
           <div class="num">2</div>
-          <h3>מתאימים אישית</h3>
-          <p>כותבים אישיות, משימות וידע ספציפי לעסק. יכולות השפה מסופקות אוטומטית — בלי מפתחות, בלי הגדרות.</p>
+          <h3>מתאימים ידע</h3>
+          <p>שעות, מחירים, שאלות נפוצות — או מייבאים מאתר עם כתובת URL.</p>
         </div>
         <div class="step-card">
           <div class="num">3</div>
-          <h3>פורסים ומתחילים</h3>
-          <p>העובד פעיל 24/7. משלמים ב-PayPal, Bit, או העברה בנקאית.</p>
+          <h3>משלמים ומאשרים</h3>
+          <p>שולחים אסמכתא, מקבלים אישור אדמין, והעובד פתוח לצ'אט.</p>
         </div>
+      </div>
+    </section>
+    </div>
+
+    <section class="anim anim-4">
+      <div class="stats-grid" id="stats">
+        <div class="stat-card"><div class="v" id="s-workers">-</div><div class="k">תבניות</div></div>
+        <div class="stat-card"><div class="v" id="s-tenants">-</div><div class="k">קטגוריות</div></div>
+        <div class="stat-card"><div class="v" id="s-revenue">-</div><div class="k">מחיר התחלה</div></div>
+        <div class="stat-card"><div class="v" id="s-tips">-</div><div class="k">אמצעי תשלום</div></div>
       </div>
     </section>
 
@@ -940,7 +952,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         </details>
         <details class="faq-item">
           <summary>כמה זה עולה?</summary>
-          <div class="content">קונים תבנית במחיר חד-פעמי (מ-50 ₪) ואז משלמים דמי שכירות חודשיים (מ-30 ₪ לחודש). אין עלויות נוספות. אפשר לשלם ב-PayPal, Bit, או העברה בנקאית.</div>
+          <div class="content">מנוי חודשי מ-199 ₪ (תפעול) עד 299 ₪ (מרפאות). לרוב אין דמי הקמה. תשלום ב-PayPal, Bit או העברה בנקאית. פירוט מלא בדף החשבונית.</div>
         </details>
         <details class="faq-item">
           <summary>האם אני צריך כרטיס אשראי?</summary>
@@ -1006,8 +1018,8 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
             <div class="icon">\${esc(t.icon)}</div>
             <h4>\${esc(t.nameHe || t.name)}</h4>
             <div class="desc">\${esc(t.description)}</div>
-            <div class="price">רכישה: <b>\${t.buyPriceIls} ₪</b> · שכירות: <b>\${t.rentPriceIls} ₪/חודש</b></div>
-            <a href="/marketplace" class="cta-sm">לפרטים ←</a>
+            <div class="price">שכירות: <b>\${t.rentPriceIls} ₪/חודש</b>\${t.buyPriceIls > 0 ? ' · הקמה: ' + t.buyPriceIls + ' ₪' : ''}</div>
+            <a href="/marketplace" class="cta-sm">הוסף לעסק ←</a>
           </div>
         \`).join('');
       } catch (e) { console.error(e); }
@@ -1109,6 +1121,9 @@ const server = http.createServer(async (req, res) => {
       llmProvider: LLM_PROVIDER,
       llmModel: LLM_MODEL,
       publicBaseUrl: resolveBaseUrl(req),
+      dbPath: DB_PATH,
+      tenantsDir: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
+      persistentStorage: !DB_PATH.includes('/tmp'),
     });
   }
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
@@ -1259,7 +1274,7 @@ const server = http.createServer(async (req, res) => {
     if (!body.url) return send(res, 400, { error: 'url_required' });
     const checked = await validatePublicHttpUrl(body.url);
     if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
-    const result = workers.generateFromUrl(checked.url);
+    const result = await workers.generateFromUrl(checked.url);
     return send(res, 200, result);
   }
 
@@ -1448,6 +1463,20 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { leads });
   }
 
+  const leadsCsvMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/leads\.csv$/);
+  if (req.method === 'GET' && leadsCsvMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const leads = workers.getLeads(tenantId, leadsCsvMatch[1]);
+    const escCsv = (v) => {
+      const s = String(v ?? '');
+      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const header = 'id,full_name,company,phone,email,notes,created_at\n';
+    const body = leads.map((r) => [r.id, r.full_name, r.company, r.phone, r.email, r.notes, r.created_at].map(escCsv).join(',')).join('\n');
+    return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
+  }
+
   // API: list escalations for a worker
   const escMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/escalations$/);
   if (req.method === 'GET' && escMatch) {
@@ -1471,6 +1500,11 @@ const server = http.createServer(async (req, res) => {
     if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
     const rows = workers.adminListAllWorkers();
     return send(res, 200, { workers: rows });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/tenant-stats') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { tenants: workers.adminTenantUsageStats() });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/activation-requests') {

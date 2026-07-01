@@ -986,7 +986,15 @@ async function renderMarketplace() {
     friendly: 'ידידותי, ברור וסבלני. מדבר בעברית פשוטה ולא מלחיץ את הלקוח.',
     professional: 'מקצועי, קצר וממוקד. נותן תשובות ברורות ושומר על טון עסקי.',
     sales: 'מכירתי אבל לא אגרסיבי. שואל שאלות, מזהה צורך, ומציע את הצעד הבא.',
+    formal: 'רשמי ומכובד. מתאים למשרדים, עורכי דין ובנקים. פונה בלשון נקייה.',
+    medical: 'חם ומרגיע. מתאים למרפאות — סבלני, לא נותן ייעוץ רפואי, מעביר דחוף לאדם.',
   };
+  const TOOL_PRESETS = [
+    { label: 'לידים + webhook', tools: ['save_lead', 'notify_webhook', 'export_leads_csv'] },
+    { label: 'שעות פעילות', tools: ['check_business_hours', 'get_current_time'] },
+    { label: 'תורים (מרפאה)', tools: ['get_appointment_slots', 'save_lead', 'check_business_hours'] },
+    { label: 'תמיכה + escalation', tools: ['search_knowledge', 'escalate_to_human', 'save_conversation_summary'] },
+  ];
 
   function starterTasksForTemplate(tpl) {
     const byCategory = {
@@ -1092,6 +1100,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             <div class="b-sec" style="margin-bottom:0">
               <div class="beginner-note">${icon('database', 14)} תן לעובד את המידע שהוא צריך כדי לא להמציא תשובות. אפשר להתחיל קצר ולהוסיף אחר כך.</div>
               <div class="fld"><label>מידע שהעובד חייב לדעת</label>
+                <div class="row" style="gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                  <input id="f-site-url" type="url" placeholder="https://example.co.il" style="flex:2;min-width:200px;direction:ltr;text-align:left;font-family:monospace" />
+                  <button type="button" class="btn btn-sm btn-outline" id="f-learn-site">${icon('database', 14)} ייבא מאתר</button>
+                </div>
                 <textarea id="f-knowledge" rows="9" placeholder="לדוגמה:
 שעות פעילות: א-ה 9:00-18:00
 מחירים: שיחת ייעוץ ראשונה ללא עלות
@@ -1103,6 +1115,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                   <button type="button" class="quick-choice" data-tone="friendly">ידידותי וסבלני</button>
                   <button type="button" class="quick-choice" data-tone="professional">מקצועי וקצר</button>
                   <button type="button" class="quick-choice" data-tone="sales">מכירתי ועדין</button>
+                  <button type="button" class="quick-choice" data-tone="formal">רשמי B2B</button>
+                  <button type="button" class="quick-choice" data-tone="medical">חם (מרפאה)</button>
                 </div>
               </div>
               <details class="advanced-config">
@@ -1112,7 +1126,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                     <textarea id="f-persona" rows="8">${escapeHtml(w.persona || defaultBeginnerPersona(w.name))}</textarea>
                   </div>
                   <div class="fld"><label>פעולות שהעובד יכול לבצע</label>
-                    <textarea id="f-tools" rows="4">${escapeHtml((w.tools ?? []).join('\n'))}</textarea>
+                    <div class="quick-choices" id="tool-presets" style="margin-bottom:8px">
+                      ${TOOL_PRESETS.map((p) => `<button type="button" class="quick-choice" data-tool-preset="${escapeHtml(p.label)}">${escapeHtml(p.label)}</button>`).join('')}
+                    </div>
+                    <textarea id="f-tools" rows="4" placeholder="save_lead&#10;notify_webhook&#10;check_business_hours">${escapeHtml((w.tools ?? []).join('\n'))}</textarea>
                   </div>
                 </div>
               </details>
@@ -1295,6 +1312,52 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           toast('עודכן סגנון הדיבור של העובד', 'success');
         };
       });
+      document.querySelectorAll('.quick-choice[data-tool-preset]').forEach((btn) => {
+        btn.onclick = () => {
+          const preset = TOOL_PRESETS.find((p) => p.label === btn.dataset.toolPreset);
+          if (!preset) return;
+          const merged = [...new Set([...(builderWorker.tools ?? []), ...preset.tools])];
+          builderWorker.tools = merged;
+          if (toolsInput) {
+            toolsInput.value = merged.join('\n');
+            toolsInput.dispatchEvent(new Event('input'));
+          }
+          toast('נוספו פעולות: ' + preset.label, 'success');
+        };
+      });
+      const learnBtn = document.getElementById('f-learn-site');
+      const siteUrlInput = document.getElementById('f-site-url');
+      if (learnBtn && siteUrlInput) {
+        learnBtn.onclick = async () => {
+          const url = siteUrlInput.value.trim();
+          if (!url) return toast('הכנס כתובת אתר', 'error');
+          learnBtn.disabled = true;
+          learnBtn.textContent = 'טוען...';
+          const r = await api('/api/workers/learn-from-site', { method: 'POST', body: JSON.stringify({ url }) });
+          learnBtn.disabled = false;
+          learnBtn.innerHTML = icon('database', 14) + ' ייבא מאתר';
+          if (!r.ok) return toast('ייבוא נכשל: ' + JSON.stringify(r.body), 'error');
+          if (r.body.knowledge && knowledgeInput) {
+            builderWorker.knowledge = r.body.knowledge;
+            knowledgeInput.value = r.body.knowledge;
+          }
+          if (r.body.tasks?.length && tasksInput) {
+            builderWorker.tasks = r.body.tasks;
+            tasksInput.value = r.body.tasks.join('\n');
+            tasksInput.dispatchEvent(new Event('input'));
+          }
+          if (r.body.tools?.length && toolsInput) {
+            builderWorker.tools = r.body.tools;
+            toolsInput.value = r.body.tools.join('\n');
+            toolsInput.dispatchEvent(new Event('input'));
+          }
+          if (r.body.persona && personaInput) {
+            builderWorker.persona = r.body.persona;
+            personaInput.value = r.body.persona;
+          }
+          toast(r.body.fetched ? 'יובא תוכן מהאתר — בדוק וערוך לפני שמירה' : 'הוגדרו ברירות מחדל לפי הדומיין', 'success', 5000);
+        };
+      }
 
       // ---- Skills ----
       (async () => {
@@ -1694,14 +1757,36 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const activationRequests = reqResp.ok ? (await reqResp.json()).requests ?? [] : [];
     const auditResp = await fetch('/api/admin/audit-events?limit=12', { headers: adminHeaders });
     const auditEvents = auditResp.ok ? (await auditResp.json()).events ?? [] : [];
+    const statsResp = await fetch('/api/admin/tenant-stats', { headers: adminHeaders });
+    const tenantStats = statsResp.ok ? (await statsResp.json()).tenants ?? [] : [];
     const workers = r.workers ?? [];
     app.innerHTML = `
       <div class="toolbar">
         <h2>ניהול עובדים</h2>
-        <span class="muted">${workers.length} ${icon('users', 14)} עובדים בסך הכל</span>
+        <span class="muted">${workers.length} ${icon('users', 14)} עובדים · ${tenantStats.length} דיירים</span>
         <button class="btn btn-outline btn-sm" id="admin-token-clear" style="margin-right:auto">${icon('x', 14)} נקה טוקן</button>
       </div>
       <p class="muted" style="margin-bottom:16px">אשר בקשות תשלום ואז העובד ייפתח לצ'אט.</p>
+
+      <div class="b-sec">
+        <div class="toolbar" style="margin-bottom:10px">
+          <h3>${icon('activity', 16)} שימוש לפי דייר</h3>
+          <span class="muted">${tenantStats.length} דיירים</span>
+        </div>
+        ${tenantStats.length === 0 ? '<div class="muted">אין עדיין נתוני שימוש.</div>' : `
+          <div class="stack">
+            ${tenantStats.slice(0, 20).map((t) => `
+              <div class="row" style="border-bottom:1px solid var(--border);padding:8px 0;font-size:13px">
+                <code style="min-width:120px">${escapeHtml(t.tenantId.slice(0, 12))}…</code>
+                <span class="muted">${t.activeWorkers}/${t.workerCount} פעילים</span>
+                <span class="muted">${t.messageCount} הודעות</span>
+                <span class="muted">${t.leadCount} לידים</span>
+                <span class="muted">${t.escalationCount} escalations</span>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
 
       <div class="b-sec">
         <div class="toolbar" style="margin-bottom:10px">

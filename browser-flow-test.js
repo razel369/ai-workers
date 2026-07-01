@@ -77,7 +77,14 @@ try {
   });
   expect('admin mark-paid -> ok', paid.status === 200 && paid.body?.ok === true);
 
-  await page.reload({ waitUntil: 'load' });
+  const activeDeadline = Date.now() + 10000;
+  while (Date.now() < activeDeadline) {
+    const w = await req('/api/workers/' + workerId, { headers: { authorization: 'Bearer ' + tenantKey } });
+    if (w.body?.worker?.isActive) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  await page.reload({ waitUntil: 'networkidle' });
   await page.waitForSelector('#c-input', { timeout: 20000 });
   expect('paid chat composer is visible', await page.locator('#c-input').isVisible());
 
