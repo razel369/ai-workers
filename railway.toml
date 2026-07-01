@@ -14,6 +14,14 @@ DB_PATH = "/app/data/earnings.db"
 TENANTS_DIR = "/app/data/tenants"
 LLM_PROVIDER = "openai_compatible"
 TRUST_PROXY_HEADERS = "1"
+# Set in Railway dashboard (not committed):
+# PUBLIC_BASE_URL = "https://your-app.up.railway.app"
+# ADMIN_TOKEN = "<generate with: node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\">"
+# LLM_API_KEY = "sk-..."
+# BIT_PHONE or PAYPAL_ME = at least one payment channel
+# AGENT_OWNER_CONTACT = support@yourdomain.com
+#
+# Volume (required): Railway Dashboard → Service → Volumes → Mount path /app/data
 
 [deploy]
 startCommand = "node --experimental-sqlite --no-warnings server.js"

@@ -88,12 +88,38 @@ database (`earnings.db`) and per-tenant worker databases (`tenants/*/workers.db`
 If this directory is ephemeral, customers will lose keys, workers, audit events,
 payment status, and chat history on restart.
 
-| Platform | Config | Time |
-|---|---|---|
-| Railway | `railway.toml` + `Dockerfile` | 5 min |
-| Fly.io | `fly.toml` + `Dockerfile` | 5 min |
-| Render | `render.yaml` + `Dockerfile` | 5 min |
-| Any VPS | `Dockerfile` | 15 min |
+| Platform | Config | Persistent DB | Time |
+|---|---|---|---|
+| **Railway** (recommended) | `railway.toml` + `Dockerfile` + volume `/app/data` | Yes | 5 min |
+| Fly.io | `fly.toml` + `Dockerfile` | Yes (volume) | 5 min |
+| Render | `render.yaml` + `Dockerfile` | Yes (disk) | 5 min |
+| Vercel | `vercel.json` | **No** (`/tmp` only) | demos |
+| Any VPS | `Dockerfile` | Yes (mount volume) | 15 min |
+
+### Railway (recommended)
+
+1. Connect GitHub repo `razel369/ai-workers` in [Railway](https://railway.app).
+2. Add a **persistent volume** at mount path `/app/data`.
+3. Set variables in the dashboard:
+
+```bash
+ADMIN_TOKEN=<random-hex>          # node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+LLM_API_KEY=sk-...
+PUBLIC_BASE_URL=https://your-app.up.railway.app
+TRUST_PROXY_HEADERS=1
+AGENT_OWNER_CONTACT=you@example.com
+BIT_PHONE=972541234567            # or PAYPAL_ME
+WEBHOOK_NOTIFY_URL=               # optional: lead/escalation webhook
+```
+
+`DB_PATH` and `TENANTS_DIR` are preset in `railway.toml` to `/app/data/...`.
+
+4. After deploy, verify:
+
+```bash
+curl https://your-app.up.railway.app/health
+# expect: ok:true, persistentStorage:true, adminEnabled:true
+```
 
 Deployment checklist:
 
@@ -101,8 +127,11 @@ Deployment checklist:
 - Set `LLM_API_KEY` for real worker replies; without it the app intentionally runs in mock mode.
 - Mount persistent storage at `/app/data` or set `DB_PATH` and `TENANTS_DIR` to another persistent path.
 - Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy/load balancer that overwrites `X-Forwarded-*` headers.
+- Set `PUBLIC_BASE_URL` to your public URL (Railway domain or custom domain).
 - Verify `/health` after deploy and run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
 - Roll back by redeploying the previous image/revision, then verify `/health` and the admin audit panel.
+
+**Vercel** (`paid-agent-demo.vercel.app`) is fine for UI demos; SQLite lives on ephemeral `/tmp` and resets on cold deploy. Use Railway (or Fly/Render) for production data.
 
 ## Why this is worth paying for (2026)
 

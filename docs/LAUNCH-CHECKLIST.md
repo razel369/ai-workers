@@ -2,17 +2,21 @@
 
 ## Phase 0 — Infrastructure (this sprint)
 
-- [ ] `gh auth login` + push to `github.com/razel369/ai-workers`
-- [ ] `vercel login` + `vercel link` + set env vars (`ADMIN_TOKEN`, `LLM_API_KEY`, `PUBLIC_BASE_URL`)
-- [ ] **Production DB**: deploy Docker image on Railway/Fly with persistent `/app/data` volume
-- [ ] Point `PUBLIC_BASE_URL` to production URL (Railway primary; Vercel for demos only)
+- [ ] Push to `github.com/razel369/ai-workers`
+- [ ] **Production DB (Railway — recommended)**
+  - [ ] Create Railway project from GitHub repo (uses `Dockerfile` + `railway.toml`)
+  - [ ] Add **persistent volume** mounted at `/app/data` (SQLite + tenant DBs)
+  - [ ] Set env vars in Railway dashboard (see below)
+  - [ ] Set `PUBLIC_BASE_URL` to the Railway URL (e.g. `https://ai-workers-production.up.railway.app`)
+  - [ ] Verify `GET /health` returns `"persistentStorage": true`
+- [ ] Vercel (`paid-agent-demo.vercel.app`) — demos only; SQLite is ephemeral on `/tmp`
 - [ ] Run `npm test` green on GitHub Actions
 
 ## Phase 1 — Product readiness
 
 - [ ] Fix paid-worker chat paywall (`isActive` on `GET /api/workers/:id`)
 - [ ] Hide admin nav from public marketplace
-- [ ] Hebrew-first landing copy; reduce game-like rarity/stars for B2B trust
+- [ ] Hebrew-first landing copy; B2B trust (no game-like UI)
 - [ ] Self-serve signup flow tested end-to-end
 - [ ] Payment proof + admin approval SLA documented on paywall
 - [ ] WhatsApp channel (Meta Business API or Twilio) — highest ROI for IL market
@@ -34,13 +38,38 @@
 
 ## Env vars (production)
 
-| Variable | Required |
-|----------|----------|
-| `ADMIN_TOKEN` | Yes |
-| `LLM_API_KEY` | Yes (real replies) |
-| `PUBLIC_BASE_URL` | Yes |
-| `BIT_PHONE` or `PAYPAL_ME` | At least one |
-| `AGENT_OWNER_CONTACT` | Yes (support) |
-| `TRUST_PROXY_HEADERS` | Yes behind Railway/Vercel |
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `ADMIN_TOKEN` | Yes | Long random secret; Bearer auth for admin API |
+| `LLM_API_KEY` | Yes (real replies) | Platform LLM; mock mode if empty |
+| `PUBLIC_BASE_URL` | Yes | Full URL, no trailing slash |
+| `TRUST_PROXY_HEADERS` | Yes on Railway/Vercel | Set to `1` |
+| `DB_PATH` | Yes on Railway | `/app/data/earnings.db` (set in `railway.toml`) |
+| `TENANTS_DIR` | Yes on Railway | `/app/data/tenants` |
+| `BIT_PHONE` or `PAYPAL_ME` | At least one | Israeli payment channels |
+| `AGENT_OWNER_CONTACT` | Yes | Support email shown on landing |
+| `WEBHOOK_NOTIFY_URL` | Optional | JSON webhook for leads/escalations |
+| `BUSINESS_HOURS` | Optional | Default hours for `check_business_hours` tool |
+
+### Railway deploy (5 min)
+
+1. **New Project** → Deploy from GitHub → select `razel369/ai-workers`
+2. **Volume**: Service → Settings → Volumes → Add volume, mount path `/app/data`
+3. **Variables** (Railway dashboard):
+   ```
+   ADMIN_TOKEN=<random-hex>
+   LLM_API_KEY=sk-...
+   PUBLIC_BASE_URL=https://<your-service>.up.railway.app
+   TRUST_PROXY_HEADERS=1
+   AGENT_OWNER_CONTACT=you@example.com
+   BIT_PHONE=972...
+   ```
+4. Deploy → open `https://<your-service>.up.railway.app/health`
+5. Smoke test: signup → buy template → activation proof → admin approve → chat
+
+### Vercel (demos only)
+
+- Ephemeral `/tmp/ai-workers-data` — data resets on cold deploy
+- Use for UI previews; **do not** use as primary production DB
 
 See [business-model.canvas.tsx](file:///C:/Users/rmalk/.cursor/projects/c-Users-rmalk-paid-agent-demo/canvases/business-model.canvas.tsx) for unit economics.
