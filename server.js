@@ -49,7 +49,6 @@ import { DatabaseSync } from 'node:sqlite';
 import * as workers from './workers.js';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill } from './skills.js';
-import { handleLegalRoutes } from './legal-pages.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1134,7 +1133,6 @@ const server = http.createServer(async (req, res) => {
       persistentStorage: !DB_PATH.includes('/tmp'),
     });
   }
-  if (handleLegalRoutes(req, res, url, send)) return;
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
   }

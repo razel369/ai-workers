@@ -9,7 +9,6 @@ RUN npm ci --omit=dev
 
 COPY analytics-client.js ./
 COPY bootstrap-env.js ./
-COPY legal-pages.js ./
 COPY server.js ./
 COPY workers.js ./
 COPY workers-ui.html ./

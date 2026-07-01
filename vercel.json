@@ -10,7 +10,6 @@
         "includeFiles": [
           "analytics-client.js",
           "bootstrap-env.js",
-          "legal-pages.js",
           "workers.js",
           "workers-ui.html",
           "mcp-client.js",
