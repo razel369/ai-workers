@@ -222,10 +222,11 @@ export async function handleOAuthCallback({ code, state, error }) {
   return { ok: true, redirectTo, integrationId: result.id, type: row.integration_type };
 }
 
-export function generateWebhookConfig(tenantId) {
+export function generateWebhookConfig(tenantId, baseUrl = _publicBaseUrl) {
   const secret = crypto.randomBytes(16).toString('hex');
   const hookId = _newId ? _newId('hook') : `hook_${crypto.randomBytes(8).toString('hex')}`;
-  const hookUrl = `${_publicBaseUrl}/api/hooks/${encodeURIComponent(tenantId)}/${secret}`;
+  const root = (baseUrl || _publicBaseUrl || 'http://localhost:8765').replace(/\/$/, '');
+  const hookUrl = `${root}/api/hooks/${encodeURIComponent(tenantId)}/${secret}`;
   return {
     mode: 'inbound',
     hookId,
@@ -235,14 +236,15 @@ export function generateWebhookConfig(tenantId) {
   };
 }
 
-export function connectWithUserFields(tenantId, type, userConfig = {}) {
+export function connectWithUserFields(tenantId, type, userConfig = {}, opts = {}) {
+  const baseUrl = opts.baseUrl;
   const clean = {};
   for (const [k, v] of Object.entries(userConfig)) {
     if (v !== undefined && v !== null && String(v).trim() !== '') clean[k] = String(v).trim();
   }
 
   if (type === 'webhook' && !clean.url && !clean.hookUrl) {
-    const generated = generateWebhookConfig(tenantId);
+    const generated = generateWebhookConfig(tenantId, baseUrl);
     return connectIntegration(tenantId, {
       type,
       label: 'Webhook יוצא',

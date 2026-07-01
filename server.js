@@ -2048,7 +2048,7 @@ const server = http.createServer(async (req, res) => {
       const connected = list.find((i) => i.id === result.id);
       return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id });
     }
-    const result = integrations.connectWithUserFields(tenantId, body.type, userConfig);
+    const result = integrations.connectWithUserFields(tenantId, body.type, userConfig, { baseUrl: resolveBaseUrl(req) });
     if (!result.ok) return send(res, 400, result);
     const list = integrations.listIntegrations(tenantId);
     const connected = list.find((i) => i.id === result.id);
