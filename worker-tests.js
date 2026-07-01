@@ -254,6 +254,7 @@ let mismatchedActivationRequestId = null;
   expect('  llm.hasApiKey = false', r.body.worker?.llm?.hasApiKey === false);
   expect('  never returns apiKey value', r.body.worker?.llm?.apiKey === undefined);
   expect('  single worker exposes isActive=true', r.body.worker?.isActive === true);
+  expect('  agentMode defaults to agent', r.body.worker?.agentMode === 'agent');
 }
 
 // 10. Update worker (Builder PATCH)
@@ -270,6 +271,19 @@ let mismatchedActivationRequestId = null;
   expect('  tasks updated', r.body.worker?.tasks?.length === 3);
   expect('  knowledge updated', r.body.worker?.knowledge?.includes('Acme Corp'));
 }
+{
+  const r = await req(`/api/workers/${firstWorkerId}`, {
+    method: 'PATCH', headers: auth(),
+    body: JSON.stringify({ agentMode: 'agent', tools: ['save_lead', 'book_meeting_link', 'export_leads_csv'] }),
+  });
+  expect('PATCH agentMode + tools -> 200', r.status === 200 && r.body.ok === true);
+}
+{
+  const r = await req('/api/workers/tools', { headers: auth() });
+  expect('GET /api/workers/tools -> 200', r.status === 200);
+  expect('  has save_lead tool', !!r.body.tools?.find((t) => t.name === 'save_lead'));
+  expect('  save_lead has score param', !!r.body.tools?.find((t) => t.name === 'save_lead')?.parameters?.properties?.score);
+}
 
 // 11. Chat (mock runtime) — should succeed and produce a mock-flavored reply
 {
@@ -279,8 +293,10 @@ let mismatchedActivationRequestId = null;
   });
   expect('chat -> 200', r.status === 200);
   expect('  reply non-empty', r.body?.reply?.length > 20);
-  expect('  runtime=mock', r.body?.runtime === 'mock');
+  expect('  runtime mock or mock_agent', r.body?.runtime === 'mock' || r.body?.runtime === 'mock_agent');
   expect('  reply mentions Daniel template', /Daniel|mock/i.test(r.body.reply));
+  expect('  response has agentMode', r.body.agentMode === 'agent');
+  expect('  response has agentSteps array', Array.isArray(r.body.agentSteps));
 }
 
 // 12. Messages list
@@ -300,6 +316,18 @@ let mismatchedActivationRequestId = null;
   });
   expect('chat #2 -> 200', r.status === 200);
   expect('  pricing reply', /pricing|plan|quote|מחיר|quote/i.test(r.body.reply));
+}
+{
+  const r = await req(`/api/workers/${firstWorkerId}/test-agent`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'שלום, שמי יוסי, טלפון 050-9876543, מעוניין בפגישה', customerId: 'test-cust-1' }),
+  });
+  expect('test-agent -> 200', r.status === 200);
+  expect('  test-agent returns toolCalls array', Array.isArray(r.body.toolCalls));
+  expect('  test-agent returns agentSteps', Array.isArray(r.body.agentSteps) && r.body.agentSteps.length >= 1);
+  expect('  mock agent runtime', r.body.runtime === 'mock_agent' || r.body.runtime === 'mock');
+  const leads = await req(`/api/workers/${firstWorkerId}/leads`, { headers: auth() });
+  expect('  test-agent may save lead', leads.status === 200);
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
