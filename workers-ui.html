@@ -198,6 +198,20 @@
   .mcp-add-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
   .mcp-status { font-size:12px; margin-top:6px; min-height:20px; }
 
+  /* === AGENT MODE === */
+  .agent-banner { background:linear-gradient(135deg,rgba(214,160,77,.08),rgba(90,166,184,.06)); border:1px solid rgba(214,160,77,.22); border-radius:var(--radius); padding:14px 16px; margin-bottom:14px; }
+  .agent-banner h4 { font-size:14px; color:var(--text); margin-bottom:6px; }
+  .agent-banner p { font-size:13px; color:var(--muted); margin:0; line-height:1.5; }
+  .agent-toggle { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .agent-toggle button { flex:1; min-width:140px; padding:10px 14px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface2); color:var(--muted); font-weight:700; cursor:pointer; }
+  .agent-toggle button.active { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+  .tool-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .tool-chip { font-size:11px; padding:4px 8px; border-radius:100px; background:var(--surface3); border:1px solid var(--border); color:var(--body); font-family:monospace; }
+  .agent-test { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+  .agent-trace { font-size:12px; background:#0a0c10; border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px; margin-top:8px; max-height:200px; overflow:auto; }
+  .agent-trace .step { margin-bottom:6px; color:var(--muted); }
+  .agent-trace .step b { color:var(--accent); }
+
   /* === WIZARD === */
   .wizard-progress { display:flex; gap:4px; margin-bottom:24px; padding:4px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
   .wizard-progress .wp-step { flex:1; padding:10px 6px; text-align:center; font-size:11px; font-weight:600; color:var(--muted); border-radius:var(--radius-sm); transition:all .3s ease; cursor:pointer; position:relative; }
@@ -989,6 +1003,30 @@ async function renderMarketplace() {
     formal: 'רשמי ומכובד. מתאים למשרדים, עורכי דין ובנקים. פונה בלשון נקייה.',
     medical: 'חם ומרגיע. מתאים למרפאות — סבלני, לא נותן ייעוץ רפואי, מעביר דחוף לאדם.',
   };
+  const TOOL_LABELS_HE = {
+    save_lead: 'שמירת ליד + ציון',
+    escalate_to_human: 'הסלמה לנציג',
+    search_knowledge: 'חיפוש במאגר ידע',
+    schedule_callback: 'תיאום שיחה חוזרת',
+    send_email: 'שליחת מייל',
+    create_crm_note: 'הערת CRM',
+    book_meeting_link: 'קישור לפגישה',
+    export_leads_csv: 'ייצוא לידים CSV',
+    get_appointment_slots: 'תורים פנויים',
+    flag_needs_followup: 'סימון למעקב',
+    notify_webhook: 'התראה לעסק',
+    check_business_hours: 'בדיקת שעות פעילות',
+  };
+
+  function toolLabel(name) {
+    return TOOL_LABELS_HE[name] ? `${TOOL_LABELS_HE[name]} (${name})` : name;
+  }
+
+  function renderAgentToolsChips(tools) {
+    const list = (tools ?? []).map((t) => String(t).trim()).filter(Boolean);
+    if (!list.length) return '<span class="muted">אין כלים פעילים — מצב צ\'אט בלבד</span>';
+    return list.map((t) => `<span class="tool-chip" title="${escapeHtml(t)}">${escapeHtml(toolLabel(t))}</span>`).join('');
+  }
   const TOOL_PRESETS = [
     { label: 'לידים + webhook', tools: ['save_lead', 'notify_webhook', 'export_leads_csv'] },
     { label: 'שעות פעילות', tools: ['check_business_hours', 'get_current_time'] },
@@ -1119,6 +1157,16 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                   <button type="button" class="quick-choice" data-tone="medical">חם (מרפאה)</button>
                 </div>
               </div>
+              <div class="agent-banner">
+                <h4>${icon('zap', 16)} מצב סוכן — לא רק צ'אט</h4>
+                <p>במצב <strong>סוכן</strong>, העובד מבצע פעולות: שומר לידים, מחפש במאגר ידע, מסלים לנציג, קובע תורים, ושולח webhook. במצב <strong>צ'אט בלבד</strong> — רק תשובות טקסט.</p>
+                <div class="agent-toggle" id="agent-mode-toggle">
+                  <button type="button" data-mode="agent" class="${(w.agentMode ?? 'agent') !== 'chat' ? 'active' : ''}">${icon('zap', 14)} סוכן (כלים פעילים)</button>
+                  <button type="button" data-mode="chat" class="${(w.agentMode ?? 'agent') === 'chat' ? 'active' : ''}">${icon('chat', 14)} צ'אט בלבד</button>
+                </div>
+                <label style="margin-top:10px">כלים פעילים</label>
+                <div class="tool-chips" id="active-tools-chips">${renderAgentToolsChips(w.tools)}</div>
+              </div>
               <details class="advanced-config">
                 <summary>${icon('edit', 14)} עריכת הוראות מתקדמת</summary>
                 <div>
@@ -1154,6 +1202,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                 <div class="review-item"><div class="ri-label">התפקיד הראשון</div><div class="ri-value">${escapeHtml(firstLine((w.tasks ?? []).join('\n')))}</div></div>
                 <div class="review-item"><div class="ri-label">כמה משימות</div><div class="ri-value">${(w.tasks ?? []).filter(Boolean).length} משימות</div></div>
                 <div class="review-item"><div class="ri-label">ידע לעובד</div><div class="ri-value">${escapeHtml(firstLine(w.knowledge, 'עדיין חסר מידע עסקי'))}</div></div>
+                <div class="review-item"><div class="ri-label">מצב סוכן</div><div class="ri-value">${(w.agentMode ?? 'agent') === 'chat' ? 'צ\'אט בלבד' : 'סוכן (כלים)'}</div></div>
+                <div class="review-item"><div class="ri-label">כלים פעילים</div><div class="ri-value"><div class="tool-chips">${renderAgentToolsChips(w.tools)}</div></div></div>
+              </div>
+              <div class="agent-test b-sec" style="margin-top:14px">
+                <h3>${icon('zap', 16)} בדיקת סוכן (סימולציה)</h3>
+                <p class="muted" style="margin-bottom:10px">שלח הודעת לקוח לדוגמה וראה אילו כלים הופעלו — בלי לשמור בשיחה האמיתית.</p>
+                <textarea id="agent-test-input" rows="2" placeholder="לדוגמה: שלום, אני מעוניין בפגישה. שמי דני, טלפון 050-1234567"></textarea>
+                <button type="button" class="btn btn-outline btn-sm" id="agent-test-run" style="margin-top:8px">${icon('zap', 14)} הרץ בדיקה</button>
+                <div id="agent-test-result" class="agent-trace" style="display:none"></div>
               </div>
               <details class="advanced-config">
                 <summary>${icon('skills', 14)} יכולות מתקדמות וחיבורים</summary>
@@ -1235,6 +1292,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         tasks: starterTasksForTemplate(t),
         knowledge: starterKnowledgeForTemplate(t),
         tools: t.defaultTools,
+        agentMode: 'agent',
         llm: { provider: '', model: '', baseUrl: '', hasApiKey: false, platformProvided: false },
         skills: [],
         mcpServers: [],
@@ -1292,7 +1350,38 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       };
       if (personaInput) personaInput.oninput = () => { builderWorker.persona = personaInput.value; };
       if (knowledgeInput) knowledgeInput.oninput = () => { builderWorker.knowledge = knowledgeInput.value; };
-      if (toolsInput) toolsInput.oninput = () => { builderWorker.tools = toolsInput.value.split('\n').map((s) => s.trim()).filter(Boolean); };
+      if (toolsInput) toolsInput.oninput = () => {
+        builderWorker.tools = toolsInput.value.split('\n').map((s) => s.trim()).filter(Boolean);
+        const chips = document.getElementById('active-tools-chips');
+        if (chips) chips.innerHTML = renderAgentToolsChips(builderWorker.tools);
+      };
+      document.querySelectorAll('#agent-mode-toggle button[data-mode]').forEach((btn) => {
+        btn.onclick = () => {
+          builderWorker.agentMode = btn.dataset.mode;
+          document.querySelectorAll('#agent-mode-toggle button').forEach((b) => b.classList.toggle('active', b.dataset.mode === btn.dataset.mode));
+          toast(btn.dataset.mode === 'chat' ? 'מצב צ\'אט בלבד' : 'מצב סוכן עם כלים', 'success');
+        };
+      });
+      const agentTestBtn = document.getElementById('agent-test-run');
+      if (agentTestBtn && workerId) {
+        agentTestBtn.onclick = async () => {
+          const input = document.getElementById('agent-test-input');
+          const out = document.getElementById('agent-test-result');
+          const msg = input?.value?.trim();
+          if (!msg) return toast('הכנס הודעת לקוח לבדיקה', 'error');
+          agentTestBtn.disabled = true;
+          out.style.display = 'block';
+          out.innerHTML = icon('loading', 14, 'icon-spin') + ' מריץ לולאת סוכן...';
+          const r = await api('/api/workers/' + workerId + '/test-agent', { method: 'POST', body: JSON.stringify({ message: msg }) });
+          agentTestBtn.disabled = false;
+          if (!r.ok) { out.innerHTML = '<span class="err">' + escapeHtml(JSON.stringify(r.body)) + '</span>'; return; }
+          const steps = (r.body.agentSteps ?? []).map((s) => `<div class="step"><b>${escapeHtml(s.phase)}</b>${s.tool ? ' → ' + escapeHtml(s.tool) : ''}${s.thought ? ': ' + escapeHtml(s.thought) : ''}</div>`).join('');
+          const tools = (r.body.toolCalls ?? []).map((t) => `<div class="step">🔧 <b>${escapeHtml(t.name)}</b>: ${escapeHtml((t.result ?? '').slice(0, 160))}</div>`).join('');
+          out.innerHTML = `<div><b>מנוע:</b> ${escapeHtml(r.body.runtime)} · <b>שלבים:</b> ${r.body.stepsUsed ?? 0}</div>${steps}${tools}<div class="step" style="margin-top:8px">${escapeHtml((r.body.reply ?? '').slice(0, 300))}…</div>`;
+        };
+      } else if (agentTestBtn && !workerId) {
+        agentTestBtn.onclick = () => toast('שמור את העובד קודם, ואז הרץ בדיקה', 'error');
+      }
       document.querySelectorAll('.quick-choice[data-add-task]').forEach((btn) => {
         btn.onclick = () => {
           const task = btn.dataset.addTask;
@@ -1481,6 +1570,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             tasks: (builderWorker.tasks ?? []).map((s) => String(s).trim()).filter(Boolean),
             knowledge: builderWorker.knowledge || '',
             tools: (builderWorker.tools ?? []).map((s) => String(s).trim()).filter(Boolean),
+            agentMode: builderWorker.agentMode || 'agent',
             mcpServers: mcpServers,
           };
           let r;
@@ -1697,7 +1787,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         const meta = document.createElement('div'); meta.className = 'msg system'; meta.innerHTML = icon('zap', 12) + ' מנוע: ' + escapeHtml(r.body.runtime) + (r.body.error ? ', שגיאה: ' + escapeHtml(r.body.error) : ''); win.appendChild(meta);
         if (r.body.toolCalls && r.body.toolCalls.length > 0) {
           toolLog.style.display = 'block';
-          toolLog.innerHTML = '<details open><summary style="cursor:pointer;font-size:14px;color:var(--muted)">' + icon('zap', 16) + ' כלים שהופעלו (' + r.body.toolCalls.length + ')</summary><div style="margin-top:8px;font-size:13px">' +
+          const stepsHtml = (r.body.agentSteps ?? []).map((s) => `<span style="margin-left:6px">${escapeHtml(s.phase)}${s.tool ? ':' + escapeHtml(s.tool) : ''}</span>`).join(' → ');
+          toolLog.innerHTML = '<details open><summary style="cursor:pointer;font-size:14px;color:var(--muted)">' + icon('zap', 16) + ' מסלול סוכן (' + (r.body.stepsUsed ?? r.body.toolCalls.length) + ' שלבים)</summary>' +
+            (stepsHtml ? '<div class="muted" style="font-size:12px;margin:6px 0">' + stepsHtml + '</div>' : '') +
+            '<div style="margin-top:8px;font-size:13px">' +
             r.body.toolCalls.map((tc) => '<div style="background:#0a0a12;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px">' +
               '<b style="color:var(--accent)">' + escapeHtml(tc.name) + '</b>' +
               '<pre style="margin:6px 0 0;font-size:11px">' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</pre>' +
