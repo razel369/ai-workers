@@ -1070,12 +1070,175 @@ function starterTasksForTemplate(tpl) {
   return byCategory[tpl.category] ?? ['לענות לשאלות של לקוחות בעברית', 'לאסוף פרטי קשר חשובים', 'להעביר מקרים חשובים לאדם', 'לסיים כל שיחה עם צעד הבא ברור'];
 }
 
-function starterKnowledgeForTemplate(tpl) {
-  return `שם העסק: (כתוב כאן)
+export const TEMPLATE_SUGGESTIONS = {
+  'clinic-receptionist-he': ['קביעת תור', 'שעות פתיחה', 'ביטוחים מכוסים'],
+  'restaurant-manager-he': ['הזמנת שולחן', 'מה בתפריט?', 'טייק אווי'],
+  'sales-leads-il': ['ספרו לי על השירות', 'רוצה פגישה', 'מה המחיר?'],
+  'support-he': ['שעות פעילות', 'מדיניות החזרות', 'דברו עם נציג'],
+  'real-estate-il': ['יש דירות פנויות?', 'לקבוע ביקור', 'מה התקציב המינימלי?'],
+  'ecom-support-he': ['איפה ההזמנה שלי?', 'איך מחזירים מוצר?', 'יש במלאי?'],
+  'property-manager-he': ['תקלה בדירה', 'מתי משלמים שכר דירה?', 'דחוף — דליפת מים'],
+  'content-he': ['פוסט ללינקדאין', 'מודעה לפייסבוק', 'כותרות חלופיות'],
+  'data-entry': ['חלץ פרטים מהטקסט', 'הכן שורת CSV', 'מה חסר במסמך?'],
+};
+
+const TEMPLATE_KNOWLEDGE_BOILERPLATE = {
+  'clinic-receptionist-he': (biz) => `שם המרפאה: ${biz}
+כתובת: (רחוב, עיר)
+טלפון: 03-0000000
+שעות פעילות: א-ה 08:00-19:00, ו 08:00-12:00
+רופאים: ד"ר כהן — רפואת משפחה, ד"ר לוי — אורתופדיה
+קופות חולים: כללית, מכבי, מאוחדת, לאומית
+ביטוחים פרטיים: (רשימה)
+מדיניות ביטול תור: 24 שעות מראש
+חניה: חניון הבניין / רחוב
+הערה: אין ייעוץ רפואי בצ'אט — רק ניהול תורים ומידע כללי`,
+  'restaurant-manager-he': (biz) => `שם המסעדה: ${biz}
+כתובת: (רחוב, עיר)
+טלפון: 050-0000000
+שעות: א-ה 12:00-23:00, ו 11:00-15:00, שבת סגור
+סוג מטבח: ישראלי / איטלקי / אסייתי
+כשרות: (רבנות מקומית / לא כשר)
+תפריט עיקרי: (הדביקו מנות ומחירים)
+הזמנת שולחן: עד 8 אנשים בצ'אט, מעל — התקשרו
+טייק אווי: זמין, זמן הכנה ~20 דקות
+אלרגיות: ציינו בהזמנה — נשמח להתאים`,
+  'sales-leads-il': (biz) => `שם החברה: ${biz}
+מה אנחנו מוכרים: (תיאור קצר)
+קהל יעד: עסקים בישראל, 10-200 עובדים
+מחירון: החל מ-₪___ לחודש
+קישור לפגישה: https://cal.com/...
+שעות מכירות: א-ה 09:00-18:00
+מתי להעביר לנציג: ליד חם (ציון 7+), בקשה לחוזה, שאלה משפטית`,
+  'support-he': (biz) => `שם העסק: ${biz}
+שעות שירות: א-ה 09:00-18:00
+מדיניות החזרות: 14 יום, מוצר שלם באריזה מקורית
+זמן משלוח: 3-5 ימי עסקים
+אימייל תמיכה: support@example.co.il
+שאלות נפוצות: (הדביקו כאן)
+מתי להעביר לאדם: החזר כספי, תלונה, שפה משפטית`,
+  'real-estate-il': (biz) => `שם המשרד: ${biz}
+אזורי פעילות: תל אביב, רמת גן, גבעתיים
+נכסים זמינים: (הדביקו רשימת דירות)
+עמלת תיווך: 2% + מע"מ
+שעות: א-ה 09:00-19:00, שישי 09:00-13:00
+רישיון תיווך: (מספר)
+תיאום ביקור: דרך הצ'אט או בטלפון`,
+  'ecom-support-he': (biz) => `שם החנות: ${biz}
+אתר: https://...
+משלוח חינם מעל: ₪199
+זמני אספקה: 3-7 ימי עסקים
+החזרות: 14 יום מקבלת המשלוח
+שירותי משלוח: דואר ישראל, צ'יטה, שליח עד הבית
+אימייל: service@example.co.il`,
+  'property-manager-he': (biz) => `חברת ניהול: ${biz}
+בניינים מנוהלים: (רשימת כתובות)
+שכר דירה: מועד תשלום 1 לחודש, העברה בנקאית
+תחזוקה דחופה: דליפה, גז, נעילה — טלפון חירום 050-0000000
+שעות משרד: א-ה 09:00-17:00
+מדיניות פיקדון: החזר תוך 30 יום מסיום חוזה`,
+};
+
+export function getTemplateSuggestions(templateId) {
+  return TEMPLATE_SUGGESTIONS[templateId] ?? ['שלום', 'מה אתם עושים?', 'איך יוצרים קשר?'];
+}
+
+export function buildSmartKnowledge(templateId, businessName = 'העסק שלי') {
+  const tpl = getTemplate(templateId);
+  const biz = String(businessName || 'העסק שלי').trim();
+  const custom = TEMPLATE_KNOWLEDGE_BOILERPLATE[templateId];
+  if (custom) return custom(biz);
+  if (tpl?.defaultKnowledge) {
+    return tpl.defaultKnowledge.replace(/\(the tenant fills this in\)/gi, `(${biz} — מלאו כאן)`);
+  }
+  return starterKnowledgeForTemplate(tpl ?? { category: 'support' }, biz);
+}
+
+function starterKnowledgeForTemplate(tpl, businessName = '') {
+  const biz = businessName || '(כתוב כאן)';
+  const custom = tpl?.id && TEMPLATE_KNOWLEDGE_BOILERPLATE[tpl.id];
+  if (custom) return custom(biz);
+  return `שם העסק: ${biz}
 מה העסק מוכר או נותן: (כתוב כאן)
-שעות פעילות: (כתוב כאן)
+שעות פעילות: א-ה 09:00-18:00, שישי 09:00-13:00
 מחירים או חבילות: (כתוב כאן)
+טלפון: 050-0000000
 מתי להעביר לאדם: לקוח כועס, בקשת החזר, שאלה משפטית/רפואית, או כל דבר שהעובד לא יודע.`;
+}
+
+export function getWorkerHealth(worker) {
+  const srv = getServerLlmConfig();
+  const hasLlm = !!(srv.apiKey || worker.llm?.hasApiKey);
+  if (!hasLlm) return { status: 'needs_llm', labelHe: 'צריך LLM', tone: 'warn' };
+  if (worker.isActive) {
+    if (worker.paidUntil && new Date(worker.paidUntil) > new Date()) {
+      const d = new Date(worker.paidUntil).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' });
+      return { status: 'active_until', labelHe: `פעיל עד ${d}`, tone: 'ok' };
+    }
+    return { status: 'healthy', labelHe: 'עובד תקין ✓', tone: 'ok' };
+  }
+  if (worker.status === 'pending_payment') return { status: 'trial', labelHe: 'מצב ניסיון — דמו', tone: 'info' };
+  return { status: 'expired', labelHe: 'פג תוקף — צריך חידוש', tone: 'warn' };
+}
+
+function llmErrorMessageHe(error, detail = '') {
+  const e = String(error || '').toLowerCase();
+  const d = String(detail || '').toLowerCase();
+  if (e.includes('429') || d.includes('rate') || d.includes('limit') || d.includes('too many')) {
+    return 'המערכת עמוסה כרגע — נסו שוב בעוד דקה. אנחנו ממשיכים לעבוד בשבילכם.';
+  }
+  if (e.includes('timeout') || e.includes('agent_timeout')) {
+    return 'התשובה לקחה יותר מדי זמן — נסו שאלה קצרה יותר או שוב בעוד רגע.';
+  }
+  if (e.includes('no_api_key')) {
+    return 'שירות ה-AI עדיין לא מחובר — בינתיים העובד עונה במצב הדגמה.';
+  }
+  return 'משהו השתבש בתשובה — נסו שוב. אם זה חוזר, פנו לתמיכה.';
+}
+export { llmErrorMessageHe };
+
+export function learnFromCorrection(tenantId, workerId, { original = '', corrected = '', userMessage = '' } = {}) {
+  const worker = getWorker(tenantId, workerId);
+  if (!worker) return { ok: false, error: 'not_found' };
+  const correctedTrim = String(corrected).trim();
+  if (!correctedTrim) return { ok: false, error: 'corrected_required' };
+  const stamp = new Date().toLocaleDateString('he-IL');
+  const snippet = `\n\n--- למידה מתיקון (${stamp}) ---\nשאלת לקוח: ${String(userMessage).slice(0, 200)}\nתשובה מומלצת: ${correctedTrim}`;
+  const knowledge = (worker.knowledge + snippet).slice(0, 50000);
+  updateWorker(tenantId, workerId, { knowledge });
+  return { ok: true, snippetLength: snippet.length };
+}
+
+function computeQualityScore({ reply = '', runtime = '', error = null, toolCalls = [], timedOut = false }) {
+  if (error || timedOut) return { level: 'low', labelHe: 'ביטחון: נמוך' };
+  if (runtime === 'mock' || runtime === 'mock_fallback' || runtime === 'mock_agent') {
+    return { level: 'medium', labelHe: 'ביטחון: בינוני' };
+  }
+  const len = String(reply).length;
+  const hasTools = toolCalls.length > 0;
+  const uncertain = /לא בטוח|לא יודע|אינני יכול|אעביר לנציג|escalat/i.test(reply);
+  if (uncertain) return { level: 'low', labelHe: 'ביטחון: נמוך' };
+  if (hasTools && len > 40) return { level: 'high', labelHe: 'ביטחון: גבוה' };
+  if (len > 80) return { level: 'high', labelHe: 'ביטחון: גבוה' };
+  if (len > 25) return { level: 'medium', labelHe: 'ביטחון: בינוני' };
+  return { level: 'low', labelHe: 'ביטחון: נמוך' };
+}
+
+const FALLBACK_MODELS = {
+  'openrouter/free': 'openrouter/free',
+  'meta-llama/llama-3.2-3b-instruct:free': 'openrouter/free',
+  'gpt-5.5': 'gpt-4o-mini',
+  'gpt-4o': 'gpt-4o-mini',
+};
+
+function getFallbackModel(model = '') {
+  return FALLBACK_MODELS[model] ?? (model.includes('free') ? 'openrouter/free' : null);
+}
+
+function isRetryableLlmError(res) {
+  if (!res || res.ok) return false;
+  const blob = `${res.error || ''} ${res.detail || ''}`.toLowerCase();
+  return /429|rate|limit|503|502|timeout|overloaded|too many/.test(blob);
 }
 
 export function buyTemplate({ tenantId, templateId, paymentChannel, paymentReference }) {
@@ -1114,11 +1277,15 @@ export function buyTemplate({ tenantId, templateId, paymentChannel, paymentRefer
 export function listWorkers(tenantId) {
   const db = getTenantDb(tenantId);
   const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, created_at AS createdAt, updated_at AS updatedAt FROM workers ORDER BY created_at DESC`).all();
-  return rows.map((r) => ({
-    ...r,
-    template: getTemplate(r.templateId),
-    isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()),
-  }));
+  return rows.map((r) => {
+    const worker = {
+      ...r,
+      template: getTemplate(r.templateId),
+      isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()),
+      llm: { hasApiKey: !!getServerLlmConfig().apiKey },
+    };
+    return { ...worker, health: getWorkerHealth(worker) };
+  });
 }
 
 export function getWorker(tenantId, workerId) {
@@ -1465,7 +1632,7 @@ function mockReplyWithAgent(worker, userMessage, toolCallsLog = [], agentSteps =
 
 // --- Real LLM runtime ----------------------------------------------------
 
-async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
+async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
   const provider = worker.llm.provider || 'openai_compatible';
   const model = worker.llm.model || defaultModelFor(provider);
   if (!apiKey) return { ok: false, error: 'no_api_key' };
@@ -1561,6 +1728,22 @@ async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '
     })
     : undefined;
   return { ok: true, text, toolCalls };
+}
+
+async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
+  let res = await callLLMOnce(worker, systemPrompt, messages, toolDefs, apiKey);
+  if (!res.ok && isRetryableLlmError(res)) {
+    const fallback = getFallbackModel(worker.llm.model || '');
+    if (fallback && fallback !== worker.llm.model) {
+      const fallbackWorker = { ...worker, llm: { ...worker.llm, model: fallback } };
+      const shortPrompt = `${systemPrompt}\n\nIMPORTANT: Reply in Hebrew, under 80 words, no tools.`;
+      const shortHistory = messages.slice(-6);
+      const retry = await callLLMOnce(fallbackWorker, shortPrompt, shortHistory, [], apiKey);
+      if (retry.ok) return { ...retry, retried: true, fallbackModel: fallback };
+      res = retry;
+    }
+  }
+  return res;
 }
 
 const PROVIDER_DEFAULT_MODELS = {
@@ -1683,6 +1866,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
         error = llmRes.error;
         finalReply = mockReplyWithAgent(worker, userMessage, toolCallsLog, agentSteps);
         runtime = 'mock_fallback';
+        if (isRetryableLlmError(llmRes)) error = llmRes.error;
         break;
       }
       runtime = worker.llm.provider;
@@ -1753,8 +1937,12 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
         VALUES (?, ?, ?, ?, 'normal', 'open', NULL, ?)`).run(newId('fu'), workerId, customerId, fuReason, new Date().toISOString());
     }
   }
+  const qualityScore = computeQualityScore({ reply, runtime, error, toolCalls: toolCallsLog, timedOut });
+  const userMessageHe = error ? llmErrorMessageHe(error) : undefined;
   return {
     ok: true, status: 200, reply, runtime, error, timedOut,
+    userMessageHe,
+    qualityScore,
     mcpErrors: mcpErrors.length ? mcpErrors : undefined,
     workerId, workerName: worker.name, customerId,
     agentMode: worker.agentMode,
@@ -1762,6 +1950,27 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     agentSteps,
     stepsUsed: agentSteps.length,
   };
+}
+
+/** Stream reply tokens via callback (SSE-friendly). Falls back to single chunk. */
+export async function streamChatWithWorker(params, onEvent) {
+  const result = await chatWithWorker(params);
+  if (!result.ok) {
+    onEvent('error', { error: result.error, message: result.message || result.userMessageHe || llmErrorMessageHe(result.error) });
+    return result;
+  }
+  const text = result.reply || '';
+  const chunkSize = Math.max(4, Math.min(12, Math.ceil(text.length / 24)));
+  for (let i = 0; i < text.length; i += chunkSize) {
+    onEvent('token', { text: text.slice(i, i + chunkSize) });
+  }
+  onEvent('done', {
+    runtime: result.runtime,
+    qualityScore: result.qualityScore,
+    toolCalls: result.toolCalls,
+    stepsUsed: result.stepsUsed,
+  });
+  return result;
 }
 
 // --- Learn-from-website generator -----------------------------------------

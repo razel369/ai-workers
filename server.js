@@ -1483,6 +1483,14 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, result);
   }
 
+  // API: smart knowledge boilerplate per template
+  if (req.method === 'GET' && url.pathname === '/api/workers/smart-knowledge') {
+    const templateId = url.searchParams.get('templateId') || '';
+    const businessName = cleanText(url.searchParams.get('businessName'), 120) || 'העסק שלי';
+    if (!templateId) return send(res, 400, { error: 'templateId_required' });
+    return send(res, 200, { knowledge: workers.buildSmartKnowledge(templateId, businessName) });
+  }
+
   // API: list templates
   if (req.method === 'GET' && url.pathname === '/api/workers/templates') {
     return send(res, 200, {
@@ -1492,6 +1500,7 @@ const server = http.createServer(async (req, res) => {
         defaultPersona: t.defaultPersona, defaultTasks: t.defaultTasks,
         defaultKnowledge: t.defaultKnowledge, defaultTools: t.defaultTools,
         agentCapabilitiesHe: t.agentCapabilitiesHe ?? '',
+        suggestions: workers.getTemplateSuggestions(t.id),
       })),
     });
   }
@@ -1577,7 +1586,11 @@ const server = http.createServer(async (req, res) => {
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
     const w = workers.getWorker(tenantId, getWorkerMatch[1]);
     if (!w) return send(res, 404, { error: 'not_found' });
-    return send(res, 200, { worker: w });
+    return send(res, 200, {
+      worker: w,
+      health: workers.getWorkerHealth(w),
+      suggestions: workers.getTemplateSuggestions(w.templateId),
+    });
   }
 
   // API: update worker
@@ -1619,6 +1632,38 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { messages });
   }
 
+  // API: chat with worker (SSE stream)
+  const chatStreamMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat\/stream$/);
+  if (req.method === 'POST' && chatStreamMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    const writeSse = (event, data) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    try {
+      await workers.streamChatWithWorker({
+        tenantId,
+        workerId: chatStreamMatch[1],
+        userMessage: body.message,
+        customerId: body.customerId ?? '',
+        testMode: !!body.testMode,
+        demoMode: !!body.demoMode,
+      }, writeSse);
+    } catch (e) {
+      writeSse('error', { message: 'שגיאה בשליחה — נסו שוב בעוד רגע.' });
+    }
+    res.end();
+    return;
+  }
+
   // API: chat with worker
   const chatMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat$/);
   if (req.method === 'POST' && chatMatch) {
@@ -1647,6 +1692,21 @@ const server = http.createServer(async (req, res) => {
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
     const res2 = await workers.chatWithWorker({ tenantId, workerId: testAgentMatch[1], userMessage: body.message, customerId: body.customerId ?? 'test_customer', testMode: true });
     return send(res, res2.status ?? 200, res2);
+  }
+
+  const learnMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/learn-correction$/);
+  if (req.method === 'POST' && learnMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_LARGE);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    const res2 = workers.learnFromCorrection(tenantId, learnMatch[1], {
+      original: body.original,
+      corrected: body.corrected,
+      userMessage: body.userMessage,
+    });
+    if (!res2.ok) return send(res, res2.error === 'not_found' ? 404 : 400, res2);
+    return send(res, 200, res2);
   }
 
   // API: request activation after payment/proof submission
