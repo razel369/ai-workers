@@ -706,11 +706,12 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <title>עובדי AI — העסק שלך עובד 24/7</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/material3-theme.css">
   <style>
     :root {
       color-scheme: dark;
+      --font: 'Rubik', system-ui, sans-serif;
       --bg: #0a0908;
       --surface: #141210;
       --surface2: #1e1a16;
@@ -725,7 +726,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font: 16px/1.7 'Assistant', system-ui, -apple-system, sans-serif;
+      font: 16px/1.55 var(--font);
       background: var(--bg);
       color: var(--body);
       overflow-x: hidden;

@@ -6,19 +6,17 @@
 <title>AI Workers — עובדי AI לעסקים בישראל</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/material3-theme.css">
 <style>
-  :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Heebo',system-ui,sans-serif; }
+  :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Rubik',system-ui,sans-serif; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { font:15px/1.7 var(--font); background:var(--bg); color:var(--body); min-height:100vh; overflow-x:hidden; }
-  body::before { content:''; position:fixed; inset:0; pointer-events:none; z-index:0; background:linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(180deg,rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(180deg,#0b0e11 0%,#090b0d 42%,#0d1013 100%); background-size:72px 72px,72px 72px,100% 100%; -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.8),rgba(0,0,0,.18) 72%,transparent); mask-image:linear-gradient(180deg,rgba(0,0,0,.8),rgba(0,0,0,.18) 72%,transparent); }
-  body::after { content:''; position:fixed; inset:0; pointer-events:none; z-index:0; background:linear-gradient(90deg,transparent,rgba(214,160,77,.08),transparent); height:1px; top:88px; }
+  body { font:15px/1.55 var(--font); background:var(--bg); color:var(--body); min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; font-feature-settings:"kern" 1; }
   main,header,.key-bar,.toast-container { position:relative; z-index:1; }
   
   /* === HEADER === */
   header { position:sticky; top:0; z-index:100; background:rgba(8,7,11,.75); backdrop-filter:blur(20px) saturate(1.5); border-bottom:1px solid var(--border); padding:10px 28px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header .logo { display:flex; align-items:center; gap:10px; text-decoration:none; padding:4px 12px 4px 0; border-left:1px solid var(--border); margin-left:12px; }
+  header .logo { display:flex; align-items:center; gap:10px; text-decoration:none; padding:4px 12px 4px 0; border-inline-start:1px solid var(--border); margin-inline-start:12px; }
   header .logo .logo-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 0 20px var(--accent-glow); animation:logoGlow 3s ease-in-out infinite alternate; }
   @keyframes logoGlow { 0%{box-shadow:0 0 20px var(--accent-glow)} 100%{box-shadow:0 0 35px rgba(201,149,62,.25)} }
   header .logo .logo-text { display:flex; flex-direction:column; line-height:1.2; }
@@ -126,16 +124,16 @@
   .w-card.best { border-top:3px solid var(--green); }
   
   /* Worker card badge */
-  .w-badge { position:absolute; top:12px; left:12px; z-index:2; }
+  .w-badge { position:absolute; top:12px; inset-inline-start:12px; z-index:2; }
   .badge { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:800; }
   .badge.popular { background:rgba(214,160,77,.14); color:var(--accent); border:1px solid rgba(214,160,77,.24); }
   .badge.best { background:var(--green-bg); color:var(--green); border:1px solid rgba(102,173,120,.28); }
   .badge.new { background:rgba(90,166,184,.13); color:var(--blue); border:1px solid rgba(90,166,184,.28); }
   
   /* Worker top section */
-  .w-top { display:flex; align-items:flex-start; gap:13px; margin-bottom:14px; padding-left:78px; }
+  .w-top { display:flex; align-items:flex-start; gap:13px; margin-bottom:14px; padding-inline-start:78px; }
   .w-top .wi { width:46px; height:46px; background:var(--surface2); border-radius:var(--radius); display:flex; align-items:center; justify-content:center; font-size:22px; border:1px solid var(--border); flex-shrink:0; color:var(--accent); }
-  .w-top .wi-info h3 { font-size:17px; margin:0; line-height:1.32; padding-left:2px; }
+  .w-top .wi-info h3 { font-size:17px; margin:0; line-height:1.35; padding-inline-start:2px; font-weight:600; }
   .w-fit { font-size:12px; color:var(--muted); margin-top:4px; }
   
   /* Tags */
@@ -428,7 +426,7 @@
   }
   
   @media (max-width:900px) { .mkt-hero{grid-template-columns:1fr}.hero-copy{min-height:auto}.trust-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.setup-coach{grid-template-columns:1fr}.review-grid{grid-template-columns:1fr} }
-  @media (max-width:768px) { body{padding-bottom:92px} header{padding:10px 16px} header .logo{order:1;margin-left:0;border-left:0;padding-right:0} header .logo .logo-sub{display:none} header nav{order:3;width:100%;margin:4px 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px} header nav a{padding:8px 6px;font-size:12px;text-align:center} header nav a.active::after{bottom:1px}.header-cta{padding:8px 6px!important} main{padding:16px 16px 96px}.key-bar{margin:0 0 18px;border-radius:0;border-inline:0;justify-content:center}.key-bar label{width:100%;text-align:center}.key-bar input{min-width:0;flex-basis:100%;font-size:12px}.key-bar .btn{padding:8px 10px}.mkt-hero{padding-top:12px;gap:14px}.mkt-hero h1{font-size:32px}.hero-actions .btn{width:100%}.trust-strip{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.toolbar h2{font-size:20px}.wizard-progress{margin-bottom:18px}.wizard-progress .wp-step{font-size:10px;padding:8px 4px}.b-sec{padding:18px}.quick-choice{width:100%;justify-content:center}.w-top{padding-left:70px}.w-cta{flex-direction:column}.chat-window{height:300px}.composer{flex-direction:column}.composer .btn{width:100%}.toast-container{top:auto;bottom:88px;width:calc(100vw - 24px)}.toast{width:100%;text-align:center;padding:10px 14px} }
+  @media (max-width:768px) { body{padding-bottom:92px} header{padding:10px 16px} header .logo{order:1;margin-inline-start:0;border-inline-start:0;padding-inline-end:0} header .logo .logo-sub{display:none} header nav{order:3;width:100%;margin:4px 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px} header nav a{padding:8px 6px;font-size:12px;text-align:center} header nav a.active::after{bottom:1px}.header-cta{padding:8px 6px!important} main{padding:16px 16px 96px}.key-bar{margin:0 0 18px;border-radius:0;border-inline:0;justify-content:center}.key-bar label{width:100%;text-align:center}.key-bar input{min-width:0;flex-basis:100%;font-size:12px}.key-bar .btn{padding:8px 10px}.mkt-hero{padding-top:12px;gap:14px}.mkt-hero h1{font-size:32px}.hero-actions .btn{width:100%}.trust-strip{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.toolbar h2{font-size:20px}.wizard-progress{margin-bottom:18px}.wizard-progress .wp-step{font-size:10px;padding:8px 4px}.b-sec{padding:18px}.quick-choice{width:100%;justify-content:center}.w-top{padding-inline-start:70px}.w-cta{flex-direction:column}.chat-window{height:300px}.composer{flex-direction:column}.composer .btn{width:100%}.toast-container{top:auto;bottom:88px;width:calc(100vw - 24px)}.toast{width:100%;text-align:center;padding:10px 14px} }
 </style>
 </head>
 <body>
@@ -1156,7 +1154,12 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
   }
 async function renderMarketplace() {
   function renderCards(tpls) {
-    if (tpls.length === 0) return '<div class="empty" style="grid-column:1/-1">אין תבניות בקטגוריה זו.</div>';
+    if (tpls.length === 0) {
+      const msg = currentSearch.trim()
+        ? 'לא נמצאו תבניות — נסו מילה אחרת או נקו את החיפוש'
+        : 'אין תבניות בקטגוריה זו.';
+      return '<div class="empty" style="grid-column:1/-1">' + msg + '</div>';
+    }
     return tpls.map((t) => {
       const popular = t.id === 'support-he' || t.id === 'sales-leads-il';
       const bestVal = t.id === 'data-entry';
@@ -1208,16 +1211,52 @@ async function renderMarketplace() {
       </div>`;
     }).join('');
   }
+  function filterMarketplaceTemplates(allTpls) {
+    return (currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter))
+      .filter((t) => {
+        if (!currentSearch.trim()) return true;
+        const q = currentSearch.trim().toLowerCase();
+        const hay = [t.nameHe, t.name, t.description, t.category, CAT_LABELS[t.category]].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+  }
+  function bindMarketplaceActions(allTpls) {
+    const startBtn = document.getElementById('mkt-start');
+    if (startBtn) startBtn.onclick = () => { location.hash = '#/magic'; };
+    app.querySelectorAll('button[data-magic]').forEach((b) => {
+      b.onclick = () => {
+        saveMagicState({ templateId: b.dataset.magic, step: 0 });
+        location.hash = '#/magic';
+      };
+    });
+    app.querySelectorAll('button[data-buy]').forEach((b) => {
+      b.onclick = async () => {
+        if (!(await ensureSession('העסק שלי'))) return;
+        await buyWorker(b.dataset.buy);
+      };
+    });
+    app.querySelectorAll('button[data-preview]').forEach((b) => {
+      b.onclick = () => {
+        const t = allTpls.find((x) => x.id === b.dataset.preview);
+        if (t) showTemplatePreview(t);
+      };
+    });
+  }
+  function refreshMarketplaceGrid(allTpls) {
+    const filtered = filterMarketplaceTemplates(allTpls);
+    const grid = document.getElementById('mkt-grid');
+    const countEl = document.getElementById('mkt-count');
+    if (grid) {
+      grid.innerHTML = renderCards(filtered);
+      bindMarketplaceActions(allTpls);
+    }
+    if (countEl) countEl.textContent = `${filtered.length} מתוך ${allTpls.length} תבניות`;
+    return filtered;
+  }
   const tr = await fetch('/api/workers/templates');
   const allTpls = tr.ok ? (await tr.json()).templates : [];
   const cats = ['all', ...new Set(allTpls.map((t) => t.category).filter(Boolean))];
-  const filtered = (currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter))
-    .filter((t) => {
-      if (!currentSearch.trim()) return true;
-      const q = currentSearch.trim().toLowerCase();
-      const hay = [t.nameHe, t.name, t.description, t.category, CAT_LABELS[t.category]].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(q);
-    });
+  const filtered = filterMarketplaceTemplates(allTpls);
   app.innerHTML = `
       <div class="mkt-hero">
       <div class="hero-copy">
@@ -1262,7 +1301,7 @@ async function renderMarketplace() {
           <h2>קטלוג עובדים</h2>
           <p>בחר תפקיד, ראה דוגמת שיחה, הוסף לעסק ואז התאם את ההוראות והידע לפני התשלום.</p>
         </div>
-        <span class="muted">${filtered.length} מתוך ${allTpls.length} תבניות</span>
+        <span class="muted" id="mkt-count">${filtered.length} מתוך ${allTpls.length} תבניות</span>
       </div>
       <div class="m3-search-bar">
         <span class="m3-search-icon">${icon('search', 20)}</span>
@@ -1271,7 +1310,7 @@ async function renderMarketplace() {
       <div class="filter-bar">
         ${cats.map((c) => `<button class="filter-btn${c === currentFilter ? ' active' : ''}" data-cat="${c}">${c === 'all' ? 'הכל' : escapeHtml(CAT_LABELS[c] || c)}</button>`).join('')}
       </div>
-      <div class="grid page-enter">
+      <div class="grid page-enter" id="mkt-grid">
         ${renderCards(filtered)}
       </div>
     `;
@@ -1280,28 +1319,12 @@ async function renderMarketplace() {
     });
     const searchEl = document.getElementById('mkt-search');
     if (searchEl) {
-      searchEl.oninput = () => { currentSearch = searchEl.value; renderMarketplace(); };
+      searchEl.oninput = () => {
+        currentSearch = searchEl.value;
+        refreshMarketplaceGrid(allTpls);
+      };
     }
-    const startBtn = document.getElementById('mkt-start');
-    if (startBtn) startBtn.onclick = () => { location.hash = '#/magic'; };
-    app.querySelectorAll('button[data-magic]').forEach((b) => {
-      b.onclick = () => {
-        saveMagicState({ templateId: b.dataset.magic, step: 0 });
-        location.hash = '#/magic';
-      };
-    });
-    app.querySelectorAll('button[data-buy]').forEach((b) => {
-      b.onclick = async () => {
-        if (!(await ensureSession('העסק שלי'))) return;
-        await buyWorker(b.dataset.buy);
-      };
-    });
-    app.querySelectorAll('button[data-preview]').forEach((b) => {
-      b.onclick = () => {
-        const t = allTpls.find((x) => x.id === b.dataset.preview);
-        if (t) showTemplatePreview(t);
-      };
-    });
+    bindMarketplaceActions(allTpls);
     showOnboardingModal();
   }
 
