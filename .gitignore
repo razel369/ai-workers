@@ -12,3 +12,7 @@ landing_raw.txt
 _check.cjs
 .vercel
 .codex-audit/**/*.db
+.gh-auth.log
+.vercel-auth.log
+
+.vercel

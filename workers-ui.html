@@ -463,7 +463,7 @@
   <nav id="nav">
     <a href="#/" data-route="marketplace">שוק העובדים</a>
     <a href="#/workers" data-route="workers">העובדים שלי</a>
-    <a href="#/admin" data-route="admin">ניהול</a>
+    <a href="#/admin" data-route="admin" id="nav-admin" hidden>ניהול</a>
     <a href="/" target="_blank" class="header-cta">לוח בקרה ↗</a>
   </nav>
 </header>
@@ -474,6 +474,14 @@
 const APP = (() => {
   const app = document.getElementById('app');
   const navLinks = document.querySelectorAll('#nav a[data-route]');
+  const ADMIN_LS = 'paid-agent.adminToken';
+
+  function syncAdminNav() {
+    const el = document.getElementById('nav-admin');
+    if (!el) return;
+    const show = Boolean(localStorage.getItem(ADMIN_LS)) || location.hash.startsWith('#/admin');
+    el.hidden = !show;
+  }
 
   // ---- API key ----
   const KEY_LS = 'paid-agent.workerKey';
@@ -697,6 +705,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
   }
   function route() {
+    syncAdminNav();
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
     if (!section || section === '') return renderMarketplace();
@@ -1639,7 +1648,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   // ---- Admin ----
   async function renderAdmin() {
     setActive('admin');
-    const ADMIN_LS = 'paid-agent.adminToken';
+    syncAdminNav();
     const adminTok = localStorage.getItem(ADMIN_LS) || '';
     if (!adminTok) {
       app.innerHTML = `
