@@ -8,6 +8,12 @@ import { DatabaseSync } from 'node:sqlite';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill } from './skills.js';
 import { pinnedLookup, validatePublicHttpUrl } from './url-security.js';
+import { applyMediaTemplateEnhancements } from './templates-media.js';
+import { registerMediaTools, resolveMediaFile as resolveMediaFilePath } from './media-tools.js';
+
+export function resolveMediaFile(tenantId, filename) {
+  return resolveMediaFilePath(tenantId, filename, ensureTenantDir);
+}
 
 // --- Template catalog -----------------------------------------------------
 
@@ -283,6 +289,8 @@ Tenant portal: (if applicable)`,
     defaultTools: ['create-ticket', 'schedule-visit'],
   },
 ];
+
+applyMediaTemplateEnhancements(TEMPLATES);
 
 export function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id) ?? null;
@@ -1249,7 +1257,10 @@ function templateRuntimeHint(templateId) {
     'clinic-receptionist-he': '\n\nTEMPLATE RULES (clinic): Use get_appointment_slots for scheduling. Triage urgency: chest pain, bleeding, severe pain -> escalate_to_human priority high + recommend ER. NEVER give medical advice — only administrative info. Always include disclaimer: "אני מזכיר/ה שאינני נותן/ת ייעוץ רפואי."',
     'sales-leads-il': '\n\nTEMPLATE RULES (sales): Qualify with BANT. Use save_lead with score 1-10. Hot leads (score>=7): book_meeting_link. Use export_leads_csv when asked for lead export.',
     'support-he': '\n\nTEMPLATE RULES (support): ALWAYS search_knowledge first. If confidence < 0.55 OR refund/legal/hostile -> escalate_to_human priority high. Cite KB chunks in reply as [מקור 1], [מקור 2]. End with confidence statement.',
-    'restaurant-manager-he': '\n\nTEMPLATE RULES (restaurant): Use check_business_hours before confirming reservations. Capture party size and dietary needs.',
+    'restaurant-manager-he': '\n\nTEMPLATE RULES (restaurant): Use check_business_hours before confirming reservations. Capture party size and dietary needs. Use generate_image for dish/special promo visuals.',
+    'social-media-creator-he': '\n\nTEMPLATE RULES (social): Write Hebrew captions + hashtags. Always generate_image for feed posts. Use 9:16 for Stories, 1:1 for Instagram feed, 16:9 for LinkedIn.',
+    'real-estate-il': '\n\nTEMPLATE RULES (real estate): Use generate_image only as stylized marketing art — never present AI images as actual property photos.',
+    'content-he': '\n\nTEMPLATE RULES (content): For blog drafts, call generate_image for a 16:9 header illustration.',
   };
   return hints[templateId] ?? '';
 }
@@ -1387,6 +1398,13 @@ async function runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames
       subject: 'Agent session summary',
       body: `Customer said: ${msg.slice(0, 200)}. Tools used: ${toolCallsLog.map((t) => t.name).join(', ')}`,
       tags: ['auto-mock'],
+    });
+  }
+  if ((/תמונה|image|פוסט|ויזואל|visual|אינסטגרם|instagram/i.test(msg)) && can('generate_image')) {
+    await runTool('generate_image', {
+      prompt: `Professional brand visual for: ${msg.slice(0, 200)}`,
+      aspectRatio: /לינקדאין|linkedin|בלוג|blog/i.test(msg) ? '16:9' : '1:1',
+      purpose: 'social_post',
     });
   }
 
@@ -1787,6 +1805,8 @@ Contact: (fill in contact details for escalations)${scraped}`;
 
   return { persona, tasks, knowledge, tools, businessName: businessNameClean, industry, fetched: Boolean(pageText) };
 }
+
+registerMediaTools(TOOL_DEFS, { getTenantDb, ensureTenantDir, newId });
 
 // --- Auth helper ----------------------------------------------------------
 

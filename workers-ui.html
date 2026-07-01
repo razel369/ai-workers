@@ -1016,7 +1016,11 @@ async function renderMarketplace() {
     flag_needs_followup: 'סימון למעקב',
     notify_webhook: 'התראה לעסק',
     check_business_hours: 'בדיקת שעות פעילות',
+    generate_image: 'יצירת תמונה AI',
+    generate_video: 'יצירת וידאו AI',
+    check_video_status: 'סטטוס וידאו',
   };
+  const MEDIA_TOOLS = ['generate_image', 'generate_video', 'check_video_status'];
 
   function toolLabel(name) {
     return TOOL_LABELS_HE[name] ? `${TOOL_LABELS_HE[name]} (${name})` : name;
@@ -1032,6 +1036,7 @@ async function renderMarketplace() {
     { label: 'שעות פעילות', tools: ['check_business_hours', 'get_current_time'] },
     { label: 'תורים (מרפאה)', tools: ['get_appointment_slots', 'save_lead', 'check_business_hours'] },
     { label: 'תמיכה + escalation', tools: ['search_knowledge', 'escalate_to_human', 'save_conversation_summary'] },
+    { label: 'תמונה/וידאו AI', tools: ['generate_image', 'generate_video', 'check_video_status'] },
   ];
 
   function starterTasksForTemplate(tpl) {
@@ -1166,6 +1171,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                 </div>
                 <label style="margin-top:10px">כלים פעילים</label>
                 <div class="tool-chips" id="active-tools-chips">${renderAgentToolsChips(w.tools)}</div>
+                <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;cursor:pointer">
+                  <input type="checkbox" id="f-media-gen" ${MEDIA_TOOLS.some((t) => (w.tools ?? []).includes(t)) ? 'checked' : ''} style="margin-top:3px" />
+                  <span><strong>אפשר יצירת תמונות/וידאו</strong> (Google AI — עלות לפי שימוש, ~₪0.12 לתמונה, ~₪0.75 ל-4 שניות וידאו)</span>
+                </label>
               </div>
               <details class="advanced-config">
                 <summary>${icon('edit', 14)} עריכת הוראות מתקדמת</summary>
@@ -1354,6 +1363,22 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         builderWorker.tools = toolsInput.value.split('\n').map((s) => s.trim()).filter(Boolean);
         const chips = document.getElementById('active-tools-chips');
         if (chips) chips.innerHTML = renderAgentToolsChips(builderWorker.tools);
+        const mediaCb = document.getElementById('f-media-gen');
+        if (mediaCb) mediaCb.checked = MEDIA_TOOLS.some((t) => builderWorker.tools.includes(t));
+      };
+      const mediaCb = document.getElementById('f-media-gen');
+      if (mediaCb) mediaCb.onchange = () => {
+        let tools = [...(builderWorker.tools ?? [])];
+        if (mediaCb.checked) {
+          tools = [...new Set([...tools, ...MEDIA_TOOLS])];
+        } else {
+          tools = tools.filter((t) => !MEDIA_TOOLS.includes(t));
+        }
+        builderWorker.tools = tools;
+        if (toolsInput) {
+          toolsInput.value = tools.join('\n');
+          toolsInput.dispatchEvent(new Event('input'));
+        }
       };
       document.querySelectorAll('#agent-mode-toggle button[data-mode]').forEach((btn) => {
         btn.onclick = () => {

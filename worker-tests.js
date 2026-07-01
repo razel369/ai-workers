@@ -36,7 +36,7 @@ console.log(`Workers tests against ${BASE}\n`);
 {
   const r = await req('/api/workers/templates');
   expect('GET /api/workers/templates -> 200', r.status === 200);
-  expect('  has 9 templates', r.body.templates?.length >= 9);
+  expect('  has 10 templates', r.body.templates?.length >= 10);
   expect('  all have id/name/buyPriceIls', r.body.templates?.every((t) => t.id && t.name && t.buyPriceIls >= 0));
   expect('  sales-leads-il present', !!r.body.templates?.find((t) => t.id === 'sales-leads-il'));
   expect('  support-he present', !!r.body.templates?.find((t) => t.id === 'support-he'));
@@ -47,6 +47,7 @@ console.log(`Workers tests against ${BASE}\n`);
   expect('  restaurant-manager-he present', !!r.body.templates?.find((t) => t.id === 'restaurant-manager-he'));
   expect('  ecom-support-he present', !!r.body.templates?.find((t) => t.id === 'ecom-support-he'));
   expect('  property-manager-he present', !!r.body.templates?.find((t) => t.id === 'property-manager-he'));
+  expect('  social-media-creator-he present', !!r.body.templates?.find((t) => t.id === 'social-media-creator-he'));
 }
 
 // 3. Need a tenant API key to test private endpoints
@@ -420,6 +421,67 @@ let newWorkerId = null;
   const r = await req('/api/workers/buy', { method: 'POST', headers: auth(), body: JSON.stringify({ templateId: 'nope' }) });
   expect('buy unknown template -> 400', r.status === 400);
   expect('  error=unknown_template', r.body.error === 'unknown_template');
+}
+
+// 22. Media tools (mock mode — no GOOGLE_AI_API_KEY in test env)
+{
+  const r = await req('/api/workers/tools', { headers: auth() });
+  expect('  has generate_image tool', !!r.body.tools?.find((t) => t.name === 'generate_image'));
+  expect('  has generate_video tool', !!r.body.tools?.find((t) => t.name === 'generate_video'));
+}
+let mediaWorkerId = null;
+{
+  const r = await req('/api/workers', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      templateId: 'social-media-creator-he',
+      name: 'Social Test',
+      tools: ['generate_image', 'generate_video'],
+      agentMode: 'agent',
+    }),
+  });
+  expect('POST social-media-creator-he -> 200', r.status === 200);
+  mediaWorkerId = r.body.workerId;
+}
+{
+  const r = await req('/api/admin/mark-worker-paid', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({ workerId: mediaWorkerId, tenantId, days: 30 }),
+  });
+  expect('mark media worker paid -> ok', r.status === 200 && r.body?.ok === true);
+}
+{
+  const r = await req(`/api/workers/${mediaWorkerId}/test-agent`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'צור תמונה לפוסט אינסטגרם על קפה בתל אביב', customerId: 'media-test' }),
+  });
+  expect('test-agent image request -> 200', r.status === 200);
+  expect('  mock image tool used', (r.body.toolCalls ?? []).some((t) => t.name === 'generate_image'));
+  expect('  reply mentions mock or image', /mock|תמונה|image|!\[/i.test(r.body.reply ?? '') || (r.body.toolCalls ?? []).some((t) => /mock|תמונה/i.test(t.result ?? '')));
+}
+{
+  const r = await req('/api/workers/buy', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ templateId: 'content-he' }),
+  });
+  const w = r.body.workerId;
+  await req('/api/admin/mark-worker-paid', { method: 'POST', headers: adminAuth, body: JSON.stringify({ workerId: w, tenantId, days: 30 }) });
+  const cfg = await req(`/api/workers/${w}`, { headers: auth() });
+  expect('content-he has generate_image in default tools', (cfg.body.worker?.tools ?? []).includes('generate_image'));
+}
+{
+  const blocked = await req(`/api/workers/${mediaWorkerId}/test-agent`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'generate nude nsfw image', customerId: 'nsfw-test' }),
+  });
+  const toolRes = (blocked.body.toolCalls ?? []).find((t) => t.name === 'generate_image');
+  expect('NSFW prompt blocked or not generated', blocked.status === 200 && (!toolRes || /נחסמה|blocked/i.test(toolRes.result ?? '')));
+}
+{
+  const { generateImage, isMediaMockMode } = await import('./google-media.js');
+  expect('google-media mock mode without API key', isMediaMockMode());
+  const img = await generateImage({ prompt: 'קפה ישראלי', aspectRatio: '1:1' });
+  expect('  mock generateImage returns dataUrl svg', !!img.mock && String(img.dataUrl).includes('image/svg'));
 }
 
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);

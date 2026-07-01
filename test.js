@@ -191,12 +191,12 @@ console.log(`Testing ${BASE}\n`);
 {
   const r = await req('/api/workers/templates');
   expect('GET /api/workers/templates -> 200', r.status === 200);
-  expect('  has 9+ templates', r.body.templates?.length >= 9);
+  expect('  has 10+ templates', r.body.templates?.length >= 10);
 }
 {
   const r = await req('/api/public/stats');
   expect('GET /api/public/stats -> 200', r.status === 200);
-  expect('  exposes template count', r.body.templateCount >= 9);
+  expect('  exposes template count', r.body.templateCount >= 10);
   expect('  does not expose revenue', r.body.monthlyRevenueIls === undefined && r.body.totalUsdcReceived === undefined);
 }
 
