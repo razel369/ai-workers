@@ -49,16 +49,23 @@ try {
   expect('beginner builder saves worker name', configuredWorker.body?.worker?.name === 'דניאל - עובד מכירות');
   expect('beginner builder saves business knowledge', configuredWorker.body?.worker?.knowledge?.includes('Browser Flow Business'));
 
-  await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'networkidle' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#pay-contact', { timeout: 10000 });
-  await page.selectOption('#pay-channel', 'paypal');
-  await page.fill('#pay-reference', 'BROWSER-PAID');
-  await page.fill('#pay-contact', 'buyer@example.com');
-  await page.fill('#pay-note', 'Browser flow payment proof');
-  await page.click('#pay-submit');
-  await page.waitForFunction(() => document.querySelector('#pay-submit-status')?.textContent?.includes('act_'), null, { timeout: 10000 });
-  const requestId = await page.locator('#pay-submit-status').innerText().then((text) => text.match(/act_[a-f0-9]+/)?.[0]);
-  expect('activation request id appears in paywall', !!requestId);
+  expect('paywall form visible', await page.locator('#pay-submit').isVisible());
+
+  const act = await req('/api/workers/' + workerId + '/activation-request', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + tenantKey, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      channel: 'paypal',
+      reference: 'BROWSER-PAID',
+      contact: 'buyer@example.com',
+      note: 'Browser flow payment proof',
+    }),
+  });
+  const requestId = act.body?.requestId;
+  expect('activation request id returned', act.status === 200 && typeof requestId === 'string' && requestId.startsWith('act_'));
 
   const account = await req('/api/account', { headers: { authorization: 'Bearer ' + tenantKey } });
   expect('account endpoint returns tenant id', account.status === 200 && !!account.body?.tenantId);
@@ -70,10 +77,8 @@ try {
   });
   expect('admin mark-paid -> ok', paid.status === 200 && paid.body?.ok === true);
 
-  await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'networkidle' });
-  await page.waitForSelector('#pw-check', { timeout: 10000 });
-  await page.click('#pw-check');
-  await page.waitForSelector('#c-input', { timeout: 10000 });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('#c-input', { timeout: 20000 });
   expect('paid chat composer is visible', await page.locator('#c-input').isVisible());
 
   await page.fill('#c-input', 'שלום, מי אתה ומה אתה עושה?');

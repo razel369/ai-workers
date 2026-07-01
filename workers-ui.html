@@ -307,6 +307,9 @@
   @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   .page-enter { animation:pageIn .35s cubic-bezier(.22,1,.36,1) both; }
   @keyframes pageIn { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  }
   
   @media (max-width:900px) { .mkt-hero{grid-template-columns:1fr}.hero-copy{min-height:auto}.trust-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.setup-coach{grid-template-columns:1fr}.review-grid{grid-template-columns:1fr} }
   @media (max-width:768px) { body{padding-bottom:92px} header{padding:10px 16px} header .logo{order:1;margin-left:0;border-left:0;padding-right:0} header .logo .logo-sub{display:none} header nav{order:3;width:100%;margin:4px 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px} header nav a{padding:8px 6px;font-size:12px;text-align:center} header nav a.active::after{bottom:1px}.header-cta{padding:8px 6px!important} main{padding:16px 16px 96px}.key-bar{margin:0 0 18px;border-radius:0;border-inline:0;justify-content:center}.key-bar label{width:100%;text-align:center}.key-bar input{min-width:0;flex-basis:100%;font-size:12px}.key-bar .btn{padding:8px 10px}.mkt-hero{padding-top:12px;gap:14px}.mkt-hero h1{font-size:32px}.hero-actions .btn{width:100%}.trust-strip{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.toolbar h2{font-size:20px}.wizard-progress{margin-bottom:18px}.wizard-progress .wp-step{font-size:10px;padding:8px 4px}.b-sec{padding:18px}.quick-choice{width:100%;justify-content:center}.w-top{padding-left:70px}.w-cta{flex-direction:column}.chat-window{height:300px}.composer{flex-direction:column}.composer .btn{width:100%}.toast-container{top:auto;bottom:88px;width:calc(100vw - 24px)}.toast{width:100%;text-align:center;padding:10px 14px} }
@@ -704,7 +707,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
   function setActive(route) {
     navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
   }
-  function route() {
+  async function route() {
     syncAdminNav();
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
@@ -715,7 +718,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1]);
     if (section === 'admin') return renderAdmin();
     return renderMarketplace();
-}
+  }
 async function renderMarketplace() {
   function renderCards(tpls) {
     if (tpls.length === 0) return '<div class="empty" style="grid-column:1/-1">אין תבניות בקטגוריה זו.</div>';
@@ -749,11 +752,15 @@ async function renderMarketplace() {
         <div class="desc">${escapeHtml(t.description)}</div>
         <div class="w-outcome">${icon('activity', 14)} <span>${escapeHtml(outcome)}</span></div>
         <div class="pricing">
-          <div class="pr buy">
+          ${t.buyPriceIls > 0 ? `<div class="pr buy">
             <div class="amt"><span class="currency">₪</span>${t.buyPriceIls}</div>
             <div class="pd">רכישה חד-פעמית</div>
           </div>
-          <div class="pdv"></div>
+          <div class="pdv"></div>` : `<div class="pr buy">
+            <div class="amt" style="font-size:15px">ללא דמי הקמה</div>
+            <div class="pd">SaaS חודשי</div>
+          </div>
+          <div class="pdv"></div>`}
           <div class="pr rent">
             <div class="amt"><span class="currency">₪</span>${t.rentPriceIls}</div>
             <div class="pd">לחודש</div>
@@ -796,7 +803,7 @@ async function renderMarketplace() {
     </div>
       <div class="trust-strip">
         <div class="trust-item"><div class="sn">${icon('copy', 18)} ${allTpls.length}</div><div class="sl">תבניות שניתן להתאים לעסק</div></div>
-        <div class="trust-item"><div class="sn">₪99+</div><div class="sl">מחיר חודשי התחלתי ברור</div></div>
+        <div class="trust-item"><div class="sn">₪199+</div><div class="sl">מחיר חודשי התחלתי ברור</div></div>
         <div class="trust-item"><div class="sn">${icon('clock', 18)} 24/7</div><div class="sl">זמין לשיחות גם מחוץ לשעות עבודה</div></div>
         <div class="trust-item"><div class="sn">${icon('shield', 18)} IL</div><div class="sl">עברית, תשלומים מקומיים ואישור ידני</div></div>
       </div>
@@ -887,8 +894,8 @@ async function renderMarketplace() {
       </div>
       <div class="modal-body">
         <p class="muted" style="margin-bottom:16px">${escapeHtml(tpl.description)}</p>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;display:flex;gap:16px">
-          <span>קנייה: <b class="num">${tpl.buyPriceIls} ₪</b></span>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap">
+          ${tpl.buyPriceIls > 0 ? `<span>קנייה: <b class="num">${tpl.buyPriceIls} ₪</b></span>` : `<span>ללא דמי הקמה · SaaS חודשי</span>`}
           <span>שכירות: <b class="num">${tpl.rentPriceIls} ₪/חודש</b></span>
         </div>
         <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">
@@ -1530,12 +1537,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         </div>
       `;
       document.getElementById('pay-submit').onclick = async () => {
+        const btn = document.getElementById('pay-submit');
         const st = document.getElementById('pay-submit-status');
         const contact = document.getElementById('pay-contact').value.trim();
         if (!contact) {
           st.innerHTML = '<span class="err">' + icon('alert', 14) + ' הכנס אימייל או טלפון לאישור</span>';
           return;
         }
+        btn.disabled = true;
+        btn.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח...';
         st.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח בקשה...';
         const r = await api('/api/workers/' + workerId + '/activation-request', {
           method: 'POST',
@@ -1546,6 +1556,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             note: document.getElementById('pay-note').value.trim(),
           }),
         });
+        btn.disabled = false;
+        btn.innerHTML = icon('check', 14) + ' שלח לאישור';
         if (r.ok) {
           st.innerHTML = icon('check', 14) + ' הבקשה נשלחה. מספר בקשה: ' + escapeHtml(r.body.requestId);
           toast('בקשת ההפעלה נשלחה לאישור', 'success');
@@ -1845,8 +1857,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   return { render: route };
 })();
-window.addEventListener('hashchange', APP.render);
-APP.render();
+window.addEventListener('hashchange', () => { void APP.render(); });
+void APP.render();
 </script>
 </body>
 </html>
