@@ -45,6 +45,8 @@ try {
   await page.fill('#f-knowledge', 'שם העסק: Browser Flow Business\nשעות פעילות: א-ה 9:00-18:00\nמתי להעביר לאדם: לקוח כועס או בקשת החזר');
   await page.click('button[data-tone="professional"]');
   await page.click('#w-next');
+  await page.waitForSelector('#integrations-panel', { timeout: 10000 });
+  await page.click('#w-next');
   await page.waitForSelector('#f-save', { timeout: 10000 });
   await page.click('#f-save');
   await page.waitForFunction(() => document.querySelector('#f-status')?.textContent?.includes('נשמר'), null, { timeout: 10000 });

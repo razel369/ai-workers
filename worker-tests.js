@@ -484,5 +484,67 @@ let mediaWorkerId = null;
   expect('  mock generateImage returns dataUrl svg', !!img.mock && String(img.dataUrl).includes('image/svg'));
 }
 
+// Integrations hub
+{
+  const r = await req('/api/integrations/catalog');
+  expect('GET /api/integrations/catalog -> 200', r.status === 200);
+  expect('  catalog has webhook + mcp', (r.body.catalog ?? []).some((c) => c.type === 'webhook') && (r.body.catalog ?? []).some((c) => c.type === 'mcp'));
+  expect('  Hebrew labels present', (r.body.catalog ?? []).every((c) => c.labelHe && c.descriptionHe));
+}
+{
+  const r = await req('/api/integrations', { headers: auth() });
+  expect('GET /api/integrations empty -> 200', r.status === 200 && Array.isArray(r.body.integrations));
+}
+let integrationId = null;
+{
+  const r = await req('/api/integrations', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      type: 'google_calendar',
+      config: { bookingLink: 'https://cal.com/demo-clinic' },
+    }),
+  });
+  expect('POST calendar integration -> 201/200', r.status === 201 || r.status === 200);
+  integrationId = r.body.id || r.body.integration?.id;
+  expect('  integration id returned', !!integrationId);
+  expect('  secrets not in list response', !JSON.stringify(r.body).includes('cal.com') || r.body.integration?.config?.bookingLink === 'https://cal.com/demo-clinic');
+}
+{
+  const r = await req('/api/integrations', { headers: auth() });
+  const row = (r.body.integrations ?? []).find((i) => i.type === 'google_calendar');
+  expect('  calendar connected in list', !!row && row.status === 'connected');
+  expect('  booking link visible (non-secret)', row?.config?.bookingLink === 'https://cal.com/demo-clinic');
+}
+{
+  const r = await req(`/api/integrations/${integrationId}/test`, { method: 'POST', headers: auth() });
+  expect('POST integration test calendar -> 200', r.status === 200 && r.body.ok === true);
+}
+{
+  const r = await req('/api/integrations', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ type: 'crm_hubspot', config: { apiKey: 'pat-test-redacted-key-12345' } }),
+  });
+  expect('POST hubspot integration stores apiKey', r.status === 201 || r.status === 200);
+  const list = await req('/api/integrations', { headers: auth() });
+  const hub = (list.body.integrations ?? []).find((i) => i.type === 'crm_hubspot');
+  expect('  hubspot apiKey redacted in API', hub?.config?.apiKey === '••••••••');
+}
+{
+  const r = await req('/api/integrations', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ type: 'webhook', config: { url: 'http://127.0.0.1/hook' } }),
+  });
+  expect('POST webhook blocks private URL', r.status === 400 && (r.body.error === 'unsafe_url' || r.body.reason));
+}
+{
+  const r = await req(`/api/integrations/${integrationId}`, { method: 'DELETE', headers: auth() });
+  expect('DELETE integration -> 200', r.status === 200 && r.body.ok === true);
+}
+{
+  const r = await req('/health');
+  expect('health reports integrations catalog count', typeof r.body.integrationsCatalog === 'number' && r.body.integrationsCatalog >= 10);
+  expect('health reports whatsapp status', r.body.whatsapp && typeof r.body.whatsapp.enabled === 'boolean');
+}
+
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);
