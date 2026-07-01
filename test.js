@@ -24,6 +24,7 @@ console.log(`Testing ${BASE}\n`);
   expect('GET /health -> 200', r.status === 200);
   expect('  reports adminEnabled', typeof r.body.adminEnabled === 'boolean');
   expect('  channels array present', Array.isArray(r.body.channels));
+  expect('  statusHe in Hebrew', r.body.statusHe === 'מוכן לעבודה' || r.body.statusHe === 'צריך הגדרה');
 }
 {
   const r = await req('/health', {

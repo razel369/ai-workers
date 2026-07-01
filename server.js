@@ -1238,6 +1238,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     return send(res, 200, {
       ok: true, agent: AGENT_NAME,
+      statusHe: LLM_API_KEY ? 'מוכן לעבודה' : 'צריך הגדרה',
       channels: buildAcquireChannels().map((c) => c.kind),
       adminEnabled: !!ADMIN_TOKEN,
       llmConfigured: !!LLM_API_KEY,

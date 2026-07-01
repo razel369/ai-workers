@@ -612,6 +612,7 @@ let integrationId = null;
   expect('health reports integrations catalog count', typeof r.body.integrationsCatalog === 'number' && r.body.integrationsCatalog >= 10);
   expect('health reports whatsapp status', r.body.whatsapp && typeof r.body.whatsapp.enabled === 'boolean');
   expect('health reports payment config', r.body.payment && typeof r.body.payment.autoVerifyEnabled === 'boolean');
+  expect('health statusHe in Hebrew', r.body.statusHe === 'צריך הגדרה' || r.body.statusHe === 'מוכן לעבודה');
 }
 {
   const r = await req(`/invoice/${mediaWorkerId}`);

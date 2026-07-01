@@ -30,6 +30,7 @@ try {
   await page.fill('#magic-business', 'Browser Flow Business');
   await page.click('#magic-next');
   await page.waitForSelector('.tpl-pick-btn[data-tpl="sales-leads-il"]', { timeout: 10000 });
+  expect('magic wizard has no integration fields', await page.locator('#magic-connect-panel').count() === 0);
   await page.click('.tpl-pick-btn[data-tpl="sales-leads-il"]');
   await page.click('#magic-next');
   await page.waitForURL(/#\/workers\/chat\//, { timeout: 20000 });

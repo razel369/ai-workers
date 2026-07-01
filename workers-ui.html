@@ -590,6 +590,10 @@ const APP = (() => {
   const ADMIN_LS = 'paid-agent.adminToken';
   const ONBOARDING_LS = 'paid-agent.onboardingDone';
   const MAGIC_LS = 'paid-agent.magicState';
+  const ADVANCED_LS = 'paid-agent.advancedMode';
+
+  function isAdvancedMode() { return localStorage.getItem(ADVANCED_LS) === '1'; }
+  function setAdvancedMode(on) { localStorage.setItem(ADVANCED_LS, on ? '1' : '0'); }
 
   async function ensureSession(businessName) {
     if (getKey()) return true;
@@ -607,16 +611,22 @@ const APP = (() => {
     return false;
   }
 
-  function celebrateFirstReply(workerId) {
+  function showShareSuccess(workerId, workerName) {
     const key = 'paid-agent.celebrated-' + workerId;
     if (localStorage.getItem(key)) return;
     localStorage.setItem(key, '1');
-    const el = document.createElement('div');
-    el.className = 'celebration-banner';
-    el.setAttribute('role', 'status');
-    el.innerHTML = '<span aria-live="polite">העובד שלך עובד! 🎉</span>';
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 5500);
+    const row = document.getElementById('success-cta');
+    if (row) row.style.display = 'flex';
+    toast('העובד שלך עובד! 🎉', 'success');
+  }
+
+  function showChatError(win, retryFn) {
+    const em = document.createElement('div');
+    em.className = 'msg system err';
+    em.innerHTML = '<span>משהו נתעכב, נסה שוב</span> <button type="button" class="btn btn-sm btn-outline chat-retry" style="margin-right:8px">נסה שוב</button>';
+    win.appendChild(em);
+    em.querySelector('.chat-retry').onclick = () => { em.remove(); retryFn(); };
+    win.scrollTop = win.scrollHeight;
   }
 
   const TEMPLATE_EMOJI = {
@@ -792,19 +802,6 @@ const APP = (() => {
           <h1 class="magic-title">מה העובד צריך לעשות?</h1>
           <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
           <div class="tpl-pick">${picks}</div>
-          <details class="magic-connect" id="magic-connect-panel">
-            <summary style="cursor:pointer;font-weight:600;color:var(--muted)">${icon('plug', 14)} חיבורים מהירים (אופציונלי)</summary>
-            <div style="margin-top:12px">
-              <div class="fld">
-                <label>${icon('chat', 12)} חבר וואטסאפ — Access Token</label>
-                <input id="magic-wa-token" type="password" placeholder="EAAxxxx... (Meta Cloud API)" dir="ltr" style="text-align:left;font-family:monospace" value="${escapeHtml(state.waToken || '')}" />
-              </div>
-              <div class="fld">
-                <label>${icon('zap', 12)} קבל התראות — Webhook URL</label>
-                <input id="magic-webhook-url" type="url" placeholder="https://hooks.zapier.com/..." dir="ltr" style="text-align:left;font-family:monospace" value="${escapeHtml(state.webhookUrl || '')}" />
-              </div>
-            </div>
-          </details>
           <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} דבר איתו עכשיו!</button>
         </div>`;
         app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
@@ -817,11 +814,7 @@ const APP = (() => {
         });
         document.getElementById('magic-next').onclick = async () => {
           if (!state.templateId) return;
-          const wa = document.getElementById('magic-wa-token')?.value?.trim() || '';
-          const wh = document.getElementById('magic-webhook-url')?.value?.trim() || '';
-          saveMagicState({ step: 2, waToken: wa, webhookUrl: wh });
-          state.waToken = wa;
-          state.webhookUrl = wh;
+          saveMagicState({ step: 2 });
           step = 2;
           await finishMagic();
         };
@@ -847,12 +840,6 @@ const APP = (() => {
           knowledge: smartKnowledge,
         }),
       });
-      if (state.waToken) {
-        await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', config: { provider: 'meta', accessToken: state.waToken } }) });
-      }
-      if (state.webhookUrl) {
-        await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'webhook', config: { url: state.webhookUrl } }) });
-      }
       localStorage.removeItem(MAGIC_LS);
       localStorage.setItem(ONBOARDING_LS, '1');
       location.hash = '#/workers/chat/' + workerId;
@@ -1232,7 +1219,6 @@ async function renderMarketplace() {
   const BUILDER_STEPS = [
     { id: 'job', label: 'מה העובד יעשה', icon: 'robot' },
     { id: 'business', label: 'מה הוא צריך לדעת', icon: 'database' },
-    { id: 'integrations', label: 'חיבורים לעסק', icon: 'plug' },
     { id: 'review', label: 'בדיקה והפעלה', icon: 'check' },
   ];
 
@@ -1502,9 +1488,9 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                 </div>
               </div>
               <div class="agent-banner">
-                <h4>${icon('zap', 16)} מצב סוכן — לא רק צ'אט</h4>
-                <p>במצב <strong>סוכן</strong>, העובד מבצע פעולות: שומר לידים, מחפש במאגר ידע, מסלים לנציג, קובע תורים, ושולח webhook. במצב <strong>צ'אט בלבד</strong> — רק תשובות טקסט.</p>
-                <div class="agent-toggle" id="agent-mode-toggle">
+                <h4>${icon('zap', 16)} העובד עונה ללקוחות</h4>
+                <p>העובד יענה בעברית, יאסוף פרטים ויעביר מקרים חשובים אליכם — בלי הגדרות מסובכות.</p>
+                ${isAdvancedMode() ? `<div class="agent-toggle" id="agent-mode-toggle">
                   <button type="button" data-mode="agent" class="${(w.agentMode ?? 'agent') !== 'chat' ? 'active' : ''}">${icon('zap', 14)} סוכן (כלים פעילים)</button>
                   <button type="button" data-mode="chat" class="${(w.agentMode ?? 'agent') === 'chat' ? 'active' : ''}">${icon('chat', 14)} צ'אט בלבד</button>
                 </div>
@@ -1512,12 +1498,12 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                 <div class="tool-chips" id="active-tools-chips">${renderAgentToolsChips(w.tools)}</div>
                 <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;cursor:pointer">
                   <input type="checkbox" id="f-media-gen" ${MEDIA_TOOLS.some((t) => (w.tools ?? []).includes(t)) ? 'checked' : ''} style="margin-top:3px" />
-                  <span><strong>אפשר יצירת תמונות/וידאו</strong> (Google AI — עלות לפי שימוש, ~₪0.12 לתמונה, ~₪0.75 ל-4 שניות וידאו)</span>
-                </label>
+                  <span><strong>אפשר יצירת תמונות/וידאו</strong></span>
+                </label>` : ''}
               </div>
-              <div class="integrations-hub">
+              ${isAdvancedMode() ? `<div class="integrations-hub">
                 <h3>${icon('zap', 16)} חיבורים לעסק</h3>
-                <p class="muted" style="font-size:12px;margin:0">חבר WhatsApp, יומן, CRM, Webhook או MCP — העובד ישתמש בהם אוטומטית ככלים.</p>
+                <p class="muted" style="font-size:12px;margin:0">חיבורים מתקדמים — Webhook, יומן, CRM, MCP.</p>
                 <div id="integrations-status" class="muted" style="font-size:12px;margin-top:6px"></div>
                 <div id="integrations-grid" class="integration-grid"></div>
               </div>
@@ -1534,7 +1520,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                     <textarea id="f-tools" rows="4" placeholder="save_lead&#10;notify_webhook&#10;check_business_hours">${escapeHtml((w.tools ?? []).join('\n'))}</textarea>
                   </div>
                 </div>
-              </details>
+              </details>` : `<textarea id="f-persona" hidden>${escapeHtml(w.persona || defaultBeginnerPersona(w.name))}</textarea><textarea id="f-tools" hidden>${escapeHtml((w.tools ?? []).join('\n'))}</textarea>`}
             </div>
             <aside class="coach-panel">
               <h3>${icon('alert', 16)} כלל חשוב</h3>
@@ -1550,35 +1536,16 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         case 2: return `
           <div class="setup-coach">
             <div class="b-sec" style="margin-bottom:0">
-              <div class="beginner-note">${icon('plug', 14)} חבר את המערכות שהעסק כבר משתמש בהן — העובד יקבל כלים אוטומטית (CRM, יומן, WhatsApp, webhook).</div>
-              <div id="integrations-panel">
-                <div class="muted">${icon('loading', 14, 'icon-spin')} טוען חיבורים...</div>
-              </div>
-            </div>
-            <aside class="coach-panel">
-              <h3>${icon('plug', 16)} למה זה חשוב?</h3>
-              <div class="coach-list">
-                <span>${icon('check', 13)} לידים נכנסים ישר ל-CRM</span>
-                <span>${icon('check', 13)} תורים דרך Cal.com / יומן</span>
-                <span>${icon('check', 13)} התראות ל-Zapier / Make</span>
-                <span>${icon('check', 13)} חיפוש הזמנות ב-Shopify</span>
-              </div>
-              ${renderBuilderPreview()}
-            </aside>
-          </div>`;
-        case 3: return `
-          <div class="setup-coach">
-            <div class="b-sec" style="margin-bottom:0">
               <div class="beginner-note">${icon('check', 14)} בדוק שהכול נראה נכון. אחרי שמירה תוכל לשלוח בקשת הפעלה ולשלם, ואז העובד ייפתח לצ'אט לאחר אישור.</div>
               <div class="review-grid">
                 <div class="review-item"><div class="ri-label">שם העובד</div><div class="ri-value">${escapeHtml(w.name || 'לא הוגדר')}</div></div>
                 <div class="review-item"><div class="ri-label">התפקיד הראשון</div><div class="ri-value">${escapeHtml(firstLine((w.tasks ?? []).join('\n')))}</div></div>
                 <div class="review-item"><div class="ri-label">כמה משימות</div><div class="ri-value">${(w.tasks ?? []).filter(Boolean).length} משימות</div></div>
                 <div class="review-item"><div class="ri-label">ידע לעובד</div><div class="ri-value">${escapeHtml(firstLine(w.knowledge, 'עדיין חסר מידע עסקי'))}</div></div>
-                <div class="review-item"><div class="ri-label">מצב סוכן</div><div class="ri-value">${(w.agentMode ?? 'agent') === 'chat' ? 'צ\'אט בלבד' : 'סוכן (כלים)'}</div></div>
-                <div class="review-item"><div class="ri-label">כלים פעילים</div><div class="ri-value"><div class="tool-chips">${renderAgentToolsChips(w.tools)}</div></div></div>
+                ${isAdvancedMode() ? `<div class="review-item"><div class="ri-label">מצב סוכן</div><div class="ri-value">${(w.agentMode ?? 'agent') === 'chat' ? 'צ\'אט בלבד' : 'סוכן (כלים)'}</div></div>
+                <div class="review-item"><div class="ri-label">כלים פעילים</div><div class="ri-value"><div class="tool-chips">${renderAgentToolsChips(w.tools)}</div></div></div>` : ''}
               </div>
-              <div class="agent-test b-sec" style="margin-top:14px">
+              ${isAdvancedMode() ? `<div class="agent-test b-sec" style="margin-top:14px">
                 <h3>${icon('zap', 16)} בדיקת סוכן (סימולציה)</h3>
                 <p class="muted" style="margin-bottom:10px">שלח הודעת לקוח לדוגמה וראה אילו כלים הופעלו — בלי לשמור בשיחה האמיתית.</p>
                 <textarea id="agent-test-input" rows="2" placeholder="לדוגמה: שלום, אני מעוניין בפגישה. שמי דני, טלפון 050-1234567"></textarea>
@@ -1605,7 +1572,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                     <div id="mcp-status" class="mcp-status"></div>
                   </div>
                 </div>
-              </details>
+              </details>` : ''}
             </div>
             <aside class="coach-panel">
               <h3>${icon('activity', 16)} מצב ההגדרה</h3>
@@ -1702,7 +1669,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
     function attachBuilderFormEvents() {
       const mcpServers = worker.mcpServers ?? [];
-      if (builderStep === 1) loadIntegrationsHub();
+      if (builderStep === 1 && isAdvancedMode()) loadIntegrationsHub();
 
       // ---- Real-time preview updates ----
       const nameInput = document.getElementById('f-name');
@@ -1765,15 +1732,18 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           const r = await api('/api/workers/' + workerId + '/test-agent', { method: 'POST', body: JSON.stringify({ message: msg }) });
           agentTestBtn.disabled = false;
           if (!r.ok) { out.innerHTML = '<span class="err">' + escapeHtml(JSON.stringify(r.body)) + '</span>'; return; }
-          const steps = (r.body.agentSteps ?? []).map((s) => `<div class="step"><b>${escapeHtml(s.phase)}</b>${s.tool ? ' → ' + escapeHtml(s.tool) : ''}${s.thought ? ': ' + escapeHtml(s.thought) : ''}</div>`).join('');
-          const tools = (r.body.toolCalls ?? []).map((t) => `<div class="step">🔧 <b>${escapeHtml(t.name)}</b>: ${escapeHtml((t.result ?? '').slice(0, 160))}</div>`).join('');
           const replyFull = r.body.reply ?? '';
-          const conf = r.body.qualityScore?.labelHe ? `<span class="confidence-badge ${r.body.qualityScore.level || 'medium'}">${escapeHtml(r.body.qualityScore.labelHe)}</span>` : '';
-          out.innerHTML = `<div><b>מנוע:</b> ${escapeHtml(r.body.runtime)} · <b>שלבים:</b> ${r.body.stepsUsed ?? 0} ${conf}</div>${steps}${tools}
+          const conf = isAdvancedMode() && r.body.qualityScore?.labelHe ? `<span class="confidence-badge ${r.body.qualityScore.level || 'medium'}">${escapeHtml(r.body.qualityScore.labelHe)}</span>` : '';
+          const steps = isAdvancedMode() ? (r.body.agentSteps ?? []).map((s) => `<div class="step"><b>${escapeHtml(s.phase)}</b>${s.tool ? ' → ' + escapeHtml(s.tool) : ''}${s.thought ? ': ' + escapeHtml(s.thought) : ''}</div>`).join('') : '';
+          const tools = isAdvancedMode() ? (r.body.toolCalls ?? []).map((t) => `<div class="step">🔧 <b>${escapeHtml(t.name)}</b>: ${escapeHtml((t.result ?? '').slice(0, 160))}</div>`).join('') : '';
+          out.innerHTML = isAdvancedMode()
+            ? `<div><b>מנוע:</b> ${escapeHtml(r.body.runtime)} · <b>שלבים:</b> ${r.body.stepsUsed ?? 0} ${conf}</div>${steps}${tools}
             <label style="display:block;margin-top:10px;font-size:12px;color:var(--muted)">ערכו את התשובה — נשמור כידע לעובד:</label>
             <textarea class="test-reply-edit" id="test-reply-edit">${escapeHtml(replyFull)}</textarea>
             <button type="button" class="btn btn-sm btn-primary" id="test-learn-save" style="margin-top:8px">${icon('save', 12)} שמור תיקון כידע</button>
-            <div id="test-learn-status" class="muted" style="margin-top:6px;font-size:12px"></div>`;
+            <div id="test-learn-status" class="muted" style="margin-top:6px;font-size:12px"></div>`
+            : `<div><b>תשובה:</b> ${escapeHtml(replyFull.slice(0, 500))}</div>`;
+          if (!isAdvancedMode()) return;
           document.getElementById('test-learn-save').onclick = async () => {
             const corrected = document.getElementById('test-reply-edit').value.trim();
             const lr = await api('/api/workers/' + workerId + '/learn-correction', {
@@ -2194,9 +2164,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
         <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
       </div>
-      <div class="share-row">
-        <button type="button" class="btn btn-sm btn-outline" id="share-copy">${icon('copy', 14)} העתק קישור ללקוחות</button>
-        <a class="btn btn-sm btn-outline" id="share-wa" href="${escapeHtml(share.wa)}" target="_blank" rel="noopener">${icon('share', 14)} שתף בוואטסאפ</a>
+      <div class="share-row" id="success-cta" style="display:none">
+        <button type="button" class="btn btn-primary btn-hero" id="share-success">${icon('share', 16)} מעולה! שתף עם לקוחות</button>
       </div>
       ${isDemo ? `<div class="demo-banner">
         <span>${icon('zap', 14)} מצב ניסיון — דבר איתו חופשי!</span>
@@ -2212,9 +2181,20 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <textarea id="c-input" placeholder="כתוב הודעה..." rows="2"></textarea>
         <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
       </div>
-      <details class="advanced-config" style="margin-top:16px">
-        <summary>${icon('edit', 14)} הגדרות מתקדמות</summary>
+      <details class="advanced-config" style="margin-top:16px" id="chat-settings">
+        <summary>${icon('edit', 14)} הגדרות</summary>
         <div style="padding-top:12px">
+          <div class="fld" style="margin-bottom:14px">
+            <label>${icon('chat', 12)} רוצה התראות? הכנס מספר וואטסאפ</label>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              <input id="notify-wa-phone" type="tel" placeholder="05X-XXXXXXX" dir="ltr" style="flex:1;min-width:160px;text-align:left" />
+              <button type="button" class="btn btn-sm btn-outline" id="notify-wa-save">${icon('check', 12)} שמור</button>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:12px">
+            <input type="checkbox" id="advanced-toggle" ${isAdvancedMode() ? 'checked' : ''} />
+            <span>מצב מתקדם (trace, MCP, CRM)</span>
+          </label>
           <a href="#/workers/edit/${w.id}" class="btn btn-outline btn-sm">${icon('edit', 14)} ערוך הוראות וידע</a>
         </div>
       </details>
@@ -2225,16 +2205,32 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const send = document.getElementById('c-send');
     const micBtn = document.getElementById('c-mic');
     let gotFirstReply = messages.some((m) => m.role === 'assistant');
+    if (gotFirstReply) {
+      const row = document.getElementById('success-cta');
+      if (row) row.style.display = 'flex';
+    }
     let speechRec = null;
     let listening = false;
 
-    document.getElementById('share-copy').onclick = async () => {
+    document.getElementById('share-success').onclick = async () => {
       try {
         await navigator.clipboard.writeText(share.link);
         toast('הקישור הועתק — שלחו ללקוחות!', 'success');
       } catch {
-        toast(share.link, 'success', 8000);
+        window.open(share.wa, '_blank', 'noopener');
       }
+    };
+
+    document.getElementById('advanced-toggle').onchange = (e) => {
+      setAdvancedMode(e.target.checked);
+      toast(e.target.checked ? 'מצב מתקדם פעיל' : 'מצב פשוט', 'success');
+    };
+
+    document.getElementById('notify-wa-save').onclick = async () => {
+      const phone = document.getElementById('notify-wa-phone').value.trim();
+      if (!phone) { toast('הכנס מספר וואטסאפ', 'error'); return; }
+      const r = await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', label: 'התראות', config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
+      toast(r.ok ? 'נשמר — נשלח התראות למספר הזה' : 'משהו נתעכב, נסה שוב', r.ok ? 'success' : 'error');
     };
 
     app.querySelectorAll('.suggestion-chip').forEach((chip) => {
@@ -2264,11 +2260,19 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     }
 
     function appendConfidence(el, quality) {
-      if (!quality?.labelHe) return;
+      if (!isAdvancedMode() || !quality?.labelHe) return;
       const badge = document.createElement('div');
       badge.className = 'confidence-badge ' + (quality.level || 'medium');
       badge.textContent = quality.labelHe;
       el.appendChild(badge);
+    }
+
+    async function sendJsonChat(text) {
+      const r = await api('/api/workers/' + workerId + '/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: text, demoMode: isDemo }),
+      });
+      return r;
     }
 
     async function doSend() {
@@ -2278,6 +2282,30 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       if (listening && speechRec) { speechRec.stop(); listening = false; micBtn.classList.remove('listening'); }
       const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um);
       send.disabled = true;
+      win.scrollTop = win.scrollHeight;
+
+      const finishReply = (reply, quality) => {
+        send.disabled = false;
+        const am = document.createElement('div');
+        am.className = 'msg assistant';
+        am.textContent = reply;
+        win.appendChild(am);
+        appendConfidence(am, quality);
+        if (!gotFirstReply) { gotFirstReply = true; showShareSuccess(workerId, w.name); }
+        win.scrollTop = win.scrollHeight;
+      };
+
+      if (isDemo) {
+        const r = await sendJsonChat(text);
+        if (r.ok && r.body.reply) {
+          finishReply(r.body.reply, r.body.qualityScore);
+        } else {
+          send.disabled = false;
+          showChatError(win, () => { input.value = text; doSend(); });
+        }
+        return;
+      }
+
       const am = document.createElement('div');
       am.className = 'msg assistant';
       const cursor = document.createElement('span');
@@ -2288,6 +2316,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
       let fullReply = '';
       let quality = null;
+      let streamFailed = false;
       try {
         const streamed = await streamChatMessage(workerId, text, isDemo, (tok) => {
           fullReply += tok;
@@ -2295,39 +2324,28 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           am.appendChild(cursor);
           win.scrollTop = win.scrollHeight;
         });
-        if (streamed) {
-          quality = streamed.qualityScore;
-        }
-      } catch {}
+        if (streamed) quality = streamed.qualityScore;
+        else streamFailed = true;
+      } catch {
+        streamFailed = true;
+      }
 
-      if (!fullReply) {
+      if (streamFailed || !fullReply) {
         am.remove();
-        const r = await api('/api/workers/' + workerId + '/chat', {
-          method: 'POST',
-          body: JSON.stringify({ message: text, demoMode: isDemo }),
-        });
-        send.disabled = false;
+        const r = await sendJsonChat(text);
         if (r.ok && r.body.reply) {
-          const am2 = document.createElement('div');
-          am2.className = 'msg assistant';
-          am2.textContent = r.body.reply;
-          win.appendChild(am2);
-          appendConfidence(am2, r.body.qualityScore);
-          if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
+          finishReply(r.body.reply, r.body.qualityScore);
         } else {
-          const em = document.createElement('div');
-          em.className = 'msg system err';
-          em.textContent = r.body?.userMessageHe || r.body?.message || r.body?.error || 'שגיאה בשליחה — נסו שוב';
-          win.appendChild(em);
+          send.disabled = false;
+          showChatError(win, () => { input.value = text; doSend(); });
         }
-        win.scrollTop = win.scrollHeight;
         return;
       }
 
       send.disabled = false;
       cursor.remove();
       appendConfidence(am, quality);
-      if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
+      if (!gotFirstReply) { gotFirstReply = true; showShareSuccess(workerId, w.name); }
       win.scrollTop = win.scrollHeight;
     }
     send.onclick = doSend;

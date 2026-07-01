@@ -1,6 +1,16 @@
 # דגמת כלים מלאה — AI Workers
 
-מדריך שלב-אחר-שלב להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב-Vercel (mock), או ב-Railway (LLM אמיתי + DB קבוע).
+## מסלול פשוט (60 שניות)
+
+1. פתח **http://localhost:8765/marketplace#/magic**
+2. הזן שם עסק → בחר תבנית → **דבר איתו עכשיו**
+3. כתוב שלום בצ'אט — אחרי התשובה לחץ **מעולה! שתף עם לקוחות**
+4. התראות וואטסאפ? **הגדרות** בצ'אט (לא באשף)
+5. `curl http://localhost:8765/health` → `מוכן לעבודה` או `צריך הגדרה`
+
+---
+
+מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב-Vercel (mock), או ב-Railway (LLM אמיתי + DB קבוע).
 
 ---
 

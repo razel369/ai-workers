@@ -1169,7 +1169,7 @@ function starterKnowledgeForTemplate(tpl, businessName = '') {
 export function getWorkerHealth(worker) {
   const srv = getServerLlmConfig();
   const hasLlm = !!(srv.apiKey || worker.llm?.hasApiKey);
-  if (!hasLlm) return { status: 'needs_llm', labelHe: 'צריך LLM', tone: 'warn' };
+  if (!hasLlm) return { status: 'needs_llm', labelHe: 'צריך הגדרה', tone: 'warn' };
   if (worker.isActive) {
     if (worker.paidUntil && new Date(worker.paidUntil) > new Date()) {
       const d = new Date(worker.paidUntil).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -1193,7 +1193,7 @@ function llmErrorMessageHe(error, detail = '') {
   if (e.includes('no_api_key')) {
     return 'שירות ה-AI עדיין לא מחובר — בינתיים העובד עונה במצב הדגמה.';
   }
-  return 'משהו השתבש בתשובה — נסו שוב. אם זה חוזר, פנו לתמיכה.';
+  return 'משהו נתעכב, נסה שוב';
 }
 export { llmErrorMessageHe };
 
