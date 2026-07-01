@@ -94,7 +94,7 @@ try {
   }
   expect('worker active after mark-paid', workerActive);
 
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => document.querySelector('#c-input') && !document.querySelector('#pay-submit'),
     null,

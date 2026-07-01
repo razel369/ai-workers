@@ -589,6 +589,25 @@ const CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
 ].join('; ');
 
+function embedCorsHeaders(req) {
+  if (CORS_ALLOW_ORIGIN) {
+    return {
+      'access-control-allow-origin': CORS_ALLOW_ORIGIN,
+      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+    };
+  }
+  if (!EMBED_ALLOW_PUBLIC) return {};
+  const origin = req.headers.origin;
+  if (!origin) return {};
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'vary': 'Origin',
+  };
+}
+
 function send(res, status, body, h = {}) {
   let payload; const ct = h['content-type'] ?? 'application/json';
   if (ct === 'application/json' && body !== null && typeof body !== 'string' && !Buffer.isBuffer(body)) payload = JSON.stringify(body, null, 2);
@@ -1201,10 +1220,17 @@ function isAdmin(req, parsedUrl) {
 // --- Routes ---------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+  if (req.method === 'OPTIONS') {
+    const embedPath = url.pathname.startsWith('/api/embed/');
+    const preflight = embedPath ? embedCorsHeaders(req) : (CORS_ALLOW_ORIGIN ? {
+      'access-control-allow-origin': CORS_ALLOW_ORIGIN,
+      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    } : {});
+    return send(res, 204, '', preflight);
+  }
   if (!rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
-
-  const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
@@ -1302,29 +1328,30 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/embed/config') {
     const workerId = url.searchParams.get('workerId') ?? '';
     const found = workers.adminFindWorker(workerId);
-    if (!found) return send(res, 404, { error: 'not_found' });
+    if (!found) return send(res, 404, { error: 'not_found' }, embedCorsHeaders(req));
     const worker = workers.getWorker(found.tenantId, found.id);
-    if (!EMBED_ALLOW_PUBLIC && !worker.isActive) return send(res, 403, { error: 'embed_disabled' });
-    return send(res, 200, { workerId, name: worker.name, isActive: worker.isActive, templateId: worker.templateId });
+    if (!EMBED_ALLOW_PUBLIC && !worker.isActive) return send(res, 403, { error: 'embed_disabled' }, embedCorsHeaders(req));
+    return send(res, 200, { workerId, name: worker.name, isActive: worker.isActive, templateId: worker.templateId }, embedCorsHeaders(req));
   }
 
   if (req.method === 'POST' && url.pathname === '/api/embed/chat') {
+    const cors = embedCorsHeaders(req);
     const { text: raw } = await readBody(req, BODY_SMALL);
-    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
-    if (!body.workerId || !body.message) return send(res, 400, { error: 'workerId_and_message_required' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }, cors); }
+    if (!body.workerId || !body.message) return send(res, 400, { error: 'workerId_and_message_required' }, cors);
     const tenantFromKey = requireAuth(req);
     const found = workers.adminFindWorker(body.workerId);
-    if (!found) return send(res, 404, { error: 'not_found' });
-    if (tenantFromKey && tenantFromKey !== found.tenantId) return send(res, 403, { error: 'forbidden' });
+    if (!found) return send(res, 404, { error: 'not_found' }, cors);
+    if (tenantFromKey && tenantFromKey !== found.tenantId) return send(res, 403, { error: 'forbidden' }, cors);
     const worker = workers.getWorker(found.tenantId, found.id);
-    if (!worker.isActive) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' });
+    if (!worker.isActive) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' }, cors);
     const res2 = await workers.chatWithWorker({
       tenantId: found.tenantId,
       workerId: found.id,
       userMessage: body.message,
       customerId: body.customerId ?? 'embed_visitor',
     });
-    return send(res, res2.status ?? 200, { reply: res2.reply ?? res2.message, ...res2 });
+    return send(res, res2.status ?? 200, { reply: res2.reply ?? res2.message, ...res2 }, cors);
   }
 
   // Admin: issue an API key for a new tenant

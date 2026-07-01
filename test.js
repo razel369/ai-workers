@@ -175,6 +175,8 @@ console.log(`Testing ${BASE}\n`);
   expect('GET / -> 200 HTML', r.status === 200);
   expect('  mentions Hebrew branding', String(r.body).includes('עובדי AI'));
   expect('  links to marketplace', String(r.body).includes('/marketplace'));
+  expect('  case studies section', String(r.body).includes('id="case-studies"') && String(r.body).includes('סיפורי לקוחות'));
+  expect('  magic CTA on landing', String(r.body).includes('נסה עכשיו בחינם'));
 }
 
 // 10. Marketplace HTML page

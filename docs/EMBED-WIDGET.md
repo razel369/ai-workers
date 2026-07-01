@@ -5,7 +5,7 @@
 ## דרישות
 
 - העובד חייב להיות **פעיל** (`isActive`).
-- לצ'אט מדומיין חיצוני: הגדירו `CORS_ALLOW_ORIGIN=https://your-website.com` (או `*` לפיילוט בלבד).
+- לצ'אט מדומיין חיצוני: הגדירו `CORS_ALLOW_ORIGIN=https://your-website.com` (או השאירו `EMBED_ALLOW_PUBLIC=1` — השרת משקף את כותרת `Origin` בנתיבי `/api/embed/*`).
 
 ## העתקה לאתר
 

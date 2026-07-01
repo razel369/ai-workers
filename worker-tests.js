@@ -579,8 +579,11 @@ let integrationId = null;
   expect('GET /embed.js -> 200 js', r.status === 200 && String(r.body).includes('aiw-embed-root'));
 }
 {
-  const cfg = await req(`/api/embed/config?workerId=${mediaWorkerId}`);
+  const cfg = await req(`/api/embed/config?workerId=${mediaWorkerId}`, {
+    headers: { origin: 'https://customer-site.example' },
+  });
   expect('GET /api/embed/config -> 200', cfg.status === 200 && cfg.body.workerId === mediaWorkerId);
+  expect('  embed config reflects Origin CORS', cfg.headers.get('access-control-allow-origin') === 'https://customer-site.example');
 }
 {
   const r = await req('/api/webhooks/bit', {
