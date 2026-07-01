@@ -15,15 +15,17 @@ COPY google-media.js ./
 COPY media-tools.js ./
 COPY templates-media.js ./
 COPY workers-ui.html ./
+COPY assets/ ./assets/
 COPY mcp-client.js ./
 COPY skills.js ./
 COPY legal-pages.js ./
 COPY docs/legal ./docs/legal
 COPY url-security.js ./
-COPY integrations/crypto.js integrations/registry.js integrations/store.js integrations/runner.js integrations/tools.js integrations/index.js ./integrations/
+COPY integrations/ ./integrations/
 COPY payment-webhooks.js ./
 COPY embed-widget.js ./
 COPY whatsapp-webhook.js ./
+COPY whatsapp-router.js ./
 
 # Optional: cloudflared binary so the container can expose itself publicly
 # without any cloud account. Disable with INSTALL_TUNNEL=0.
@@ -42,7 +44,6 @@ ENV DB_PATH=/app/data/earnings.db
 ENV TENANTS_DIR=/app/data/tenants
 
 EXPOSE 8765
-VOLUME ["/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- "http://127.0.0.1:${PORT:-8765}/health" || exit 1

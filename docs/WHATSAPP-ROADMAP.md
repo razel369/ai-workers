@@ -50,8 +50,10 @@ integrations/runner.js — Meta Graph API send (or stub)
 
 ### Phase 3 — Tenant mapping
 
-- [ ] DB table: `whatsapp_routes (phone_e164, tenant_id, worker_id)`
-- [ ] Admin UI or env fallback: `WORKER_<id>_WHATSAPP_PHONE`
+- [x] DB table: `whatsapp_routes` on platform DB (phone_key → tenant_id, worker_id)
+- [x] API: `POST /api/workers/:id/whatsapp-route` + auto-register on connect
+- [x] Inbound → `workers.chatWithWorker()` → outbound Meta/Twilio send
+- [ ] Admin UI for multi-number routing
 - [ ] 24h session window handling (Meta policy)
 
 ### Phase 4 — Outbound

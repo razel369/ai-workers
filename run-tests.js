@@ -64,7 +64,10 @@ function runDockerContextSmoke() {
       required.add(match[1].replace(/^\.\//, ''));
     }
   }
-  const missing = [...required].filter((file) => !new RegExp(`COPY\\s+[^\\n]*\\b${file.replace('.', '\\.')}\\b`, 'm').test(dockerfile));
+  const missing = [...required].filter((file) => {
+    if (file.startsWith('integrations/') && /COPY\s+integrations\//m.test(dockerfile)) return false;
+    return !new RegExp(`COPY\\s+[^\\n]*\\b${file.replace(/\./g, '\\.')}\\b`, 'm').test(dockerfile);
+  });
   if (missing.length) throw new Error(`Dockerfile does not copy runtime file(s): ${missing.join(', ')}`);
   if (!dockerfile.includes('DB_PATH=/app/data/earnings.db')) throw new Error('Dockerfile must set persistent DB_PATH');
   if (!dockerfile.includes('TENANTS_DIR=/app/data/tenants')) throw new Error('Dockerfile must set persistent TENANTS_DIR');

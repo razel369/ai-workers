@@ -12,10 +12,16 @@
           "bootstrap-env.js",
           "workers.js",
           "workers-ui.html",
+          "assets/**",
           "mcp-client.js",
           "skills.js",
           "docs/legal/**",
-          "url-security.js"
+          "url-security.js",
+          "whatsapp-router.js",
+          "whatsapp-webhook.js",
+          "payment-webhooks.js",
+          "embed-widget.js",
+          "integrations/**"
         ]
       }
     }

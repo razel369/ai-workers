@@ -51,6 +51,7 @@ import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill, handleLegalRoutes } from './skills.js';
 import * as integrations from './integrations/index.js';
 import { handleWhatsAppWebhook, whatsappConfigStatus } from './whatsapp-webhook.js';
+import { processWhatsAppInbound, registerWhatsAppRoute } from './whatsapp-router.js';
 import {
   handlePaymentWebhooks,
   paymentConfigStatus,
@@ -187,6 +188,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_activation_requests_status ON activation_requests(status, at);
   CREATE INDEX IF NOT EXISTS idx_admin_audit_events_at ON admin_audit_events(at);
   CREATE INDEX IF NOT EXISTS idx_admin_audit_events_action ON admin_audit_events(action, at);
+  CREATE TABLE IF NOT EXISTS whatsapp_routes (
+    phone_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'meta',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_whatsapp_routes_tenant ON whatsapp_routes(tenant_id);
 `);
 try { db.exec(`ALTER TABLE api_keys ADD COLUMN tenant_id TEXT`); } catch {}
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)`); } catch {}
@@ -698,6 +707,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/premium-theme.css">
   <style>
     :root {
       color-scheme: dark;
@@ -862,6 +872,8 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     .proof-strip { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; padding: 20px 0 8px; }
     .proof-item { font-size: 13px; color: var(--body); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; }
+    .trust-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 24px 0 8px; }
+    .trust-pill { font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; background: var(--surface); }
 
     .section-order-templates { order: 1; }
     .section-order-verticals { order: 2; }
@@ -873,7 +885,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     }
   </style>
 </head>
-<body>
+<body class="landing-page">
   <div class="container">
     <nav>
       <span class="logo">
@@ -890,7 +902,8 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       </div>
     </nav>
 
-    <div class="hero anim anim-1 section-order-hero-cta">
+    <div class="hero anim anim-1 section-order-hero-cta hero-split">
+      <div class="hero-copy">
       <div class="badge">פתרון B2B · עברית · תשלום מקומי</div>
       <h1>עובד וירטואלי שמטפל ב<strong class="highlight">לקוחות 24/7</strong></h1>
       <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — בוחרים תבנית מוכנה, מתאימים ידע ושעות פעילות, ומקבלים עובד שמסנן פניות, אוסף לידים ומעביר רק מה שחשוב.</p>
@@ -903,6 +916,34 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <span class="proof-item">✓ דוגמה חיה לפני תשלום</span>
         <span class="proof-item">✓ ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} ללא תשלום</span>
       </div>
+      <div class="trust-bar">
+        <span class="trust-pill">מוצר ישראלי · תמיכה בעברית</span>
+        <span class="trust-pill">הצפנה לחיבורים עסקיים</span>
+        <span class="trust-pill">WhatsApp · יומן · CRM</span>
+        <span class="trust-pill">ללא מונחים טכניים</span>
+      </div>
+      </div>
+      <aside class="hero-preview" aria-label="תצוגה מקדימה">
+        <div class="hero-preview-glow"></div>
+        <div class="preview-window">
+          <div class="preview-titlebar">
+            <div class="preview-dots"><span></span><span></span><span></span></div>
+            <div class="preview-title">עובד שירות — דוגמה חיה</div>
+            <div class="preview-status">פעיל</div>
+          </div>
+          <div class="preview-chat">
+            <div class="preview-msg user">שלום, יש לכם מקום ליום שישי בערב?</div>
+            <div class="preview-msg bot">בטח! לכמה אנשים? ויש העדפה לשעה מסוימת?</div>
+            <div class="preview-msg bot">אם תרצו, אשמח גם לשמור שם וטלפון לחזרה מהירה.</div>
+            <div class="preview-typing"><span></span><span></span><span></span></div>
+          </div>
+          <div class="preview-metrics">
+            <div class="preview-metric"><div class="val">24/7</div><div class="lbl">זמינות</div></div>
+            <div class="preview-metric"><div class="val">&lt;30s</div><div class="lbl">תגובה</div></div>
+            <div class="preview-metric"><div class="val">עברית</div><div class="lbl">שפה</div></div>
+          </div>
+        </div>
+      </aside>
     </div>
 
     <div class="sections-flow">
@@ -947,7 +988,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     <section class="anim anim-3 section-order-case-studies" id="case-studies">
       <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
-      <p class="section-sub">תוצאות ראשונות מעסקים ישראליים — מספרים לדוגמה מהפיילוט</p>
+      <p class="section-sub">תוצאות ראשונות מעסקים ישראליים — מספרים לדוגמה מפיילוטים מוקדמים</p>
       <div class="verticals-grid">
         <div class="vertical-card">
           <div class="v-icon">🏥</div>
@@ -1013,8 +1054,8 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         </div>
         <div class="step-card">
           <div class="num">3</div>
-          <h3>משלמים ומאשרים</h3>
-          <p>שולחים אסמכתא, מקבלים אישור אדמין, והעובד פתוח לצ'אט.</p>
+          <h3>מדברים ומחברים</h3>
+          <p>שיחה ראשונה תוך דקה, חיבור WhatsApp ויומן — ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} בלי כרטיס אשראי.</p>
         </div>
       </div>
     </section>
@@ -1281,7 +1322,14 @@ const server = http.createServer(async (req, res) => {
   })) return;
 
   // WhatsApp inbound webhook (no tenant auth — provider verification)
-  if (await handleWhatsAppWebhook(req, res, url, { send, readBody })) return;
+  if (await handleWhatsAppWebhook(req, res, url, {
+    send,
+    readBody,
+    processInbound: (inbound) => processWhatsAppInbound(db, {
+      chatWithWorker: workers.chatWithWorker,
+      logAgentActions: workers.logAgentActions,
+    }, inbound),
+  })) return;
 
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
@@ -1813,7 +1861,6 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
   }
 
-  // API: list escalations for a worker
   const escMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/escalations$/);
   if (req.method === 'GET' && escMatch) {
     const tenantId = requireAuth(req);
@@ -1822,7 +1869,35 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { escalations });
   }
 
-  // API: list outbox (sent emails) for a worker
+  const insightsMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/insights$/);
+  if (req.method === 'GET' && insightsMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const insights = workers.getWorkerInsights(tenantId, insightsMatch[1]);
+    if (!insights) return send(res, 404, { error: 'not_found' });
+    return send(res, 200, insights);
+  }
+
+  const waRouteMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/whatsapp-route$/);
+  if (req.method === 'POST' && waRouteMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const workerId = waRouteMatch[1];
+    const w = workers.getWorker(tenantId, workerId);
+    if (!w) return send(res, 404, { error: 'not_found' });
+    const route = registerWhatsAppRoute(db, {
+      phoneNumberId: body.phoneNumberId,
+      twilioTo: body.twilioTo,
+      tenantId,
+      workerId,
+      provider: body.provider || 'meta',
+    });
+    if (!route.ok) return send(res, 400, route);
+    return send(res, 200, { ok: true, phoneKey: route.phoneKey, webhookUrl: `${resolveBaseUrl(req)}/api/webhooks/whatsapp` });
+  }
+
   const outboxMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/outbox$/);
   if (req.method === 'GET' && outboxMatch) {
     const tenantId = requireAuth(req);
@@ -2052,6 +2127,26 @@ const server = http.createServer(async (req, res) => {
     if (!result.ok) return send(res, 400, result);
     const list = integrations.listIntegrations(tenantId);
     const connected = list.find((i) => i.id === result.id);
+    if (body.type === 'whatsapp' && body.workerId) {
+      const phoneNumberId = userConfig.phoneNumberId || connected?.config?.phoneNumberId;
+      const twilioTo = userConfig.twilioFrom || connected?.config?.twilioFrom;
+      if (phoneNumberId || twilioTo) {
+        registerWhatsAppRoute(db, {
+          phoneNumberId,
+          twilioTo,
+          tenantId,
+          workerId: body.workerId,
+          provider: userConfig.provider || connected?.config?.provider || 'meta',
+        });
+      } else if (process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID) {
+        registerWhatsAppRoute(db, {
+          phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID,
+          tenantId,
+          workerId: body.workerId,
+          provider: 'meta',
+        });
+      }
+    }
     return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id, hookUrl: connected?.config?.hookUrl });
   }
 
@@ -2170,7 +2265,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const content = fs.readFileSync(filePath);
       const ext = path.extname(filePath).toLowerCase();
-      const mime = { '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.gif':'image/gif', '.ico':'image/x-icon', '.webp':'image/webp' };
+      const mime = { '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.gif':'image/gif', '.ico':'image/x-icon', '.webp':'image/webp', '.css':'text/css; charset=utf-8' };
       res.writeHead(200, { 'content-type': mime[ext] || 'application/octet-stream', 'cache-control': 'public,max-age=' + ASSETS_CACHE_MAX_AGE });
       res.end(content);
     } catch {

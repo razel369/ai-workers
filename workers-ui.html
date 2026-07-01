@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/premium-theme.css">
 <style>
   :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Heebo',system-ui,sans-serif; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -373,6 +374,13 @@
   .magic-connect h4 { font-size:14px; margin-bottom:10px; color:var(--text); }
   .magic-connect .fld { margin-bottom:10px; }
   .magic-connect .fld label { font-size:12px; }
+  .insights-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; margin:16px 0 24px; }
+  .insight-card { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; text-align:center; }
+  .insight-card .n { font-size:26px; font-weight:800; color:var(--accent); line-height:1.1; }
+  .insight-card .l { font-size:12px; color:var(--muted); margin-top:4px; }
+  .insights-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .insights-table th,.insights-table td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:right; }
+  .insights-table th { color:var(--muted); font-weight:600; font-size:12px; }
   .test-reply-edit { width:100%; margin-top:8px; min-height:72px; font-size:13px; }
   .tool-log .tc { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:6px; }
   .tool-log .tc .tn { font-weight:700; color:var(--accent); font-size:13px; }
@@ -948,6 +956,43 @@ const APP = (() => {
           if (!state.templateId) return;
           saveMagicState({ step: 2 });
           step = 2;
+          paint();
+        };
+        return;
+      }
+
+      if (step === 2) {
+        app.innerHTML = `<div class="magic-wrap page-enter">
+          ${progressHtml()}
+          <div class="magic-step-label">שלב 3 מתוך 3</div>
+          <h1 class="magic-title">רוצים לחבר ערוצים?</h1>
+          <p class="magic-sub">אופציונלי — אפשר לדלג ולחבר אחר כך מהגדרות העובד.</p>
+          <div class="magic-connect">
+            <h4>${icon('chat', 14)} WhatsApp — התראות לבעל העסק</h4>
+            <div class="fld">
+              <label>מספר לקבלת התראות על לידים ופניות</label>
+              <input id="magic-wa-phone" class="magic-input" type="tel" placeholder="05X-XXXXXXX" dir="ltr" value="${escapeHtml(state.notifyPhone || '')}" />
+            </div>
+          </div>
+          <div class="magic-connect" style="margin-top:12px">
+            <h4>${icon('clock', 14)} יומן — קביעת תורים</h4>
+            <div class="fld">
+              <label>קישור Cal.com / Google Calendar</label>
+              <input id="magic-cal-link" class="magic-input" type="url" placeholder="https://cal.com/your-business" dir="ltr" value="${escapeHtml(state.bookingLink || '')}" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:20px;gap:10px">
+            <button class="btn btn-primary btn-hero" id="magic-finish">${icon('zap', 16)} צור את העובד!</button>
+            <button class="btn btn-outline btn-hero" id="magic-skip">דלג — אחר כך</button>
+          </div>
+        </div>`;
+        document.getElementById('magic-finish').onclick = async () => {
+          state.notifyPhone = document.getElementById('magic-wa-phone').value.trim();
+          state.bookingLink = document.getElementById('magic-cal-link').value.trim();
+          saveMagicState({ notifyPhone: state.notifyPhone, bookingLink: state.bookingLink });
+          await finishMagic();
+        };
+        document.getElementById('magic-skip').onclick = async () => {
           await finishMagic();
         };
         return;
@@ -972,13 +1017,76 @@ const APP = (() => {
           knowledge: smartKnowledge,
         }),
       });
+      if (state.notifyPhone) {
+        await api('/api/integrations/connect', {
+          method: 'POST',
+          body: JSON.stringify({ type: 'whatsapp', workerId, config: { ownerNotifyPhone: state.notifyPhone, provider: 'meta' } }),
+        });
+        await api('/api/workers/' + workerId + '/whatsapp-route', {
+          method: 'POST',
+          body: JSON.stringify({ provider: 'meta' }),
+        });
+      }
+      if (state.bookingLink) {
+        await api('/api/integrations/connect', {
+          method: 'POST',
+          body: JSON.stringify({ type: 'google_calendar', workerId, config: { bookingLink: state.bookingLink } }),
+        });
+      }
       localStorage.removeItem(MAGIC_LS);
       localStorage.setItem(ONBOARDING_LS, '1');
       location.hash = '#/workers/chat/' + workerId;
     }
 
-    if (step === 2) await finishMagic();
+    if (step === 2) await paint();
     else await paint();
+  }
+
+  async function renderWorkerInsights(workerId) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען נתונים...</div>`;
+    const r = await api('/api/workers/' + workerId + '/insights');
+    if (!r.ok) {
+      app.innerHTML = `<div class="empty err">לא הצלחנו לטעון את הלוח — ${escapeHtml(JSON.stringify(r.body))}</div>`;
+      return;
+    }
+    const { worker, counts, recentLeads, recentEscalations, recentActions, recentOutbox } = r.body;
+    const escRows = (recentEscalations || []).map((e) =>
+      `<tr><td>${escapeHtml(e.reason)}</td><td><span class="pill ${e.status === 'open' ? 'pill-pending' : 'pill-active'}">${escapeHtml(e.status)}</span></td><td class="muted">${fmtDate(e.createdAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="3" class="muted">אין escalations עדיין</td></tr>';
+    const leadRows = (recentLeads || []).map((l) =>
+      `<tr><td>${escapeHtml(l.fullName)}</td><td dir="ltr">${escapeHtml(l.phone || '—')}</td><td>${l.score != null ? l.score + '/10' : '—'}</td><td class="muted">${fmtDate(l.createdAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="muted">אין לידים עדיין — העובד יאסוף אותם בשיחות</td></tr>';
+    const actionRows = (recentActions || []).map((a) =>
+      `<tr><td><code>${escapeHtml(a.toolName)}</code></td><td class="muted">${escapeHtml((a.resultSummary || '').slice(0, 80))}</td><td class="muted">${fmtDate(a.createdAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="3" class="muted">אין פעולות עדיין</td></tr>';
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>${icon('activity', 20)} לוח ביצועים</h2>
+        <span class="muted">${escapeHtml(worker.name)}</span>
+        <a href="#/workers/chat/${workerId}" class="btn btn-outline btn-sm" style="margin-right:auto">${icon('chat', 14)} צ'אט</a>
+        <a href="#/workers" class="btn btn-outline btn-sm">${icon('arrow-right', 14)} חזרה</a>
+      </div>
+      <div class="insights-grid">
+        <div class="insight-card"><div class="n">${counts.messages}</div><div class="l">הודעות</div></div>
+        <div class="insight-card"><div class="n">${counts.leads}</div><div class="l">לידים</div></div>
+        <div class="insight-card"><div class="n">${counts.openEscalations}</div><div class="l">escalations פתוחים</div></div>
+        <div class="insight-card"><div class="n">${counts.agentActions}</div><div class="l">פעולות agent</div></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">${icon('users', 16)} לידים אחרונים</h3>
+        <table class="insights-table"><thead><tr><th>שם</th><th>טלפון</th><th>ציון</th><th>תאריך</th></tr></thead><tbody>${leadRows}</tbody></table>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3 style="margin-bottom:12px">${icon('alert', 16)} Escalations</h3>
+        <table class="insights-table"><thead><tr><th>סיבה</th><th>סטטוס</th><th>תאריך</th></tr></thead><tbody>${escRows}</tbody></table>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:12px">${icon('zap', 16)} פעולות שהעובד ביצע</h3>
+        <table class="insights-table"><thead><tr><th>כלי</th><th>תוצאה</th><th>תאריך</th></tr></thead><tbody>${actionRows}</tbody></table>
+      </div>
+    `;
   }
 
   // ---- Category filter state ----
@@ -1027,6 +1135,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] });
     if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1]);
     if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1]);
+    if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(rest[1]);
     if (section === 'admin') return renderAdmin();
     return renderMarketplace();
   }
@@ -1099,16 +1208,25 @@ async function renderMarketplace() {
           <a class="btn btn-outline btn-hero" href="#/workers">${icon('users', 14)} העובדים שלי</a>
         </div>
       </div>
-      <aside class="hero-proof" aria-label="סיכום הפעלה">
-        <div>
-          <div class="proof-label">קטלוג תפעולי</div>
-          <div class="proof-number">${allTpls.length}</div>
-          <div class="proof-copy">תבניות לפי תפקידים אמיתיים: מכירות, שירות, תפעול, תוכן וניהול נכסים.</div>
-        </div>
-        <div class="proof-list">
-          <span>${icon('check', 14)} מתחילים תוך דקה</span>
-          <span>${icon('check', 14)} דוגמה חיה לפני תשלום</span>
-          <span>${icon('check', 14)} בלי כרטיס אשראי</span>
+      <aside class="hero-preview" aria-label="תצוגה מקדימה">
+        <div class="hero-preview-glow"></div>
+        <div class="preview-window">
+          <div class="preview-titlebar">
+            <div class="preview-dots"><span></span><span></span><span></span></div>
+            <div class="preview-title">עובד שירות — דוגמה חיה</div>
+            <div class="preview-status">פעיל</div>
+          </div>
+          <div class="preview-chat">
+            <div class="preview-msg user">שלום, יש לכם מקום ליום שישי בערב?</div>
+            <div class="preview-msg bot">בטח! לכמה אנשים? ויש העדפה לשעה מסוימת?</div>
+            <div class="preview-msg bot">אם תרצו, אשמח גם לשמור שם וטלפון לחזרה מהירה.</div>
+            <div class="preview-typing"><span></span><span></span><span></span></div>
+          </div>
+          <div class="preview-metrics">
+            <div class="preview-metric"><div class="val">24/7</div><div class="lbl">זמינות</div></div>
+            <div class="preview-metric"><div class="val">&lt;30s</div><div class="lbl">תגובה</div></div>
+            <div class="preview-metric"><div class="val">עברית</div><div class="lbl">שפה</div></div>
+          </div>
         </div>
       </aside>
     </div>
@@ -1327,6 +1445,7 @@ async function renderMarketplace() {
               <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
               <div class="actions">
                 <button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/chat/${w.id}'">${icon('chat', 14)} צ'אט</button>
+                <button class="btn btn-sm btn-outline" onclick="location.hash='#/workers/insights/${w.id}'">${icon('activity', 14)} לוח</button>
                 <button class="btn btn-sm btn-outline" onclick="location.hash='#/workers/edit/${w.id}'">${icon('edit', 14)} עריכה</button>
                 <button class="btn btn-sm btn-danger" data-del="${w.id}">${icon('trash', 14)} מחק</button>
               </div>
@@ -2257,6 +2376,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
+        <a href="#/workers/insights/${workerId}" class="btn btn-outline btn-sm">${icon('activity', 14)} לוח</a>
         <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
       </div>
       <div class="share-row" id="success-cta" style="display:none">

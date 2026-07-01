@@ -9,7 +9,8 @@ const PROVIDER = process.env.WHATSAPP_PROVIDER ?? '';
 function parseMetaPayload(body) {
   const entry = body?.entry?.[0];
   const change = entry?.changes?.[0];
-  const msg = change?.value?.messages?.[0];
+  const value = change?.value;
+  const msg = value?.messages?.[0];
   if (!msg) return null;
   return {
     provider: 'meta',
@@ -17,6 +18,8 @@ function parseMetaPayload(body) {
     messageId: msg.id,
     text: msg.text?.body ?? '',
     timestamp: msg.timestamp,
+    phoneNumberId: value?.metadata?.phone_number_id ?? null,
+    businessTo: value?.metadata?.display_phone_number ?? null,
     raw: msg,
   };
 }
@@ -29,6 +32,7 @@ function parseTwilioPayload(body) {
     messageId: body.MessageSid,
     text: body.Body ?? '',
     timestamp: null,
+    businessTo: body.To?.replace('whatsapp:', '') ?? null,
     raw: body,
   };
 }
@@ -80,7 +84,7 @@ export async function parseWhatsAppInbound(req, readBody, bodyLimit = 65536) {
  * Route handler stub — call from server.js when enabling WhatsApp.
  * @returns {boolean} true if handled
  */
-export async function handleWhatsAppWebhook(req, res, url, { send, readBody }) {
+export async function handleWhatsAppWebhook(req, res, url, { send, readBody, processInbound }) {
   if (url.pathname !== '/api/webhooks/whatsapp') return false;
   if (!PROVIDER) {
     send(res, 503, { error: 'whatsapp_not_configured' });
@@ -92,11 +96,20 @@ export async function handleWhatsAppWebhook(req, res, url, { send, readBody }) {
   if (req.method === 'POST') {
     const inbound = await parseWhatsAppInbound(req, readBody);
     if (!inbound) {
-      send(res, 400, { error: 'unparseable_payload' });
+      send(res, 200, { ok: true, ignored: true, reason: 'no_message' });
       return true;
     }
-    // TODO: map inbound.from → tenant worker, call workers.chat(), reply via provider API
-    console.log('[whatsapp-stub] inbound:', inbound.from, inbound.text?.slice(0, 80));
+    if (typeof processInbound === 'function') {
+      try {
+        const result = await processInbound(inbound);
+        send(res, 200, { ok: true, received: inbound.messageId, ...result });
+      } catch (e) {
+        console.error('[whatsapp] inbound error:', e?.message ?? e);
+        send(res, 500, { ok: false, error: 'processing_failed' });
+      }
+      return true;
+    }
+    console.log('[whatsapp] inbound (no processor):', inbound.from, inbound.text?.slice(0, 80));
     send(res, 200, { ok: true, stub: true, received: inbound.messageId });
     return true;
   }

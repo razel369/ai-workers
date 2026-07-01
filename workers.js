@@ -839,6 +839,77 @@ export function getOutbox(tenantId, workerId) {
   return db.prepare(`SELECT id, recipient, subject, body, created_at FROM outbox WHERE worker_id=? ORDER BY created_at DESC`).all(workerId);
 }
 
+export function logAgentActions(tenantId, workerId, customerId, toolCalls = []) {
+  if (!toolCalls?.length) return;
+  const db = getTenantDb(tenantId);
+  const stmt = db.prepare(
+    `INSERT INTO agent_actions (worker_id, customer_id, tool_name, args_json, result_summary, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  const now = new Date().toISOString();
+  for (const tc of toolCalls) {
+    stmt.run(
+      workerId,
+      customerId ?? '',
+      tc.name ?? 'unknown',
+      JSON.stringify(tc.args ?? {}),
+      String(tc.result ?? '').slice(0, 500),
+      now
+    );
+  }
+}
+
+export function getAgentActions(tenantId, workerId, limit = 30) {
+  const db = getTenantDb(tenantId);
+  return db.prepare(
+    `SELECT id, customer_id AS customerId, tool_name AS toolName, args_json AS argsJson,
+            result_summary AS resultSummary, created_at AS createdAt
+     FROM agent_actions WHERE worker_id=? ORDER BY id DESC LIMIT ?`
+  ).all(workerId, limit);
+}
+
+export function getWorkerInsights(tenantId, workerId) {
+  const db = getTenantDb(tenantId);
+  const row = db.prepare(`SELECT id, name, status, paid_until, template_id FROM workers WHERE id=?`).get(workerId);
+  if (!row) return null;
+  const isActive = row.status === 'active' && (!row.paid_until || new Date(row.paid_until) > new Date());
+  const counts = {
+    leads: db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=?`).get(workerId).c,
+    openEscalations: db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND status='open'`).get(workerId).c,
+    messages: db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE worker_id=?`).get(workerId).c,
+    outbox: db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE worker_id=?`).get(workerId).c,
+    agentActions: db.prepare(`SELECT COUNT(*) AS c FROM agent_actions WHERE worker_id=?`).get(workerId).c,
+  };
+  const recentLeads = db.prepare(
+    `SELECT id, full_name AS fullName, phone, email, score, notes, created_at AS createdAt
+     FROM leads WHERE worker_id=? ORDER BY created_at DESC LIMIT 8`
+  ).all(workerId);
+  const recentEscalations = db.prepare(
+    `SELECT id, reason, urgency, status, created_at AS createdAt
+     FROM escalations WHERE worker_id=? ORDER BY created_at DESC LIMIT 8`
+  ).all(workerId);
+  const recentActions = getAgentActions(tenantId, workerId, 12);
+  const recentOutbox = db.prepare(
+    `SELECT id, recipient, subject, body, created_at AS createdAt
+     FROM outbox WHERE worker_id=? ORDER BY created_at DESC LIMIT 6`
+  ).all(workerId);
+  return {
+    worker: {
+      id: row.id,
+      name: row.name,
+      templateId: row.template_id,
+      status: row.status,
+      paidUntil: row.paid_until,
+      isActive,
+    },
+    counts,
+    recentLeads,
+    recentEscalations,
+    recentActions,
+    recentOutbox,
+  };
+}
+
 // --- Per-tenant DB --------------------------------------------------------
 
 const APP_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\//, ''));
@@ -1018,6 +1089,16 @@ function getTenantDb(tenantId) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_crm_notes_worker ON crm_notes(worker_id);
+    CREATE TABLE IF NOT EXISTS agent_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL DEFAULT '',
+      tool_name TEXT NOT NULL,
+      args_json TEXT NOT NULL DEFAULT '{}',
+      result_summary TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_actions_worker ON agent_actions(worker_id, id DESC);
   `);
   try { db.exec(`ALTER TABLE workers ADD COLUMN mcp_servers_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { db.exec(`ALTER TABLE workers ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
@@ -1927,6 +2008,9 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   }
 
   if (!testMode) appendMessage(tenantId, workerId, 'assistant', reply);
+  if (!testMode && toolCallsLog.length > 0) {
+    logAgentActions(tenantId, workerId, customerId, toolCallsLog);
+  }
   if (!testMode && customerId && history.length >= 2) {
     const snippet = history.slice(-4).map((m) => `${m.role}: ${m.content.slice(0, 100)}`).join(' | ');
     saveConversationSummary(tenantId, workerId, customerId, `Last exchange: ${snippet}`.slice(0, 500));

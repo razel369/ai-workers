@@ -30,9 +30,12 @@ try {
   await page.fill('#magic-business', 'Browser Flow Business');
   await page.click('#magic-next');
   await page.waitForSelector('.tpl-pick-btn[data-tpl="sales-leads-il"]', { timeout: 10000 });
-  expect('magic wizard has no integration fields', await page.locator('#magic-connect-panel').count() === 0);
+  expect('magic wizard step 1 has no integration fields', await page.locator('#magic-wa-phone').count() === 0);
   await page.click('.tpl-pick-btn[data-tpl="sales-leads-il"]');
   await page.click('#magic-next');
+  await page.waitForSelector('#magic-skip', { timeout: 10000 });
+  expect('magic connect step offers skip', await page.locator('#magic-skip').isVisible());
+  await page.click('#magic-skip');
   await page.waitForURL(/#\/workers\/chat\//, { timeout: 20000 });
   const workerId = new URL(page.url()).hash.split('/').pop();
   const tenantKey = await page.evaluate(() => localStorage.getItem('paid-agent.workerKey'));
