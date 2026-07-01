@@ -38,8 +38,8 @@ export const TEMPLATES = [
     description: 'מסנן וממיין לידים נכנסים בעברית/אנגלית, שואל שאלות B2B מתאימות (גודל חברה, מקבל החלטות, ציר זמן, תקציב), קובע פגישות, ועונה בעברית כברירת מחדל.',
     icon: '📞',
     category: 'sales',
-    buyPriceIls: 149,
-    rentPriceIls: 199,
+    buyPriceIls: 0,
+    rentPriceIls: 249,
     defaultPersona: `You are "Daniel", a friendly Israeli B2B sales development rep working for the tenant's company.
 You speak Hebrew as default and switch to English when the lead writes in English.
 You never break character. You never mention being an AI unless directly asked (then you say: "I'm Daniel, an AI sales assistant for [company]").
@@ -66,7 +66,7 @@ Case studies: (the tenant fills this in)`,
     description: 'עונה לשאלות לקוחות בעברית באמצעות מאגר ידע שהעסק מעלה. מעביר לנציג אנושי במקרים מסוימים (בקשות החזר כספי, שפה משפטית, טון כועס).',
     icon: '🎧',
     category: 'support',
-    buyPriceIls: 199,
+    buyPriceIls: 0,
     rentPriceIls: 249,
     defaultPersona: `You are "Noa", a customer support agent for the tenant's company.
 You write only in Hebrew by default. You are patient, empathetic, and concrete.
@@ -92,8 +92,8 @@ Escalation email: support@<tenant-domain>`,
     description: 'קורא מיילים וטפסים נכנסים, מחלץ שדות מובנים (שם, טלפון, כתובת, סכום, תאריך), ומחזיר JSON נקי. יכול גם לצרף שורות לקובץ CSV.',
     icon: '📋',
     category: 'ops',
-    buyPriceIls: 99,
-    rentPriceIls: 149,
+    buyPriceIls: 0,
+    rentPriceIls: 199,
     defaultPersona: `You are a meticulous data entry clerk. You never paraphrase. You extract fields exactly as written.
 If a field is missing or unclear, you set it to null and add a note in "warnings".
 You output ONLY valid JSON, no prose.`,
@@ -119,8 +119,8 @@ Schema for generic emails:
     description: 'מייצר פוסטים לבלוג, לינקדאין ומודעות בעברית במותג המותאם לעסק. מאומן להימנע מאנגליזמים ולהשתמש בניסוח ישראלי טבעי.',
     icon: '✍️',
     category: 'content',
-    buyPriceIls: 149,
-    rentPriceIls: 199,
+    buyPriceIls: 0,
+    rentPriceIls: 249,
     defaultPersona: `You are a Hebrew content writer for the tenant's company.
 You write in clear, modern Hebrew — natural Israeli phrasing, minimal anglicisms.
 You match the brand voice described in the knowledge section. You never invent facts about the company.`,
@@ -144,7 +144,7 @@ Target audience: (the tenant fills this in)`,
     description: 'מטפל בפניות על נכסים בעברית/אנגלית — עונה על שאלות, מתאם ביקורים, ולוכד פרטי לידים לסוכן. מכיר טרמינולוגיה ישראלית (ארנונה, ועד בית, מס שבח).',
     icon: '🏠',
     category: 'sales',
-    buyPriceIls: 199,
+    buyPriceIls: 0,
     rentPriceIls: 249,
     defaultPersona: `You are "Roni", a friendly Israeli real estate agent assistant.
 You speak Hebrew by default, switching to English when the client writes in English.
@@ -172,7 +172,7 @@ Viewing booking link: (the tenant fills this in)`,
     description: 'עונה להודעות ממטופלים — קובע תורים, עונה על שאלות נפוצות (שעות, ביטוח, מיקום), מטפל בביטולים ושינויים. עברית ראשית עם יכולת אנגלית.',
     icon: '🏥',
     category: 'support',
-    buyPriceIls: 199,
+    buyPriceIls: 0,
     rentPriceIls: 299,
     defaultPersona: `You are "Maya", a warm and professional medical clinic receptionist.
 You speak Hebrew by default. You are patient, clear, and respectful of patient privacy.
@@ -204,8 +204,8 @@ Cancellation policy: (how many hours notice required)`,
     description: 'מקבל הזמנות, עונה על שאלות תפריט, מטפל בהזמנות טייק אווי, ומגיב למשוב מלקוחות. מושלם למסעדות, בתי קפה וברים ישראליים.',
     icon: '🍽️',
     category: 'support',
-    buyPriceIls: 149,
-    rentPriceIls: 199,
+    buyPriceIls: 0,
+    rentPriceIls: 249,
     defaultPersona: `You are friendly, energetic restaurant staff for the tenant's establishment.
 You speak Hebrew by default with a warm hospitality tone.
 You know the menu, specials, and restaurant policies.
@@ -238,8 +238,8 @@ Takeaway: (minimum order, lead time, delivery area/charges)`,
     description: 'מטפל במעקב הזמנות, החזרות והחלפות, שאלות מוצרים ושאלות משלוחים לחנות אונליין. מתממשק עם חברות שילוח נפוצות בישראל.',
     icon: '📦',
     category: 'support',
-    buyPriceIls: 149,
-    rentPriceIls: 199,
+    buyPriceIls: 0,
+    rentPriceIls: 249,
     defaultPersona: `You are "Noam", a helpful e-commerce customer service agent.
 You speak Hebrew by default. You are solution-oriented and empathetic.
 You know the store's catalog, shipping policy, return policy, and stock status.
@@ -271,7 +271,7 @@ Common delivery services: Israel Post, Xpress, FedEx, UPS, local courier`,
     description: 'מטפל בבקשות תחזוקה, שאלות שכר דירה, חוזים ותיאום קבלנים. בנוי למנהלי נכסים ישראלים עם בניינים מרובים.',
     icon: '🔑',
     category: 'ops',
-    buyPriceIls: 199,
+    buyPriceIls: 0,
     rentPriceIls: 299,
     defaultPersona: `You are a professional property manager assistant for Israeli residential buildings.
 You speak Hebrew by default. You are responsive, organized, and fair.
