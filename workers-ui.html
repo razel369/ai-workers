@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/premium-theme.css">
+<link rel="stylesheet" href="/assets/material3-theme.css">
 <style>
   :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Heebo',system-ui,sans-serif; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -1091,6 +1091,7 @@ const APP = (() => {
 
   // ---- Category filter state ----
   let currentFilter = 'all';
+  let currentSearch = '';
 const CATEGORIES = { sales:'מכירות', support:'שירות', ops:'תפעול', admin:'משרד', content:'תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'נכסים' };
 const CAT_LABELS = { sales:'מכירות', support:'שירות לקוחות', ops:'תפעול ונתונים', admin:'משרד וניהול', content:'כתיבת תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'ניהול נכסים' };
 const CAT_ICONS = { sales:'sales', support:'support', ops:'database', admin:'users', content:'content', realestate:'estate', healthcare:'heart', hospitality:'restaurant', ecommerce:'cart', property:'property' };
@@ -1123,11 +1124,25 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
   function setActive(route) {
     navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
   }
+  function syncM3Fab(section, rest) {
+    let fab = document.getElementById('m3-fab');
+    if (!fab) {
+      fab = document.createElement('a');
+      fab.id = 'm3-fab';
+      fab.className = 'm3-extended-fab';
+      fab.href = '#/magic';
+      fab.innerHTML = icon('zap', 20) + ' נסה בחינם';
+      document.body.appendChild(fab);
+    }
+    const show = !section || section === '' || (section === 'workers' && rest.length === 0);
+    fab.classList.toggle('visible', show);
+  }
   async function route() {
     checkOAuthReturn();
     syncAdminNav();
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
+    syncM3Fab(section, rest);
     if (!section || section === '') return renderMarketplace();
     if (section === 'magic') return renderMagicWizard();
     if (section === 'workers' && rest.length === 0) return renderWorkersList();
@@ -1196,7 +1211,13 @@ async function renderMarketplace() {
   const tr = await fetch('/api/workers/templates');
   const allTpls = tr.ok ? (await tr.json()).templates : [];
   const cats = ['all', ...new Set(allTpls.map((t) => t.category).filter(Boolean))];
-  const filtered = currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter);
+  const filtered = (currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter))
+    .filter((t) => {
+      if (!currentSearch.trim()) return true;
+      const q = currentSearch.trim().toLowerCase();
+      const hay = [t.nameHe, t.name, t.description, t.category, CAT_LABELS[t.category]].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
   app.innerHTML = `
       <div class="mkt-hero">
       <div class="hero-copy">
@@ -1243,6 +1264,10 @@ async function renderMarketplace() {
         </div>
         <span class="muted">${filtered.length} מתוך ${allTpls.length} תבניות</span>
       </div>
+      <div class="m3-search-bar">
+        <span class="m3-search-icon">${icon('search', 20)}</span>
+        <input type="search" id="mkt-search" placeholder="חיפוש תבנית לפי שם או תחום..." value="${escapeHtml(currentSearch)}" autocomplete="off" />
+      </div>
       <div class="filter-bar">
         ${cats.map((c) => `<button class="filter-btn${c === currentFilter ? ' active' : ''}" data-cat="${c}">${c === 'all' ? 'הכל' : escapeHtml(CAT_LABELS[c] || c)}</button>`).join('')}
       </div>
@@ -1253,6 +1278,10 @@ async function renderMarketplace() {
     app.querySelectorAll('.filter-btn').forEach((b) => {
       b.onclick = () => { currentFilter = b.dataset.cat; renderMarketplace(); };
     });
+    const searchEl = document.getElementById('mkt-search');
+    if (searchEl) {
+      searchEl.oninput = () => { currentSearch = searchEl.value; renderMarketplace(); };
+    }
     const startBtn = document.getElementById('mkt-start');
     if (startBtn) startBtn.onclick = () => { location.hash = '#/magic'; };
     app.querySelectorAll('button[data-magic]').forEach((b) => {
