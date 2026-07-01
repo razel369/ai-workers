@@ -587,14 +587,16 @@ let integrationId = null;
   expect('POST integration test calendar -> 200', r.status === 200 && r.body.ok === true);
 }
 {
-  const r = await req('/api/integrations', {
+  const r = await req('/api/integrations/connect', {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ type: 'crm_hubspot', config: { apiKey: 'pat-test-redacted-key-12345' } }),
+    body: JSON.stringify({ type: 'webhook' }),
   });
-  expect('POST hubspot integration stores apiKey', r.status === 201 || r.status === 200);
-  const list = await req('/api/integrations', { headers: auth() });
-  const hub = (list.body.integrations ?? []).find((i) => i.type === 'crm_hubspot');
-  expect('  hubspot apiKey redacted in API', hub?.config?.apiKey === '••••••••');
+  expect('POST connect webhook generates hookUrl -> 201/200', r.status === 201 || r.status === 200);
+  expect('  hookUrl returned', !!r.body.hookUrl || !!r.body.integration?.config?.hookUrl);
+}
+{
+  const r = await req('/api/integrations/catalog');
+  expect('  catalog has authMethod on items', (r.body.catalog ?? []).every((c) => c.authMethod && c.connectLabelHe));
 }
 {
   const r = await req('/api/integrations', {

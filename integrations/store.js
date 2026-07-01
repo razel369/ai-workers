@@ -95,12 +95,17 @@ export function getWebhookUrlForTenant(tenantId) {
 
 export function connectIntegration(tenantId, { type, label, config, meta }) {
   const validated = validateConnectPayload(type, config);
-  if (!validated.ok) return validated;
+  if (!validated.ok && meta?.connectedVia === 'oauth') {
+    // OAuth tokens may not match legacy field schema
+  } else if (!validated.ok) {
+    return validated;
+  }
+  const finalConfig = validated.ok ? validated.config : { ...config };
   const db = dbFor(tenantId);
   const now = new Date().toISOString();
   const def = getIntegrationType(type);
   const existing = db.prepare(`SELECT id FROM integrations WHERE type = ? LIMIT 1`).get(type);
-  const enc = encryptConfig(tenantId, validated.config);
+  const enc = encryptConfig(tenantId, finalConfig);
   const metaJson = JSON.stringify(meta ?? {});
 
   if (existing) {

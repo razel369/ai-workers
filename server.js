@@ -116,6 +116,20 @@ const EMBED_ALLOW_PUBLIC = process.env.EMBED_ALLOW_PUBLIC !== '0';
 const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
 const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
 
+/** Platform-managed MCP presets — users connect via button, never paste URLs/tokens */
+const MCP_PRESETS = {
+  filesystem: {
+    labelHe: 'קבצים מקומיים',
+    descriptionHe: 'גישה לקבצים דרך שרת MCP מנוהל',
+    url: process.env.MCP_PRESET_FILESYSTEM_URL || 'https://mcp.example.com/filesystem',
+  },
+  github: {
+    labelHe: 'GitHub',
+    descriptionHe: 'כלים מ-GitHub דרך OAuth',
+    url: process.env.MCP_PRESET_GITHUB_URL || 'https://api.githubcopilot.com/mcp/',
+  },
+};
+
 // --- SQLite ---------------------------------------------------------------
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -181,6 +195,8 @@ try { db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant
 
 const newId = (p) => `${p}_${crypto.randomBytes(16).toString('hex')}`;
 const hashKey = (k) => crypto.createHash('sha256').update(k).digest('hex');
+
+integrations.initOAuth({ db, publicBaseUrl: PUBLIC_BASE_URL, newId });
 
 // API key validation: check the key exists in the api_keys table (not just any sk_ string)
 function requireAuth(req) {
@@ -1971,7 +1987,87 @@ const server = http.createServer(async (req, res) => {
   // --- Integrations hub ---
 
   if (req.method === 'GET' && url.pathname === '/api/integrations/catalog') {
-    return send(res, 200, { catalog: integrations.listCatalog(), categories: integrations.INTEGRATION_CATEGORIES });
+    return send(res, 200, {
+      catalog: integrations.listEnrichedCatalog(integrations.listCatalog),
+      categories: integrations.INTEGRATION_CATEGORIES,
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/integrations/oauth/start') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.type) return send(res, 400, { error: 'type_required' });
+    const result = integrations.createOAuthStart(tenantId, {
+      type: body.type,
+      returnPath: body.returnPath || '/marketplace',
+      extra: body.extra ?? {},
+    });
+    return send(res, result.ok ? 200 : 400, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/integrations/oauth/callback') {
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const oauthError = url.searchParams.get('error');
+    const result = await integrations.handleOAuthCallback({ code, state, error: oauthError });
+    if (!result.ok) {
+      const failPath = '/marketplace?oauth=error&msg=' + encodeURIComponent(result.messageHe || result.error || 'oauth_failed');
+      res.writeHead(302, { location: failPath });
+      res.end();
+      return;
+    }
+    res.writeHead(302, { location: result.redirectTo });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/integrations/connect') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.type) return send(res, 400, { error: 'type_required' });
+    const userConfig = body.config ?? {};
+    if (userConfig.url) {
+      const checked = await validatePublicHttpUrl(userConfig.url);
+      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+    }
+    if (body.type === 'mcp' && userConfig.preset) {
+      const preset = MCP_PRESETS[userConfig.preset];
+      if (!preset) return send(res, 400, { error: 'unknown_mcp_preset' });
+      const result = integrations.connectIntegration(tenantId, {
+        type: 'mcp',
+        label: preset.labelHe,
+        config: { url: preset.url, name: preset.labelHe, authMethod: 'platform', preset: userConfig.preset },
+        meta: { connectedVia: 'platform_preset' },
+      });
+      if (!result.ok) return send(res, 400, result);
+      const list = integrations.listIntegrations(tenantId);
+      const connected = list.find((i) => i.id === result.id);
+      return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id });
+    }
+    const result = integrations.connectWithUserFields(tenantId, body.type, userConfig);
+    if (!result.ok) return send(res, 400, result);
+    const list = integrations.listIntegrations(tenantId);
+    const connected = list.find((i) => i.id === result.id);
+    return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id, hookUrl: connected?.config?.hookUrl });
+  }
+
+  const hookMatch = url.pathname.match(/^\/api\/hooks\/([^/]+)\/([a-f0-9]+)$/);
+  if (req.method === 'POST' && hookMatch) {
+    const [, tenantId, secret] = hookMatch;
+    const row = integrations.getIntegrationsByType(tenantId, 'webhook')[0];
+    if (!row || row.config?.secret !== secret) return send(res, 403, { error: 'invalid_hook' });
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let payload = {};
+    try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { raw: String(raw).slice(0, 500) }; }
+    return send(res, 200, { ok: true, received: true, at: new Date().toISOString(), type: payload.type ?? 'event' });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/integrations/mcp/presets') {
+    return send(res, 200, { presets: Object.entries(MCP_PRESETS).map(([id, p]) => ({ id, labelHe: p.labelHe, descriptionHe: p.descriptionHe })) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/integrations') {

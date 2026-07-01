@@ -205,6 +205,10 @@
   .int-card .int-status { font-size:11px; }
   .int-form { display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
   .int-card.expanded .int-form { display:block; }
+  .connect-panel { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
+  .connect-oauth-btn { width:100%; justify-content:center; }
+  .hook-url-box { font-size:11px; padding:8px 10px; background:#0a0c10; border:1px solid var(--border); border-radius:8px; direction:ltr; text-align:left; word-break:break-all; font-family:monospace; color:var(--accent); }
+  .connect-hint { font-size:11px; color:var(--muted); line-height:1.4; }
 
   /* === AGENT MODE === */
   .agent-banner { background:linear-gradient(135deg,rgba(214,160,77,.08),rgba(90,166,184,.06)); border:1px solid rgba(214,160,77,.22); border-radius:var(--radius); padding:14px 16px; margin-bottom:14px; }
@@ -680,7 +684,135 @@ const APP = (() => {
     return `<svg class="svg-icon${cls ? ' ' + cls : ''}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#icon-${name}"/></svg>`;
   }
 
-  // ---- Toast notifications ----
+  // ---- Integration connect (OAuth / no API keys) ----
+  function checkOAuthReturn() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('oauth') === 'success') {
+      toast('החיבור הושלם בהצלחה!', 'success', 5000);
+      history.replaceState(null, '', location.pathname + location.hash);
+    } else if (params.get('oauth') === 'error') {
+      toast(decodeURIComponent(params.get('msg') || 'החיבור נכשל'), 'error', 6000);
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+  }
+
+  async function startOAuthConnect(item, extra = {}) {
+    const type = item.type || item.id;
+    if (type === 'shopify' && !extra.shop) {
+      const shop = window.prompt('שם החנות (לדוגמה: mystore.myshopify.com):');
+      if (!shop) return { ok: false, cancelled: true };
+      extra.shop = shop.trim();
+    }
+    const r = await api('/api/integrations/oauth/start', {
+      method: 'POST',
+      body: JSON.stringify({ type, returnPath: location.pathname + location.hash, extra }),
+    });
+    if (r.ok && r.body.redirectUrl) {
+      window.location.href = r.body.redirectUrl;
+      return { ok: true, redirecting: true };
+    }
+    return { ok: false, body: r.body };
+  }
+
+  async function connectIntegrationItem(item, panelEl, onSuccess) {
+    const type = item.type || item.id;
+    const authMethod = item.authMethod || 'oauth';
+
+    if (authMethod === 'generated') {
+      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type }) });
+      if (r.ok) {
+        toast('קישור Webhook נוצר!', 'success');
+        if (r.body.hookUrl && panelEl) {
+          panelEl.innerHTML = '<p class="connect-hint">העתק את הקישור ל-Zapier / Make:</p><div class="hook-url-box">' + escapeHtml(r.body.hookUrl) + '</div><button type="button" class="btn btn-sm btn-outline" style="margin-top:6px" id="copy-hook">' + icon('copy', 12) + ' העתק</button>';
+          panelEl.querySelector('#copy-hook').onclick = async () => {
+            try { await navigator.clipboard.writeText(r.body.hookUrl); toast('הועתק!', 'success'); } catch { toast('העתק ידנית', 'info'); }
+          };
+        }
+        if (onSuccess) onSuccess(r.body);
+        return r;
+      }
+      toast(r.body.messageHe || 'לא הצלחנו ליצור קישור', 'error');
+      return r;
+    }
+
+    if ((authMethod === 'oauth' || authMethod === 'oauth_or_link') && item.oauthAvailable) {
+      const r = await startOAuthConnect(item);
+      if (r.cancelled) return r;
+      if (!r.ok && !r.redirecting) toast(r.body?.messageHe || 'OAuth לא זמין — השתמש בקישור', 'error');
+      return r;
+    }
+
+    if (authMethod === 'platform' && type === 'mcp') {
+      const presetsR = await api('/api/integrations/mcp/presets');
+      const presets = presetsR.ok ? (presetsR.body.presets ?? []) : [];
+      if (!presets.length) { toast('אין שרתי MCP זמינים', 'error'); return; }
+      const pick = presets.length === 1 ? presets[0].id : window.prompt('בחר שרת: ' + presets.map((p) => p.id).join(', '));
+      if (!pick) return { ok: false, cancelled: true };
+      const presetId = presets.find((p) => p.id === pick || p.labelHe === pick)?.id || pick;
+      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type: 'mcp', config: { preset: presetId } }) });
+      if (r.ok) { toast('MCP מחובר', 'success'); if (onSuccess) onSuccess(r.body); }
+      else toast('לא הצלחנו לחבר', 'error');
+      return r;
+    }
+
+    const fields = item.userFields ?? [];
+    if (fields.length && panelEl) {
+      panelEl.innerHTML = fields.map((f) => {
+        const inputType = f.type === 'url' ? 'url' : (f.type === 'tel' ? 'tel' : 'text');
+        const dir = f.type === 'url' || f.type === 'tel' ? 'direction:ltr;text-align:left' : '';
+        return '<div class="fld"><label style="font-size:12px">' + escapeHtml(f.labelHe) + '</label><input class="connect-field" data-key="' + escapeHtml(f.key) + '" type="' + inputType + '" placeholder="' + escapeHtml(f.placeholder || '') + '" style="' + dir + '" /></div>';
+      }).join('') + '<button type="button" class="btn btn-sm btn-primary connect-save">' + icon('check', 12) + ' ' + escapeHtml(item.connectLabelHe || 'שמור') + '</button>';
+      return new Promise((resolve) => {
+        panelEl.querySelector('.connect-save').onclick = async () => {
+          const config = {};
+          panelEl.querySelectorAll('.connect-field').forEach((el) => { if (el.value.trim()) config[el.dataset.key] = el.value.trim(); });
+          const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type, config }) });
+          if (r.ok) { toast('חובר בהצלחה', 'success'); if (onSuccess) onSuccess(r.body); resolve(r); }
+          else { toast(r.body.messageHe || r.body.error || 'שגיאה', 'error'); resolve(r); }
+        };
+      });
+    }
+
+    toast('אין אפשרות חיבור זמינה', 'error');
+    return { ok: false };
+  }
+
+  function renderIntegrationConnectActions(item, conn, cardEl, reloadFn) {
+    const panel = cardEl.querySelector('.connect-panel') || (() => {
+      const el = document.createElement('div');
+      el.className = 'connect-panel';
+      cardEl.appendChild(el);
+      return el;
+    })();
+    panel.innerHTML = '';
+
+    if (conn) {
+      if (conn.config?.hookUrl) {
+        panel.innerHTML = '<p class="connect-hint">קישור Webhook שלך:</p><div class="hook-url-box">' + escapeHtml(conn.config.hookUrl) + '</div>';
+      } else if (conn.config?.bookingLink) {
+        panel.innerHTML = '<p class="connect-hint">קישור תורים: ' + escapeHtml(conn.config.bookingLink) + '</p>';
+      }
+      return;
+    }
+
+    const oauthBtn = item.oauthAvailable
+      ? '<button type="button" class="btn btn-sm btn-primary connect-oauth-btn ic-oauth">' + icon('link', 12) + ' ' + escapeHtml(item.connectLabelHe || 'התחבר') + '</button>'
+      : '';
+    const linkHint = item.authMethod === 'oauth_or_link' && !item.oauthAvailable
+      ? '<p class="connect-hint">התחברות Google לא מוגדרת בשרת — הדבק קישור Cal.com למטה.</p>'
+      : (item.authMethod === 'generated' ? '<p class="connect-hint">לחיצה אחת — ניצור קישור Webhook בשבילך.</p>' : '');
+
+    panel.innerHTML = linkHint + oauthBtn;
+
+    const oauthEl = panel.querySelector('.ic-oauth');
+    if (oauthEl) {
+      oauthEl.onclick = () => connectIntegrationItem(item, panel, reloadFn);
+    } else if (item.authMethod === 'generated' || item.authMethod === 'link' || item.authMethod === 'phone' || item.authMethod === 'platform') {
+      panel.innerHTML += '<button type="button" class="btn btn-sm btn-primary connect-oauth-btn ic-connect">' + icon('plus', 12) + ' ' + escapeHtml(item.connectLabelHe || 'חבר') + '</button>';
+      panel.querySelector('.ic-connect').onclick = () => connectIntegrationItem(item, panel, reloadFn);
+    }
+  }
+
   function toast(msg, type, duration) {
     type = type || 'info';
     duration = duration || 4000;
@@ -884,6 +1016,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
   }
   async function route() {
+    checkOAuthReturn();
     syncAdminNav();
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
@@ -1299,7 +1432,7 @@ async function renderMarketplace() {
       const conn = byType[item.type];
       const cls = conn ? 'integration-card connected' : 'integration-card';
       const badge = conn ? '<span class="ic-badge">מחובר</span>' : '';
-      const statusTag = item.status === 'working' ? '' : '<span class="muted" style="font-size:10px"> (בפיתוח)</span>';
+      const statusTag = item.scaffold === 'working' ? '' : '<span class="muted" style="font-size:10px"> (בפיתוח)</span>';
       return `<div class="${cls}" data-int-type="${escapeHtml(item.type)}">
         ${badge}
         <div class="ic-icon">${item.icon || '🔧'}</div>
@@ -1309,19 +1442,21 @@ async function renderMarketplace() {
           ${conn
             ? `<button type="button" class="btn btn-sm btn-outline ic-test" data-id="${escapeHtml(conn.id)}">${icon('zap', 12)} בדיקה</button>
                <button type="button" class="btn btn-sm btn-outline ic-disconnect" data-id="${escapeHtml(conn.id)}">${icon('x', 12)} נתק</button>`
-            : `<button type="button" class="btn btn-sm btn-primary ic-connect">${icon('plus', 12)} חבר</button>`}
+            : `<button type="button" class="btn btn-sm btn-primary ic-connect">${icon('link', 12)} ${escapeHtml(item.connectLabelHe || 'חבר')}</button>`}
         </div>
-        <div class="integration-form" id="iform-${escapeHtml(item.type)}"></div>
+        <div class="connect-panel" id="cpanel-${escapeHtml(item.type)}"></div>
       </div>`;
     }).join('');
     if (statusEl) statusEl.textContent = connected.length
       ? connected.length + ' חיבורים פעילים — הכלים יופעלו אוטומטית בעובד'
-      : 'חבר שירותים כדי שהעובד יוכל לפעול מול המערכות שלך';
+      : 'לחצו "חבר" — בלי מפתחות API, רק התחברות או קישור';
     catalog.forEach((item) => {
       const card = grid.querySelector('[data-int-type="' + item.type + '"]');
       if (!card) return;
+      const conn = byType[item.type];
+      renderIntegrationConnectActions(item, conn, card, loadIntegrationsHub);
       const connectBtn = card.querySelector('.ic-connect');
-      if (connectBtn) connectBtn.onclick = () => toggleIntegrationForm(item, card);
+      if (connectBtn) connectBtn.onclick = () => connectIntegrationItem(item, card.querySelector('.connect-panel'), loadIntegrationsHub);
       const testBtn = card.querySelector('.ic-test');
       if (testBtn) testBtn.onclick = async () => {
         testBtn.disabled = true;
@@ -1337,31 +1472,6 @@ async function renderMarketplace() {
         else toast('שגיאה בניתוק', 'error');
       };
     });
-  }
-
-  function toggleIntegrationForm(item, card) {
-    const formEl = card.querySelector('.integration-form');
-    if (!formEl) return;
-    const isOpen = formEl.classList.contains('open');
-    document.querySelectorAll('.integration-form.open').forEach((el) => el.classList.remove('open'));
-    if (isOpen) { formEl.classList.remove('open'); return; }
-    const fields = (item.fields ?? []).map((f) => {
-      const inputType = f.secret || f.type === 'password' ? 'password' : (f.type === 'email' ? 'email' : (f.type === 'url' ? 'url' : 'text'));
-      if (f.type === 'select' && f.options) {
-        return '<div class="fld"><label>' + escapeHtml(f.labelHe) + '</label><select data-field="' + escapeHtml(f.key) + '">' +
-          f.options.map((o) => '<option value="' + escapeHtml(o) + '">' + escapeHtml(o) + '</option>').join('') + '</select></div>';
-      }
-      return '<div class="fld"><label>' + escapeHtml(f.labelHe) + (f.required ? ' *' : '') + '</label><input data-field="' + escapeHtml(f.key) + '" type="' + inputType + '" placeholder="' + escapeHtml(f.placeholder || '') + '" /></div>';
-    }).join('');
-    formEl.innerHTML = fields + '<button type="button" class="btn btn-sm btn-primary ic-save" style="margin-top:6px">' + icon('check', 12) + ' שמור חיבור</button>';
-    formEl.classList.add('open');
-    formEl.querySelector('.ic-save').onclick = async () => {
-      const config = {};
-      formEl.querySelectorAll('[data-field]').forEach((el) => { config[el.dataset.field] = el.value.trim(); });
-      const r = await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: item.type, label: item.labelHe, config }) });
-      if (r.ok) { toast('חובר בהצלחה', 'success'); loadIntegrationsHub(); }
-      else toast(r.body.error || (r.body.fields || []).join(', ') || 'שגיאה בחיבור', 'error');
-    };
   }
 
   function starterTasksForTemplate(tpl) {
@@ -1845,49 +1955,34 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           const statusHtml = conn
             ? `<span class="int-status" style="color:var(--green)">${icon('check', 12)} מחובר${conn.lastTestOk === false ? ' (בדיקה נכשלה)' : ''}</span>`
             : `<span class="int-status muted">לא מחובר</span>`;
-          const fieldsHtml = (item.fields ?? []).map((f) => {
-            const type = f.type === 'secret' ? 'password' : (f.type === 'url' ? 'url' : 'text');
-            const dir = f.type === 'url' ? 'direction:ltr;text-align:left;font-family:monospace' : '';
-            return `<div class="fld" style="margin-bottom:6px"><label style="font-size:12px">${escapeHtml(f.labelHe)}</label>
-              <input class="int-field" data-key="${escapeHtml(f.key)}" type="${type}" placeholder="${escapeHtml(f.placeholder || '')}" style="${dir}" /></div>`;
-          }).join('');
           card.innerHTML = `
             <h4>${icon('plug', 16)} ${escapeHtml(item.labelHe)}</h4>
             <div class="int-desc">${escapeHtml(item.descriptionHe)}</div>
             ${statusHtml}
             <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
-              <button type="button" class="btn btn-sm btn-outline int-toggle">${conn ? icon('edit', 12) + ' עדכן' : icon('plus', 12) + ' חבר'}</button>
+              ${conn ? '' : `<button type="button" class="btn btn-sm btn-primary int-connect">${icon('link', 12)} ${escapeHtml(item.connectLabelHe || 'חבר')}</button>`}
               ${conn ? `<button type="button" class="btn btn-sm btn-outline int-test">${icon('zap', 12)} בדוק</button>` : ''}
               ${conn ? `<button type="button" class="btn btn-sm int-disconnect" style="color:var(--red);border-color:rgba(239,68,68,.3)">${icon('trash', 12)}</button>` : ''}
             </div>
-            <div class="int-form">${fieldsHtml}
-              <button type="button" class="btn btn-sm btn-primary int-save" style="margin-top:8px">${icon('save', 12)} שמור חיבור</button>
-              <div class="int-msg muted" style="font-size:11px;margin-top:6px"></div>
-            </div>`;
+            <div class="connect-panel"></div>`;
           card.dataset.type = item.id;
           if (conn) card.dataset.id = conn.id;
           grid.appendChild(card);
 
-          card.querySelector('.int-toggle').onclick = () => card.classList.toggle('expanded');
-          const saveBtn = card.querySelector('.int-save');
-          if (saveBtn) {
-            saveBtn.onclick = async () => {
-              const config = {};
-              card.querySelectorAll('.int-field').forEach((inp) => {
-                if (inp.value.trim()) config[inp.dataset.key] = inp.value.trim();
+          const reloadBuilderInts = () => goToStep(2);
+          renderIntegrationConnectActions(item, conn, card, reloadBuilderInts);
+          const connectBtn = card.querySelector('.int-connect');
+          if (connectBtn) {
+            connectBtn.onclick = async () => {
+              const r = await connectIntegrationItem(item, card.querySelector('.connect-panel'), () => {
+                const autoTools = item.workerTools ?? [];
+                if (autoTools.length) builderWorker.tools = [...new Set([...(builderWorker.tools ?? []), ...autoTools])];
+                reloadBuilderInts();
               });
-              saveBtn.disabled = true;
-              const r = await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: item.id, config }) });
-              saveBtn.disabled = false;
-              const msg = card.querySelector('.int-msg');
-              if (!r.ok) { msg.innerHTML = '<span class="err">' + escapeHtml(JSON.stringify(r.body)) + '</span>'; return; }
-              msg.textContent = 'נשמר!';
-              toast(item.labelHe + ' חובר', 'success');
-              const autoTools = item.workerTools ?? [];
-              if (autoTools.length) {
-                builderWorker.tools = [...new Set([...(builderWorker.tools ?? []), ...autoTools])];
+              if (r?.ok) {
+                const autoTools = item.workerTools ?? [];
+                if (autoTools.length) builderWorker.tools = [...new Set([...(builderWorker.tools ?? []), ...autoTools])];
               }
-              goToStep(2);
             };
           }
           const testBtn = card.querySelector('.int-test');
@@ -2229,7 +2324,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     document.getElementById('notify-wa-save').onclick = async () => {
       const phone = document.getElementById('notify-wa-phone').value.trim();
       if (!phone) { toast('הכנס מספר וואטסאפ', 'error'); return; }
-      const r = await api('/api/integrations', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', label: 'התראות', config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
+      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
       toast(r.ok ? 'נשמר — נשלח התראות למספר הזה' : 'משהו נתעכב, נסה שוב', r.ok ? 'success' : 'error');
     };
 

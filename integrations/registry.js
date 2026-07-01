@@ -212,6 +212,7 @@ export function listCatalog() {
     labelHe: t.labelHe,
     descriptionHe: t.descriptionHe,
     scaffold: t.scaffold === true ? 'scaffold' : t.scaffold === 'partial' ? 'partial' : 'working',
+    // Legacy fields kept for server-side validation; UI uses userFields from connect-flows
     fields: t.fields.map((f) => ({
       key: f.key,
       labelHe: f.labelHe,
@@ -228,15 +229,37 @@ export function listCatalog() {
 export function validateConfig(typeId, config = {}) {
   const def = getIntegrationType(typeId);
   if (!def) return { ok: false, error: 'unknown_integration_type' };
+
+  // OAuth / platform-generated configs skip manual field validation
+  if (config.authMethod === 'oauth' || config.authMethod === 'generated' || config.authMethod === 'platform') {
+    return { ok: true, config: { ...config } };
+  }
+
   const clean = {};
   for (const field of def.fields) {
     const val = config[field.key];
     if (field.required && (val === undefined || val === null || String(val).trim() === '')) {
+      // webhook: inbound hookUrl satisfies connection without outbound url
+      if (typeId === 'webhook' && field.key === 'url' && config.hookUrl) continue;
       return { ok: false, error: 'missing_field', field: field.key, labelHe: field.labelHe };
     }
     if (val !== undefined && val !== null && String(val).trim() !== '') {
       clean[field.key] = String(val).trim();
     }
+  }
+  if (typeId === 'webhook' && config.hookUrl) clean.hookUrl = config.hookUrl;
+  if (typeId === 'webhook' && config.secret) clean.secret = config.secret;
+  if (typeId === 'webhook' && config.mode) clean.mode = config.mode;
+  if (typeId === 'webhook' && config.hookId) clean.hookId = config.hookId;
+  if (typeId === 'whatsapp' && (config.ownerNotifyPhone || clean.ownerNotifyPhone)) {
+    clean.ownerNotifyPhone = String(config.ownerNotifyPhone || clean.ownerNotifyPhone).trim();
+    clean.provider = clean.provider || config.provider || 'meta';
+    clean.authMethod = 'phone';
+    return { ok: true, config: clean };
+  }
+  if (typeId === 'google_calendar' && clean.bookingLink) {
+    clean.mode = 'link';
+    clean.authMethod = clean.authMethod || 'link';
   }
   return { ok: true, config: clean };
 }

@@ -110,6 +110,9 @@ export async function runAction(type, action, params, config, ctx = {}) {
 
 async function testWebhook(config, params = {}) {
   const url = config.url;
+  if (!url && config.hookUrl) {
+    return { ok: true, message: 'קישור Webhook מוכן — העתק ל-Zapier או Make', hookUrl: config.hookUrl, mode: 'inbound' };
+  }
   if (!url) return { ok: false, error: 'url_required' };
   const r = await safeFetch(url, {
     method: 'POST',
@@ -122,6 +125,9 @@ async function testWebhook(config, params = {}) {
 }
 
 async function testMcp(config) {
+  if (config.authMethod === 'platform' && config.preset) {
+    return { ok: true, message: `שרת MCP (${config.name || config.preset}) מחובר`, mode: 'platform', preset: config.preset };
+  }
   const checked = await validatePublicHttpUrl(config.url);
   if (!checked.ok) return { ok: false, error: checked.error };
   const headers = config.authHeader ? { authorization: config.authHeader } : {};
@@ -130,6 +136,9 @@ async function testMcp(config) {
 }
 
 function testCalendar(config) {
+  if (config.authMethod === 'oauth' && config.accessToken) {
+    return { ok: true, message: 'Google Calendar מחובר ב-OAuth', mode: 'oauth', email: config.email || null };
+  }
   if (config.apiKey) return { ok: true, message: 'מפתח API נשמר — בדיקת API מלאה בקרוב', mode: 'api_scaffold' };
   if (config.bookingLink) return { ok: true, message: 'קישור הזמנה מוגדר', bookingLink: config.bookingLink };
   if (process.env.MEETING_BOOKING_URL) return { ok: true, message: 'משתמש ב-MEETING_BOOKING_URL גלובלי', bookingLink: process.env.MEETING_BOOKING_URL };
@@ -320,9 +329,10 @@ async function sendEmail(config, params) {
 }
 
 async function testHubSpot(config) {
-  if (!config.apiKey) return { ok: false, error: 'api_key_required' };
+  const token = config.accessToken || config.apiKey;
+  if (!token) return { ok: false, error: 'oauth_or_api_required', messageHe: 'חבר עם HubSpot דרך כפתור ההתחברות' };
   const r = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=1', {
-    headers: { authorization: `Bearer ${config.apiKey}` },
+    headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
   return r.ok
@@ -331,7 +341,8 @@ async function testHubSpot(config) {
 }
 
 async function syncHubSpotLead(config, params) {
-  if (!config.apiKey) return { ok: false, error: 'api_key_required' };
+  const token = config.accessToken || config.apiKey;
+  if (!token) return { ok: false, error: 'oauth_or_api_required' };
   const props = {
     firstname: params.fullName?.split(' ')[0] || params.fullName || 'Lead',
     lastname: params.fullName?.split(' ').slice(1).join(' ') || '',
@@ -343,7 +354,7 @@ async function syncHubSpotLead(config, params) {
   };
   const r = await fetch('https://api.hubapi.com/crm/v3/objects/contacts', {
     method: 'POST',
-    headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ properties: props }),
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
