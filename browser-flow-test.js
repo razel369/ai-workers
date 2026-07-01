@@ -24,40 +24,43 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultNavigationTimeout(30000);
   page.setDefaultTimeout(20000);
-  await page.addInitScript(() => localStorage.setItem('paid-agent.onboardingDone', '1'));
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto(BASE + '/marketplace', { waitUntil: 'domcontentloaded' });
-  await page.click('button[data-buy="sales-leads-il"]');
-  await page.waitForSelector('#signup-business', { timeout: 10000 });
-  await page.fill('#signup-business', 'Browser Flow Business');
-  await page.fill('#signup-contact', 'buyer@example.com');
-  await page.click('#signup-create');
-  await page.waitForURL(/#\/workers\/edit\//, { timeout: 10000 });
+  await page.goto(BASE + '/marketplace#/magic', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#magic-business', { timeout: 10000 });
+  await page.fill('#magic-business', 'Browser Flow Business');
+  await page.click('#magic-next');
+  await page.waitForSelector('.tpl-pick-btn[data-tpl="sales-leads-il"]', { timeout: 10000 });
+  await page.click('.tpl-pick-btn[data-tpl="sales-leads-il"]');
+  await page.click('#magic-next');
+  await page.waitForURL(/#\/workers\/chat\//, { timeout: 20000 });
   const workerId = new URL(page.url()).hash.split('/').pop();
   const tenantKey = await page.evaluate(() => localStorage.getItem('paid-agent.workerKey'));
-  expect('self-serve signup stores tenant key', !!tenantKey && tenantKey.startsWith('sk_'));
-  expect('buy redirects to builder with worker id', !!workerId?.startsWith('wk_'));
+  expect('magic wizard silent signup stores tenant key', !!tenantKey && tenantKey.startsWith('sk_'));
+  expect('magic wizard opens chat with worker id', !!workerId?.startsWith('wk_'));
 
-  await page.waitForSelector('#f-name', { timeout: 10000 });
-  await page.fill('#f-name', 'דניאל - עובד מכירות');
-  await page.click('button[data-add-task="לאסוף פרטי קשר ולידים"]');
-  await page.click('#w-next');
-  await page.waitForSelector('#f-knowledge', { timeout: 10000 });
-  await page.fill('#f-knowledge', 'שם העסק: Browser Flow Business\nשעות פעילות: א-ה 9:00-18:00\nמתי להעביר לאדם: לקוח כועס או בקשת החזר');
-  await page.click('button[data-tone="professional"]');
-  await page.click('#w-next');
-  await page.waitForSelector('#integrations-panel', { timeout: 10000 });
-  await page.click('#w-next');
-  await page.waitForSelector('#f-save', { timeout: 10000 });
-  await page.click('#f-save');
-  await page.waitForFunction(() => document.querySelector('#f-status')?.textContent?.includes('נשמר'), null, { timeout: 10000 });
-  const configuredWorker = await req('/api/workers/' + workerId, { headers: { authorization: 'Bearer ' + tenantKey } });
-  expect('beginner builder saves worker name', configuredWorker.body?.worker?.name === 'דניאל - עובד מכירות');
-  expect('beginner builder saves business knowledge', configuredWorker.body?.worker?.knowledge?.includes('Browser Flow Business'));
+  await page.waitForSelector('#c-input', { timeout: 15000 });
+  expect('demo chat composer visible before payment', await page.locator('#c-input').isVisible());
+  expect('no paywall on chat screen', !(await page.locator('#pay-submit').count()));
 
-  await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'domcontentloaded' });
+  const magicWorker = await req('/api/workers/' + workerId, { headers: { authorization: 'Bearer ' + tenantKey } });
+  expect('magic wizard saves business name on worker', magicWorker.body?.worker?.name?.includes('Browser Flow Business') || magicWorker.body?.worker?.knowledge?.includes('Browser Flow Business'));
+
+  await page.fill('#c-input', 'שלום, מי אתה ומה אתה עושה?');
+  await page.click('#c-send');
+  await page.waitForFunction(
+    () => {
+      const nodes = document.querySelectorAll('.msg.assistant');
+      return nodes.length > 0 && nodes[nodes.length - 1].textContent.trim().length > 10;
+    },
+    null,
+    { timeout: 20000 },
+  );
+  const demoReply = await page.locator('.msg.assistant').last().innerText();
+  expect('demo chat returns assistant reply', demoReply.length > 10);
+
+  await page.goto(BASE + '/marketplace#/workers/activate/' + workerId, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#pay-contact', { timeout: 15000 });
-  expect('paywall form visible', await page.locator('#pay-submit').isVisible());
+  expect('activation paywall visible when user opts in', await page.locator('#pay-submit').isVisible());
 
   const act = await req('/api/workers/' + workerId + '/activation-request', {
     method: 'POST',

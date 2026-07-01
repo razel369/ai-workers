@@ -21,6 +21,8 @@ COPY legal-pages.js ./
 COPY docs/legal ./docs/legal
 COPY url-security.js ./
 COPY integrations/crypto.js integrations/registry.js integrations/store.js integrations/runner.js integrations/tools.js integrations/index.js ./integrations/
+COPY payment-webhooks.js ./
+COPY embed-widget.js ./
 COPY whatsapp-webhook.js ./
 
 # Optional: cloudflared binary so the container can expose itself publicly

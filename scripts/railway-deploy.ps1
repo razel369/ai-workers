@@ -88,6 +88,12 @@ Required for production health:
 # --- Step 4: CLI link (optional) ---------------------------------------------
 Write-Step "4/6" "Link local folder to Railway project (CLI)"
 $loggedIn = $false
+$railwayToken = $env:RAILWAY_TOKEN
+if ($railwayToken) {
+    Write-Host "RAILWAY_TOKEN detected — using non-interactive CLI auth." -ForegroundColor Green
+    $env:RAILWAY_TOKEN = $railwayToken
+}
+
 try {
     Invoke-Railway @("whoami") | Out-Host
     if ($LASTEXITCODE -eq 0) { $loggedIn = $true }
@@ -97,11 +103,12 @@ try {
 
 if (-not $loggedIn) {
     Write-Host @"
-Not logged in. Either:
-  npx @railway/cli login
-  npm i -g @railway/cli; railway login
+Not logged in. Options:
+  A) Dashboard-only (recommended): push to main — GitHub-connected Railway auto-deploys.
+  B) Non-interactive CI: set RAILWAY_TOKEN from Railway Dashboard -> Account -> Tokens.
+  C) Interactive: npx @railway/cli login  (browser — run locally, not in CI)
 
-Then re-run this script, or deploy from the Railway dashboard (Git push triggers deploy).
+Then re-run this script, or finish in the Railway dashboard.
 "@ -ForegroundColor Yellow
 } else {
     Write-Host "Logged in to Railway." -ForegroundColor Green

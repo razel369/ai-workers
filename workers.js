@@ -1357,6 +1357,25 @@ function mockReply(worker, history, userMessage) {
   return `(${tpl?.name ?? 'Worker'} · demo mode)\n\nGot it. ${ask}\n\n(This is a demo reply — the AI service is not active yet. Contact the platform admin to activate.)`;
 }
 
+export function publicTemplateDemoChat({ templateId, userMessage, businessName = '' }) {
+  const tpl = getTemplate(templateId);
+  if (!tpl) return { ok: false, error: 'unknown_template' };
+  const fakeWorker = {
+    name: businessName || tpl.nameHe || tpl.name,
+    templateId,
+    persona: tpl.defaultPersona,
+    tasks: tpl.defaultTasks ?? [],
+    knowledge: tpl.defaultKnowledge ?? '',
+  };
+  const raw = mockReply(fakeWorker, [], userMessage);
+  const reply = raw
+    .replace(/^\([^)]+\)\s*\n+/i, '')
+    .replace(/\n\n\(This is a demo reply[^\)]*\)\.?/gi, '')
+    .replace(/\n\n\(Contact the platform admin[^\)]*\)\.?/gi, '')
+    .trim();
+  return { ok: true, reply, runtime: 'demo' };
+}
+
 function extractPhone(msg) {
   const m = String(msg).match(/(?:0\d{1,2}[-.\s]?\d{3}[-.\s]?\d{4}|05\d[-.\s]?\d{7})/);
   return m?.[0]?.replace(/\s/g, '') ?? '';
@@ -1552,7 +1571,7 @@ function defaultModelFor(provider) {
   return PROVIDER_DEFAULT_MODELS[provider] ?? getServerLlmConfig().model;
 }
 
-export async function chatWithWorker({ tenantId, workerId, userMessage, customerId = '', testMode = false }) {
+export async function chatWithWorker({ tenantId, workerId, userMessage, customerId = '', testMode = false, demoMode = false }) {
   const db = getTenantDb(tenantId);
   const row = db.prepare(`SELECT * FROM workers WHERE id = ?`).get(workerId);
   if (!row) return { ok: false, status: 404, error: 'not_found' };
@@ -1564,13 +1583,14 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     worker.llm.baseUrl = worker.llm.baseUrl || srvCfg.baseUrl;
   }
 
-  // Active + paid check
+  // Active + paid check (demoMode lets owner try before paying for production)
   const isPaid = worker.paidUntil && new Date(worker.paidUntil) > new Date();
-  if (worker.status !== 'active' || !isPaid) {
+  const isProductionReady = worker.status === 'active' && isPaid;
+  if (!testMode && !demoMode && !isProductionReady) {
     return {
       ok: false, status: 402,
       error: 'payment_required',
-      message: 'Worker is not active. Pay the rent (see /marketplace or /invoice) and ask the admin to mark the worker paid.',
+      message: 'להפעיל את העובד ללקוחות — שלחו בקשת הפעלה מהמסך הייעודי.',
       paidUntil: worker.paidUntil ?? null,
     };
   }

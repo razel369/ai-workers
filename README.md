@@ -98,9 +98,29 @@ payment status, and chat history on restart.
 
 ### Railway (recommended)
 
-1. Connect GitHub repo `razel369/ai-workers` in [Railway](https://railway.app).
-2. Add a **persistent volume** at mount path `/app/data`.
-3. Set variables in the dashboard:
+No CLI login required — use the dashboard:
+
+1. Open [railway.app/new](https://railway.app/new) → **Deploy from GitHub repo** → select this repo.
+2. Railway detects `Dockerfile` + `railway.toml` automatically. First build may fail until env + volume are set — that is expected.
+3. **Service → Volumes → Add Volume** → mount path `/app/data` (1 GB+). Without this, `GET /health` returns `persistentStorage: false`.
+4. **Service → Variables → Raw Editor** — paste non-comment lines from `.env.production.example` and replace placeholders:
+   - `PUBLIC_BASE_URL` = `https://<your-service>.up.railway.app` (no trailing slash)
+   - `ADMIN_TOKEN` = random hex (`node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`)
+   - `LLM_API_KEY` = your provider key
+   - `BIT_PHONE` or `PAYPAL_ME` = at least one payment channel
+5. **Settings → Networking → Generate Domain** if Railway did not assign one yet.
+6. Push to `main` (or click **Deploy**) and wait for the build.
+7. Verify: `curl https://<your-service>.up.railway.app/health` → `ok:true`, `persistentStorage:true`.
+
+Optional CLI (only if you have `RAILWAY_TOKEN` or can complete browser login):
+
+```powershell
+.\scripts\railway-deploy.ps1
+# or verify only:
+.\scripts\railway-deploy.ps1 -BaseUrl "https://your-app.up.railway.app"
+```
+
+Set variables in the dashboard (same as step 4 above):
 
 ```bash
 ADMIN_TOKEN=<random-hex>          # node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"

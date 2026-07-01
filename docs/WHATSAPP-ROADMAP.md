@@ -1,6 +1,6 @@
 # WhatsApp integration roadmap
 
-Status: **scaffold only** — `whatsapp-webhook.js` exists but is **not mounted** in `server.js` until Phase 2.
+Status: **inbound wired + outbound stub** — webhook mounted; Meta send via `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_ID`.
 
 ## Goals
 
@@ -12,12 +12,12 @@ Status: **scaffold only** — `whatsapp-webhook.js` exists but is **not mounted*
 
 | Provider | Pros | Cons | Env vars |
 |----------|------|------|----------|
-| **Meta Cloud API** | Official, scalable, template messages | Business verification, webhook HTTPS | `WHATSAPP_PROVIDER=meta`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` |
+| **Meta Cloud API** | Official, scalable, template messages | Business verification, webhook HTTPS | `WHATSAPP_PROVIDER=meta`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` or `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` or `WHATSAPP_PHONE_ID` |
 | **Twilio** | Fast sandbox, good docs | Per-message cost, Meta policy still applies | `WHATSAPP_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM` |
 
-See `.env.production.example` for the full list.
+Per-tenant credentials can also be stored via **חיבורים לעסק → WhatsApp Business** (`send_whatsapp_message` tool).
 
-## Architecture (target)
+## Architecture
 
 ```
 Customer WhatsApp
@@ -26,27 +26,26 @@ Customer WhatsApp
 Meta / Twilio webhook  →  POST /api/webhooks/whatsapp
        │
        ▼
-whatsapp-webhook.js (parse + verify)
+whatsapp-webhook.js (parse + verify) — inbound stub logs message
        │
        ▼
-workers.js — resolve tenant by phone mapping, workers.chat()
+workers.js — resolve tenant (TODO: phone mapping), workers.chat()
        │
        ▼
-Outbound reply API (Meta messages API or Twilio Messages)
+integrations/runner.js — Meta Graph API send (or stub)
 ```
 
 ## Phases
 
-### Phase 1 — Scaffold (this repo)
+### Phase 1 — Scaffold
 
-- [x] `whatsapp-webhook.js` stub (verify + parse inbound)
-- [x] Env vars documented in `.env.production.example`
-- [x] This roadmap
+- [x] `whatsapp-webhook.js` (verify + parse inbound)
+- [x] Env vars in `.env.production.example`
 
 ### Phase 2 — Wire webhook
 
-- [ ] Import `handleWhatsAppWebhook` in `server.js` (single route block, no landing changes)
-- [ ] Extend `/health` with `whatsapp: whatsappConfigStatus()` (optional)
+- [x] `handleWhatsAppWebhook` mounted in `server.js`
+- [x] `/health` includes `whatsapp: whatsappConfigStatus()`
 - [ ] Register webhook URL in Meta/Twilio: `https://<PUBLIC_BASE_URL>/api/webhooks/whatsapp`
 
 ### Phase 3 — Tenant mapping
@@ -55,11 +54,12 @@ Outbound reply API (Meta messages API or Twilio Messages)
 - [ ] Admin UI or env fallback: `WORKER_<id>_WHATSAPP_PHONE`
 - [ ] 24h session window handling (Meta policy)
 
-### Phase 4 — Outbound + templates
+### Phase 4 — Outbound
 
-- [ ] Send text replies via provider API
-- [ ] Hebrew template messages for outbound-initiated chats (appointment reminders, etc.)
-- [ ] Rate limits + opt-out keyword (הסר)
+- [x] `send_whatsapp_message` tool via integrations
+- [x] Meta Cloud API send when `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` set
+- [ ] Hebrew template messages for outbound-initiated chats
+- [ ] Auto-reply inbound to worker chat (close the loop)
 
 ## Local testing
 
@@ -69,8 +69,8 @@ Outbound reply API (Meta messages API or Twilio Messages)
 
 ## Security checklist
 
-- Verify Meta `hub.verify_token` on GET (implemented in stub).
-- Validate Twilio request signature before trusting POST body (TODO Phase 2).
+- Verify Meta `hub.verify_token` on GET (implemented).
+- Validate Twilio request signature before trusting POST body (TODO).
 - Never log full access tokens or customer PII in production logs.
 - Per-tenant isolation: one phone number must map to exactly one worker.
 

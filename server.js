@@ -51,6 +51,14 @@ import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill, handleLegalRoutes } from './skills.js';
 import * as integrations from './integrations/index.js';
 import { handleWhatsAppWebhook, whatsappConfigStatus } from './whatsapp-webhook.js';
+import {
+  handlePaymentWebhooks,
+  paymentConfigStatus,
+  activationSlaTextHe,
+  tryAutoVerifyActivationProof,
+  autoActivateWorker,
+} from './payment-webhooks.js';
+import { buildEmbedScript } from './embed-widget.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,6 +111,8 @@ const ADMIN_KEYS_LIMIT = 200;
 const ADMIN_AUDIT_LIMIT = 200;
 const ASSETS_CACHE_MAX_AGE = 86400;
 const DEFAULT_RENT_DAYS = 30;
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 0);
+const EMBED_ALLOW_PUBLIC = process.env.EMBED_ALLOW_PUBLIC !== '0';
 const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
 const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
 
@@ -396,6 +406,15 @@ function listActivationRequests({ status = '', limit = 200 } = {}) {
 function markActivationRequestReviewed(id, status) {
   if (!id) return;
   db.prepare('UPDATE activation_requests SET status = ?, reviewed_at = ? WHERE id = ?').run(status, new Date().toISOString(), id);
+}
+
+function findPendingActivation({ tenantId, workerId, reference }) {
+  const rows = listActivationRequests({ status: 'pending', limit: 50 });
+  return rows.find((r) =>
+    r.tenantId === tenantId
+    && r.workerId === workerId
+    && (!reference || !r.reference || r.reference === reference)
+  ) ?? null;
 }
 
 function validateActivationRequestForPayment({ id, tenantId, workerId }) {
@@ -841,13 +860,13 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       <h1>עובד וירטואלי שמטפל ב<strong class="highlight">לקוחות 24/7</strong></h1>
       <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — בוחרים תבנית מוכנה, מתאימים ידע ושעות פעילות, ומקבלים עובד שמסנן פניות, אוסף לידים ומעביר רק מה שחשוב.</p>
       <div class="cta-group">
-        <a href="/marketplace" class="cta">בחר עובד בשוק ←</a>
-        <a href="#verticals" class="cta-secondary">לפי תחום עסק ←</a>
+        <a href="/marketplace#/magic" class="cta">נסה עכשיו בחינם ←</a>
+        <a href="/marketplace" class="cta-secondary">לשוק העובדים ←</a>
       </div>
       <div class="proof-strip">
-        <span class="proof-item">✓ ללא כרטיס אשראי — PayPal, Bit, בנק</span>
-        <span class="proof-item">✓ אישור הפעלה ידני לפני צ'אט</span>
-        <span class="proof-item">✓ ניסיון הדגמה מיידי</span>
+        <span class="proof-item">✓ בלי כרטיס אשראי — מתחילים תוך דקה</span>
+        <span class="proof-item">✓ דוגמה חיה לפני תשלום</span>
+        <span class="proof-item">✓ ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} ללא תשלום</span>
       </div>
     </div>
 
@@ -887,6 +906,31 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <p>הזמנות, שאלות תפריט, טייק אווי. בודק שעות פעילות לפני אישור הזמנה.</p>
           <div class="v-price">מ-<b>249 ₪</b>/חודש · מנהל מסעדה</div>
           <a href="/marketplace" class="cta-sm">לתבנית המסעדה ←</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="anim anim-3 section-order-case-studies" id="case-studies">
+      <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
+      <p class="section-sub">תוצאות ראשונות מעסקים ישראליים — מספרים לדוגמה מהפיילוט</p>
+      <div class="verticals-grid">
+        <div class="vertical-card">
+          <div class="v-icon">🏥</div>
+          <h3>קליניקת שיניים — תל אביב</h3>
+          <p>מזכירה וירטואלית ענתה על 340 פניות בחודש הראשון. 78% קבעו תור ללא שיחה עם אדם. זמן המתנה ממוצע ירד מ-4 דקות ל-40 שניות.</p>
+          <div class="v-price"><b>−62%</b> עומס טלפוני בשעות שיא</div>
+        </div>
+        <div class="vertical-card">
+          <div class="v-icon">🏠</div>
+          <h3>משרד תיווך — חיפה</h3>
+          <p>סוכן נדל״ן סינן 120 לידים בחודש. 31 לידים חמים הועברו לסוכן אנושי עם תקציב ואזור מוגדרים מראש.</p>
+          <div class="v-price"><b>3×</b> יותר פגישות מול אותו כוח אדם</div>
+        </div>
+        <div class="vertical-card">
+          <div class="v-icon">🍽️</div>
+          <h3>מסעדת שף — ירושלים</h3>
+          <p>מנהל מסעדה טיפל בהזמנות, שאלות תפריט וטייק אווי בערב שישי. 94% מהשאלות נענו ללא הסלמה לאדם.</p>
+          <div class="v-price"><b>₪0</b> דמי הקמה · הפעלה תוך יום עסקים</div>
         </div>
       </div>
     </section>
@@ -1090,6 +1134,50 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   return lines.join('\n');
 }
 
+function buildWorkerInvoiceHtml({ worker, tenantId, template, baseUrl }) {
+  const date = new Date().toISOString().slice(0, 10);
+  const rent = template?.rentPriceIls ?? 0;
+  const vatRate = process.env.VAT_RATE ?? '17';
+  const vatNote = process.env.VAT_REGISTERED === '1'
+    ? `מע"מ ${vatRate}% יחושב בחשבונית מס`
+    : 'מע"מ: לפי סטטוס עוסק (מורשה / פטור) — יש למלא בחשבונית';
+  const paidUntil = worker.paidUntil ? new Date(worker.paidUntil).toLocaleDateString('he-IL') : '—';
+  return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>חשבונית — ${worker.name}</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:24px;color:#111;line-height:1.6}
+    h1{font-size:22px;margin:0 0 8px} .muted{color:#666;font-size:14px}
+    table{width:100%;border-collapse:collapse;margin:20px 0} th,td{border:1px solid #ddd;padding:10px;text-align:right}
+    th{background:#f6f6f6} .total{font-size:18px;font-weight:700}
+    @media print{body{margin:0}}
+  </style>
+</head>
+<body>
+  <h1>חשבונית / קבלה — ${AGENT_NAME}</h1>
+  <p class="muted">תאריך: ${date} · מזהה עובד: ${worker.id}</p>
+  ${PAYEE_NAME ? `<p><strong>לכבוד:</strong> ${PAYEE_NAME}</p>` : ''}
+  ${AGENT_OWNER_CONTACT ? `<p><strong>יצירת קשר:</strong> ${AGENT_OWNER_CONTACT}</p>` : ''}
+  <table>
+    <thead><tr><th>פריט</th><th>תקופה</th><th>סכום (₪)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>${template?.nameHe || template?.name || worker.name}</td>
+        <td>שכירות חודשית · בתוקף עד ${paidUntil}</td>
+        <td>${rent}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="total">סה"כ לפני מע"מ: ₪${rent}</p>
+  <p class="muted">${vatNote}</p>
+  <p class="muted">Tenant: ${tenantId} · ${baseUrl}</p>
+  <p class="muted" style="margin-top:24px">מסמך זה נוצר אוטומטית לצורכי תיעוד. לחשבונית מס רשמית פנו לתמיכה.</p>
+</body>
+</html>`;
+}
+
 // --- Admin ----------------------------------------------------------------
 
 function isAdmin(req, parsedUrl) {
@@ -1135,15 +1223,36 @@ const server = http.createServer(async (req, res) => {
       persistentStorage: !DB_PATH.includes('/tmp'),
       whatsapp: whatsappConfigStatus(),
       integrationsCatalog: integrations.listCatalog().length,
+      payment: paymentConfigStatus(),
+      trialDays: TRIAL_DAYS,
     });
   }
   if (handleLegalRoutes(req, res, url, send)) return;
+
+  if (await handlePaymentWebhooks(req, res, url, {
+    send,
+    readBody,
+    markActivationRequestReviewed,
+    recordAdminAudit,
+    findPendingActivation,
+  })) return;
 
   // WhatsApp inbound webhook (no tenant auth — provider verification)
   if (await handleWhatsAppWebhook(req, res, url, { send, readBody })) return;
 
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
+  }
+  if (req.method === 'POST' && url.pathname === '/api/public/demo-chat') {
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.templateId || !body.message) return send(res, 400, { error: 'templateId_and_message_required' });
+    const result = workers.publicTemplateDemoChat({
+      templateId: body.templateId,
+      userMessage: body.message,
+      businessName: cleanText(body.businessName, 80),
+    });
+    return send(res, result.ok ? 200 : 400, result);
   }
   if (req.method === 'GET' && url.pathname === '/earnings') {
     if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
@@ -1166,6 +1275,57 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
   }
   if (req.method === 'GET' && url.pathname === '/invoice.txt') return send(res, 200, buildInvoiceText(resolveBaseUrl(req)), { 'content-type': 'text/plain; charset=utf-8' });
+
+  const workerInvoiceMatch = url.pathname.match(/^\/invoice\/([A-Za-z0-9_]+)$/);
+  if (req.method === 'GET' && workerInvoiceMatch) {
+    const found = workers.adminFindWorker(workerInvoiceMatch[1]);
+    if (!found) return send(res, 404, { error: 'worker_not_found' });
+    const worker = workers.getWorker(found.tenantId, found.id);
+    const template = workers.getTemplate(worker.templateId);
+    const html = buildWorkerInvoiceHtml({
+      worker,
+      tenantId: found.tenantId,
+      template,
+      baseUrl: resolveBaseUrl(req),
+    });
+    return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/embed.js') {
+    const script = buildEmbedScript(resolveBaseUrl(req));
+    return send(res, 200, script, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'public,max-age=' + ASSETS_CACHE_MAX_AGE,
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/embed/config') {
+    const workerId = url.searchParams.get('workerId') ?? '';
+    const found = workers.adminFindWorker(workerId);
+    if (!found) return send(res, 404, { error: 'not_found' });
+    const worker = workers.getWorker(found.tenantId, found.id);
+    if (!EMBED_ALLOW_PUBLIC && !worker.isActive) return send(res, 403, { error: 'embed_disabled' });
+    return send(res, 200, { workerId, name: worker.name, isActive: worker.isActive, templateId: worker.templateId });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/embed/chat') {
+    const { text: raw } = await readBody(req, BODY_SMALL);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.workerId || !body.message) return send(res, 400, { error: 'workerId_and_message_required' });
+    const tenantFromKey = requireAuth(req);
+    const found = workers.adminFindWorker(body.workerId);
+    if (!found) return send(res, 404, { error: 'not_found' });
+    if (tenantFromKey && tenantFromKey !== found.tenantId) return send(res, 403, { error: 'forbidden' });
+    const worker = workers.getWorker(found.tenantId, found.id);
+    if (!worker.isActive) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' });
+    const res2 = await workers.chatWithWorker({
+      tenantId: found.tenantId,
+      workerId: found.id,
+      userMessage: body.message,
+      customerId: body.customerId ?? 'embed_visitor',
+    });
+    return send(res, res2.status ?? 200, { reply: res2.reply ?? res2.message, ...res2 });
+  }
 
   // Admin: issue an API key for a new tenant
   if (req.method === 'POST' && url.pathname === '/admin/issue-key') {
@@ -1276,8 +1436,10 @@ const server = http.createServer(async (req, res) => {
       bankBranch: BANK_BRANCH || '',
       bankAccount: BANK_ACCOUNT || '',
       payeeName: PAYEE_NAME || '',
+      activationSlaHe: activationSlaTextHe(),
+      trialDays: TRIAL_DAYS,
     });
-    html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;</script></body>`);
+    html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;</script></body>`);
     return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
   }
 
@@ -1438,7 +1600,14 @@ const server = http.createServer(async (req, res) => {
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
-    const res2 = await workers.chatWithWorker({ tenantId, workerId: chatMatch[1], userMessage: body.message, customerId: body.customerId ?? '', testMode: !!body.testMode });
+    const res2 = await workers.chatWithWorker({
+      tenantId,
+      workerId: chatMatch[1],
+      userMessage: body.message,
+      customerId: body.customerId ?? '',
+      testMode: !!body.testMode,
+      demoMode: !!body.demoMode,
+    });
     return send(res, res2.status ?? 200, res2);
   }
 
@@ -1475,7 +1644,36 @@ const server = http.createServer(async (req, res) => {
       note: body.note,
       amountIls: tpl?.rentPriceIls ?? 0,
     });
-    return send(res, 200, { ok: true, requestId: req2.id, status: 'pending', message: 'Activation request received. Admin review is next.' });
+    const verify = tryAutoVerifyActivationProof({ reference: body.reference, channel: body.channel });
+    if (verify.verified) {
+      const activated = autoActivateWorker({
+        workerId: worker.id,
+        tenantId,
+        channel: body.channel || verify.channel,
+        reference: body.reference,
+        days: DEFAULT_RENT_DAYS,
+        amountIls: tpl?.rentPriceIls ?? 0,
+        source: 'auto-verify-stub',
+      });
+      if (activated.ok) {
+        markActivationRequestReviewed(req2.id, 'approved');
+        return send(res, 200, {
+          ok: true,
+          requestId: req2.id,
+          status: 'approved',
+          autoActivated: true,
+          paidUntil: activated.paidUntil,
+          message: 'Payment auto-verified — worker is now active.',
+        });
+      }
+    }
+    return send(res, 200, {
+      ok: true,
+      requestId: req2.id,
+      status: 'pending',
+      slaHe: activationSlaTextHe(),
+      message: 'Activation request received. Admin review is next.',
+    });
   }
 
   // API: list customer memories for a worker

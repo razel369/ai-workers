@@ -26,6 +26,7 @@ console.log(`Workers tests against ${BASE}\n`);
   expect('GET /marketplace -> 200', r.status === 200);
   expect('  serves Hebrew HTML', String(r.body).includes('שוק העובדים'));
   expect('  contains marketplace positioning', String(r.body).includes('קטלוג עובדים'));
+  expect('  magic CTA present', String(r.body).includes('נסה עכשיו בחינם'));
 }
 {
   const r = await req('/builder');
@@ -123,6 +124,28 @@ let activationRequestId = null;
   });
   expect('chat while pending -> 402', r.status === 402);
   expect('  error=payment_required', r.body.error === 'payment_required');
+}
+
+// 6a. demoMode bypasses payment gate for owner try-before-pay
+{
+  const r = await req(`/api/workers/${firstWorkerId}/chat`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'שלום', demoMode: true }),
+  });
+  expect('demoMode chat while pending -> 200', r.status === 200);
+  expect('  has reply', typeof r.body.reply === 'string' && r.body.reply.length > 5);
+}
+
+// 6a2. public pre-signup template demo chat
+{
+  const r = await req('/api/public/demo-chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ templateId: 'support-he', message: 'שלום, מה אתה עושה?' }),
+  });
+  expect('public demo-chat -> 200', r.status === 200);
+  expect('  has reply', typeof r.body.reply === 'string' && r.body.reply.length > 5);
+  expect('  runtime=demo', r.body.runtime === 'demo');
 }
 
 // 6b. Customer submits payment/activation proof
@@ -304,9 +327,9 @@ let mismatchedActivationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
   expect('GET messages -> 200', r.status === 200);
-  expect('  has 2 messages (user + assistant)', r.body.messages?.length === 2);
-  expect('  first role=user', r.body.messages?.[0]?.role === 'user');
-  expect('  second role=assistant', r.body.messages?.[1]?.role === 'assistant');
+  expect('  has 4 messages (demo + paid chat)', r.body.messages?.length === 4);
+  expect('  third role=user', r.body.messages?.[2]?.role === 'user');
+  expect('  fourth role=assistant', r.body.messages?.[3]?.role === 'assistant');
 }
 
 // 13. Second chat — context preserved
@@ -332,7 +355,7 @@ let mismatchedActivationRequestId = null;
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
-  expect('  now 4 messages', r.body.messages?.length === 4);
+  expect('  now 6 messages', r.body.messages?.length === 6);
 }
 
 // 14. Per-tenant isolation: another tenant cannot see this worker
@@ -544,6 +567,28 @@ let integrationId = null;
   const r = await req('/health');
   expect('health reports integrations catalog count', typeof r.body.integrationsCatalog === 'number' && r.body.integrationsCatalog >= 10);
   expect('health reports whatsapp status', r.body.whatsapp && typeof r.body.whatsapp.enabled === 'boolean');
+  expect('health reports payment config', r.body.payment && typeof r.body.payment.autoVerifyEnabled === 'boolean');
+}
+{
+  const r = await req(`/invoice/${mediaWorkerId}`);
+  expect('GET /invoice/:workerId -> 200 html', r.status === 200 && String(r.body).includes('חשבונית'));
+  expect('  invoice mentions VAT placeholder', String(r.body).includes('מע"מ'));
+}
+{
+  const r = await req('/embed.js');
+  expect('GET /embed.js -> 200 js', r.status === 200 && String(r.body).includes('aiw-embed-root'));
+}
+{
+  const cfg = await req(`/api/embed/config?workerId=${mediaWorkerId}`);
+  expect('GET /api/embed/config -> 200', cfg.status === 200 && cfg.body.workerId === mediaWorkerId);
+}
+{
+  const r = await req('/api/webhooks/bit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workerId: 'wk_nonexistent' }),
+  });
+  expect('bit webhook rejects missing worker', r.status === 400);
 }
 
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);

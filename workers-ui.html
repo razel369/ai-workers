@@ -290,6 +290,48 @@
   .paywall .pw-method .pm-info .pm-title { font-weight:600; color:var(--text); font-size:14px; }
   .paywall .pw-method .pm-info .pm-desc { font-size:12px; color:var(--muted); }
   .paywall .pw-note { font-size:12px; color:var(--muted); margin-top:12px; padding:12px; background:rgba(255,255,255,.02); border-radius:var(--radius-sm); border:1px solid var(--border); }
+
+  /* === ONBOARDING MODAL === */
+  .onboard-overlay { position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .onboard-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); max-width:480px; width:100%; padding:28px; text-align:right; }
+  .onboard-card h2 { margin:0 0 8px; font-size:20px; }
+  .onboard-steps { display:flex; gap:8px; margin:16px 0; }
+  .onboard-step { flex:1; height:4px; border-radius:2px; background:var(--border); }
+  .onboard-step.active { background:var(--accent); }
+  .onboard-actions { display:flex; gap:10px; margin-top:20px; justify-content:flex-end; }
+
+  /* === MAGIC FLOW === */
+  .magic-wrap { max-width:560px; margin:0 auto; padding:8px 0 40px; }
+  .magic-step-label { font-size:13px; color:var(--accent); font-weight:700; margin-bottom:6px; }
+  .magic-title { font-size:clamp(24px,5vw,32px); font-weight:900; color:var(--text); margin-bottom:8px; line-height:1.25; }
+  .magic-sub { color:var(--muted); font-size:16px; margin-bottom:22px; line-height:1.6; }
+  .magic-input { font-size:18px; padding:16px 18px; min-height:56px; }
+  .magic-progress { display:flex; gap:8px; margin-bottom:24px; }
+  .magic-progress span { flex:1; height:5px; border-radius:3px; background:var(--border); }
+  .magic-progress span.on { background:var(--accent); }
+  .tpl-pick { display:grid; gap:12px; }
+  .tpl-pick-btn { display:flex; align-items:center; gap:14px; text-align:right; padding:16px 18px; border:2px solid var(--border); border-radius:var(--radius); background:var(--surface2); cursor:pointer; transition:all .2s; width:100%; font:inherit; color:var(--text); }
+  .tpl-pick-btn:hover,.tpl-pick-btn.selected { border-color:var(--accent); background:var(--accent-glow); }
+  .tpl-pick-btn .emoji { font-size:32px; line-height:1; }
+  .tpl-pick-btn .tp-title { font-size:17px; font-weight:800; }
+  .tpl-pick-btn .tp-desc { font-size:14px; color:var(--muted); margin-top:2px; }
+  .demo-banner { background:var(--accent-glow); border:1px solid rgba(214,160,77,.35); border-radius:var(--radius); padding:12px 16px; margin-bottom:14px; font-size:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; }
+  .celebration-banner { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10000; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#111; font-weight:800; font-size:18px; padding:14px 28px; border-radius:999px; box-shadow:var(--shadow-lg); animation:celebrateIn .5s ease; }
+  @keyframes celebrateIn { from{opacity:0;transform:translateX(-50%) translateY(-12px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  @media (prefers-reduced-motion: reduce) { .celebration-banner { animation:none; } }
+  .preview-chat { display:flex; flex-direction:column; height:min(420px,55vh); }
+  .preview-chat .chat-window { flex:1; min-height:200px; }
+  .btn-hero { padding:16px 28px; font-size:17px; font-weight:800; min-height:52px; width:100%; max-width:360px; }
+  @media (max-width:600px) {
+    main { padding:16px 14px 48px; }
+    header { padding:8px 12px; }
+    header nav a { padding:10px 12px; font-size:15px; }
+    .btn, .btn-primary { min-height:48px; font-size:16px; }
+    .magic-input { font-size:17px; }
+    .grid { grid-template-columns:1fr; }
+    .w-cta { flex-direction:column; }
+    .w-cta .btn { width:100%; min-height:48px; }
+  }
   
   /* === CHAT === */
   .chat-hdr { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
@@ -517,6 +559,54 @@ const APP = (() => {
   const app = document.getElementById('app');
   const navLinks = document.querySelectorAll('#nav a[data-route]');
   const ADMIN_LS = 'paid-agent.adminToken';
+  const ONBOARDING_LS = 'paid-agent.onboardingDone';
+  const MAGIC_LS = 'paid-agent.magicState';
+
+  async function ensureSession(businessName) {
+    if (getKey()) return true;
+    const r = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ businessName: businessName || 'העסק שלי', contact: 'owner@local' }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.key) {
+      setKey(j.key);
+      return true;
+    }
+    toast('לא הצלחנו להתחיל — נסה שוב בעוד רגע', 'error');
+    return false;
+  }
+
+  function celebrateFirstReply(workerId) {
+    const key = 'paid-agent.celebrated-' + workerId;
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, '1');
+    const el = document.createElement('div');
+    el.className = 'celebration-banner';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span aria-live="polite">העובד שלך עובד! 🎉</span>';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 5500);
+  }
+
+  const TEMPLATE_EMOJI = {
+    'sales-leads-il': '💼', 'support-he': '💬', 'data-entry': '📋', 'content-he': '✍️',
+    'real-estate-il': '🏠', 'clinic-receptionist-he': '🏥', 'restaurant-manager-he': '🍽️',
+    'ecom-support-he': '🛒', 'property-manager-he': '🔧', 'social-media-creator-he': '📱',
+  };
+  const TEMPLATE_PLAIN = {
+    'sales-leads-il': 'מסנן לידים ואוסף פרטי קשר',
+    'support-he': 'עונה לשאלות נפוצות של לקוחות',
+    'clinic-receptionist-he': 'קובע תורים ועונה על שעות פעילות',
+    'restaurant-manager-he': 'מקבל הזמנות ושאלות על התפריט',
+    'real-estate-il': 'מסנן מחפשי דירות ואוסף פרטים',
+    'ecom-support-he': 'עוזר עם הזמנות ומשלוחים',
+    'data-entry': 'מסדר מידע מטקסטים וטפסים',
+    'content-he': 'כותב תוכן שיווקי בעברית',
+    'property-manager-he': 'מקבל פניות תחזוקה מדיירים',
+    'social-media-creator-he': 'יוצר רעיונות לפוסטים ותמונות',
+  };
 
   function syncAdminNav() {
     const el = document.getElementById('nav-admin');
@@ -590,7 +680,7 @@ const APP = (() => {
     setTimeout(() => overlay.remove(), 250);
   }
 
-  // ---- Key bar ----
+  // ---- Key bar (hidden — session stored silently in localStorage) ----
   function renderKeyBar() {
     let bar = document.getElementById('key-bar');
     if (!bar) {
@@ -598,118 +688,124 @@ const APP = (() => {
       bar.id = 'key-bar';
       document.body.insertBefore(bar, app);
     }
-    const k = getKey();
-    bar.className = 'key-bar';
-    bar.innerHTML = `
-      <label>${icon('lock', 14)} מפתח API</label>
-      <input id="kb-input" placeholder="sk_... (הדבק את המפתח שלך)" value="${escapeHtml(k)}" />
-      <button id="kb-save">${icon('check', 14)} שמור</button>
-      ${!k ? '<button id="kb-signup" class="btn-outline">' + icon('plus', 14) + ' התחל</button>' : ''}
-      ${k ? '<button id="kb-rotate" class="btn-outline">' + icon('shield', 14) + ' החלף מפתח</button>' : ''}
-      ${k ? '<button id="kb-clear" style="background:transparent;color:var(--muted);border:1px solid var(--border)">' + icon('x', 14) + ' נקה</button>' : ''}
-      <span class="status" id="kb-status"></span>
-    `;
-    document.getElementById('kb-save').onclick = async () => {
-      const v = document.getElementById('kb-input').value.trim();
-      setKey(v);
-      const st = document.getElementById('kb-status');
-      if (v) {
-        const r = await api('/api/workers');
-        if (r.ok) { st.className = 'status ok'; st.innerHTML = icon('check', 14) + ' המפתח תקין'; }
-        else { st.className = 'status err'; st.innerHTML = icon('alert', 14) + ' מפתח לא תקין'; }
-      } else { st.textContent = ''; }
-    };
-    if (document.getElementById('kb-clear')) {
-      document.getElementById('kb-clear').onclick = () => { setKey(''); render(); };
-    }
-    if (document.getElementById('kb-rotate')) {
-      document.getElementById('kb-rotate').onclick = async () => {
-        if (!confirm('להחליף את המפתח? המפתח הישן יבוטל מיד.')) return;
-        const st = document.getElementById('kb-status');
-        st.innerHTML = icon('loading', 14, 'icon-spin') + ' מחליף...';
-        const r = await api('/api/account/rotate-key', { method: 'POST' });
-        if (r.ok && r.body.key) {
-          setKey(r.body.key);
-          st.className = 'status ok';
-          st.innerHTML = icon('check', 14) + ' המפתח הוחלף';
-        } else {
-          st.className = 'status err';
-          st.innerHTML = icon('alert', 14) + ' לא ניתן להחליף מפתח';
-        }
-      };
-    }
-    if (document.getElementById('kb-signup')) {
-      document.getElementById('kb-signup').onclick = () => openSignupModal();
-    }
-    if (k) {
-      api('/api/account').then((r) => {
-        const st = document.getElementById('kb-status');
-        if (!st) return;
-        if (r.ok) {
-          st.className = 'status ok';
-          st.innerHTML = icon('check', 14) + ' ' + escapeHtml(r.body.label || 'חשבון פעיל') + ' · ' + escapeHtml(r.body.tenantId || '');
-        }
-      }).catch(() => {});
-    }
+    bar.style.display = 'none';
+    bar.innerHTML = '';
   }
 
   function openSignupModal(afterSignup) {
-    const overlay = openModal(`
-      <div class="modal-hdr">
-        <span class="icon-big">${icon('lock', 24)}</span>
-        <h3>התחלה מהירה</h3>
-        <button class="modal-close" id="signup-close">${icon('x', 16)}</button>
-      </div>
-      <div class="modal-body">
-        <p class="muted" style="margin-bottom:14px">צור מפתח עסקי כדי לבחור עובד, להתאים אותו, ולשלוח בקשת הפעלה אחרי התשלום.</p>
-        <div class="fld">
-          <label>שם העסק</label>
-          <input id="signup-business" placeholder="לדוגמה: Acme Clinic" />
-        </div>
-        <div class="fld">
-          <label>אימייל או טלפון לחזרה</label>
-          <input id="signup-contact" placeholder="you@example.com / 05..." style="direction:ltr;text-align:left" />
-        </div>
-        <div id="signup-status" class="muted" style="min-height:22px;margin-top:8px"></div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-primary" id="signup-create">${icon('check', 14)} צור מפתח והמשך</button>
-      </div>
-    `);
-    document.getElementById('signup-close').onclick = () => closeModal(overlay);
-    document.getElementById('signup-create').onclick = async () => {
-      const status = document.getElementById('signup-status');
-      const businessName = document.getElementById('signup-business').value.trim();
-      const contact = document.getElementById('signup-contact').value.trim();
-      if (!businessName || !contact) {
-        status.innerHTML = '<span class="err">' + icon('alert', 14) + ' מלא שם עסק ופרטי קשר</span>';
-        return;
-      }
-      status.innerHTML = icon('loading', 14, 'icon-spin') + ' יוצר מפתח...';
-      const r = await fetch('/api/signup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ businessName, contact }),
-      }).then(async (x) => ({ ok: x.ok, body: x.headers.get('content-type')?.includes('json') ? await x.json() : await x.text() }));
-      if (!r.ok) {
-        status.innerHTML = '<span class="err">' + icon('alert', 14) + ' לא ניתן ליצור מפתח: ' + escapeHtml(JSON.stringify(r.body)) + '</span>';
-        return;
-      }
-      setKey(r.body.key);
-      closeModal(overlay);
-      toast('המפתח נוצר ונשמר בדפדפן', 'success');
-      if (afterSignup) await afterSignup();
-    };
+    location.hash = '#/magic';
   }
 
   async function buyWorker(templateId) {
     const r = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId }) });
     if (r.ok) {
-      toast('העובד נוצר! שלם ' + r.body.template.rentPriceIls + ' ₪ ואז שלח בקשת הפעלה.', 'success', 6000);
-      location.hash = '#/workers/edit/' + r.body.workerId;
+      location.hash = '#/workers/chat/' + r.body.workerId;
     } else {
-      toast('הקנייה נכשלה: ' + JSON.stringify(r.body), 'error');
+      toast('לא הצלחנו ליצור עובד — נסה שוב', 'error');
     }
+  }
+
+  function loadMagicState() {
+    try { return JSON.parse(localStorage.getItem(MAGIC_LS) || '{}'); } catch { return {}; }
+  }
+  function saveMagicState(patch) {
+    localStorage.setItem(MAGIC_LS, JSON.stringify({ ...loadMagicState(), ...patch }));
+  }
+
+  async function renderMagicWizard() {
+    setActive('marketplace');
+    const tr = await fetch('/api/workers/templates');
+    const templates = tr.ok ? (await tr.json()).templates : [];
+    let state = loadMagicState();
+    let step = Number(state.step) || 0;
+    if (step < 0 || step > 2) step = 0;
+
+    function progressHtml() {
+      return '<div class="magic-progress" aria-hidden="true">' +
+        [0, 1, 2].map((i) => `<span class="${i <= step ? 'on' : ''}"></span>`).join('') +
+        '</div>';
+    }
+
+    async function paint() {
+      if (step === 0) {
+        app.innerHTML = `<div class="magic-wrap page-enter">
+          ${progressHtml()}
+          <div class="magic-step-label">שלב 1 מתוך 3</div>
+          <h1 class="magic-title">איך קוראים לעסק?</h1>
+          <p class="magic-sub">רק שם אחד — בלי הרשמה מסובכת. אנחנו נזכור את זה בשבילך.</p>
+          <input id="magic-business" class="magic-input" placeholder="לדוגמה: קפה השכונה" value="${escapeHtml(state.businessName || '')}" autofocus />
+          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px">${icon('arrow-right', 16)} המשך</button>
+        </div>`;
+        document.getElementById('magic-next').onclick = () => {
+          const name = document.getElementById('magic-business').value.trim();
+          if (!name) { toast('כתוב שם עסק קצר', 'error'); return; }
+          state.businessName = name;
+          saveMagicState({ businessName: name, step: 1 });
+          step = 1;
+          paint();
+        };
+        return;
+      }
+
+      if (step === 1) {
+        const picks = templates.map((t) => {
+          const em = TEMPLATE_EMOJI[t.id] || '✨';
+          const plain = TEMPLATE_PLAIN[t.id] || t.description;
+          const sel = state.templateId === t.id ? ' selected' : '';
+          return `<button type="button" class="tpl-pick-btn${sel}" data-tpl="${escapeHtml(t.id)}">
+            <span class="emoji">${em}</span>
+            <span><div class="tp-title">${escapeHtml(t.nameHe || t.name)}</div><div class="tp-desc">${escapeHtml(plain)}</div></span>
+          </button>`;
+        }).join('');
+        app.innerHTML = `<div class="magic-wrap page-enter">
+          ${progressHtml()}
+          <div class="magic-step-label">שלב 2 מתוך 3</div>
+          <h1 class="magic-title">מה העובד צריך לעשות?</h1>
+          <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
+          <div class="tpl-pick">${picks}</div>
+          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} דבר איתו עכשיו!</button>
+        </div>`;
+        app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
+          btn.onclick = () => {
+            state.templateId = btn.dataset.tpl;
+            saveMagicState({ templateId: state.templateId });
+            app.querySelectorAll('.tpl-pick-btn').forEach((b) => b.classList.toggle('selected', b.dataset.tpl === state.templateId));
+            document.getElementById('magic-next').disabled = false;
+          };
+        });
+        document.getElementById('magic-next').onclick = async () => {
+          if (!state.templateId) return;
+          saveMagicState({ step: 2 });
+          step = 2;
+          await finishMagic();
+        };
+        return;
+      }
+    }
+
+    async function finishMagic() {
+      state = { ...loadMagicState(), ...state };
+      app.innerHTML = `<div class="magic-wrap"><div class="empty">${icon('loading', 32, 'icon-spin')} מכין את העובד שלך...</div></div>`;
+      const businessName = state.businessName || 'העסק שלי';
+      if (!(await ensureSession(businessName))) { step = 0; return paint(); }
+      const buy = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId: state.templateId }) });
+      if (!buy.ok) { toast('לא הצלחנו — נסה שוב', 'error'); step = 1; return paint(); }
+      const workerId = buy.body.workerId;
+      const tpl = templates.find((t) => t.id === state.templateId);
+      await api('/api/workers/' + workerId, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: (tpl?.nameHe || 'העובד שלי') + ' — ' + businessName,
+          knowledge: `שם העסק: ${businessName}\nמה העסק נותן: (הוסיפו פרטים בהמשך)\nשעות פעילות: א-ה 09:00-18:00`,
+        }),
+      });
+      localStorage.removeItem(MAGIC_LS);
+      localStorage.setItem(ONBOARDING_LS, '1');
+      location.hash = '#/workers/chat/' + workerId;
+    }
+
+    if (step === 2) await finishMagic();
+    else await paint();
   }
 
   // ---- Category filter state ----
@@ -751,9 +847,11 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
     if (!section || section === '') return renderMarketplace();
+    if (section === 'magic') return renderMagicWizard();
     if (section === 'workers' && rest.length === 0) return renderWorkersList();
     if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] });
     if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] });
+    if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1]);
     if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1]);
     if (section === 'admin') return renderAdmin();
     return renderMarketplace();
@@ -806,8 +904,8 @@ async function renderMarketplace() {
           </div>
         </div>
         <div class="w-cta">
-          <button class="btn btn-primary btn-sm" data-preview="${escapeHtml(t.id)}">${icon('eye', 14)} בדוק דוגמה</button>
-          <button class="btn btn-sm btn-outline" data-buy="${escapeHtml(t.id)}">${icon('plus', 14)} הוסף לעסק</button>
+          <button class="btn btn-primary btn-sm" data-preview="${escapeHtml(t.id)}">${icon('chat', 14)} נסה דוגמה</button>
+          <button class="btn btn-sm btn-outline" data-magic="${escapeHtml(t.id)}">${icon('zap', 14)} צור לעסק שלי</button>
         </div>
       </div>`;
     }).join('');
@@ -820,11 +918,11 @@ async function renderMarketplace() {
       <div class="mkt-hero">
       <div class="hero-copy">
         <div class="hero-badge">${icon('shield', 14)} עובדים מוכנים להפעלה לעסקים בישראל</div>
-        <h1>בחר עובד AI לפי תפקיד, לא לפי הבטחה.</h1>
-        <p>תבניות מוכנות לעברית, תהליך התאמה קצר, ואישור הפעלה אנושי לפני שהעובד מתחיל לענות ללקוחות.</p>
+        <h1>עובד חכם לעסק — בלי מונחים טכניים</h1>
+        <p>בשלושה צעדים פשוטים: שם העסק, בחירת תפקיד, ושיחה ראשונה. בלי תשלום כדי לראות שזה עובד.</p>
         <div class="hero-actions">
-          <button class="btn btn-primary" id="mkt-start">${icon('plus', 14)} צור מפתח והתחל</button>
-          <a class="btn btn-outline" href="#/workers">${icon('users', 14)} העובדים שלי</a>
+          <button class="btn btn-primary btn-hero" id="mkt-start">${icon('zap', 16)} נסה עכשיו בחינם</button>
+          <a class="btn btn-outline btn-hero" href="#/workers">${icon('users', 14)} העובדים שלי</a>
         </div>
       </div>
       <aside class="hero-proof" aria-label="סיכום הפעלה">
@@ -834,9 +932,9 @@ async function renderMarketplace() {
           <div class="proof-copy">תבניות לפי תפקידים אמיתיים: מכירות, שירות, תפעול, תוכן וניהול נכסים.</div>
         </div>
         <div class="proof-list">
-          <span>${icon('check', 14)} מפתח לקוח נוצר לבד</span>
-          <span>${icon('check', 14)} תשלום ואישור בלי חשיפת דאטה</span>
-          <span>${icon('check', 14)} התאמה אישית לפני הפעלה</span>
+          <span>${icon('check', 14)} מתחילים תוך דקה</span>
+          <span>${icon('check', 14)} דוגמה חיה לפני תשלום</span>
+          <span>${icon('check', 14)} בלי כרטיס אשראי</span>
         </div>
       </aside>
     </div>
@@ -864,10 +962,16 @@ async function renderMarketplace() {
       b.onclick = () => { currentFilter = b.dataset.cat; renderMarketplace(); };
     });
     const startBtn = document.getElementById('mkt-start');
-    if (startBtn) startBtn.onclick = () => openSignupModal();
+    if (startBtn) startBtn.onclick = () => { location.hash = '#/magic'; };
+    app.querySelectorAll('button[data-magic]').forEach((b) => {
+      b.onclick = () => {
+        saveMagicState({ templateId: b.dataset.magic, step: 0 });
+        location.hash = '#/magic';
+      };
+    });
     app.querySelectorAll('button[data-buy]').forEach((b) => {
       b.onclick = async () => {
-        if (!getKey()) return openSignupModal(() => buyWorker(b.dataset.buy));
+        if (!(await ensureSession('העסק שלי'))) return;
         await buyWorker(b.dataset.buy);
       };
     });
@@ -877,6 +981,46 @@ async function renderMarketplace() {
         if (t) showTemplatePreview(t);
       };
     });
+    showOnboardingModal();
+  }
+
+  function showOnboardingModal() {
+    if (localStorage.getItem(ONBOARDING_LS)) return;
+    if (!getKey()) return;
+    const steps = [
+      { title: 'בוחרים תבנית לפי תפקיד', body: 'מרפאה, נדל״ן, מסעדה או מכירות — כל תבנית מגיעה עם משימות וידע התחלתי בעברית.' },
+      { title: 'מתאימים ידע ושעות', body: 'בבונה תכתבו שאלות נפוצות, מחירים ומדיניות. אפשר גם לייבא מאתר העסק.' },
+      { title: 'מפעילים ומתחילים לצ׳וטט', body: (typeof TRIAL_DAYS !== 'undefined' && TRIAL_DAYS > 0)
+        ? `ניסיון ${TRIAL_DAYS} ימים ללא תשלום — ואז תשלום ב-Bit/PayPal עם ${typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות'}.`
+        : `שלחו אסמכתא תשלום — ${typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות בימי עסקים'}. האדמין יכול לאשר ידנית בכל עת.` },
+    ];
+    let step = 0;
+    const overlay = document.createElement('div');
+    overlay.className = 'onboard-overlay';
+    function render() {
+      const s = steps[step];
+      overlay.innerHTML = `<div class="onboard-card" role="dialog" aria-modal="true">
+        <div class="onboard-steps">${steps.map((_, i) => `<div class="onboard-step ${i <= step ? 'active' : ''}"></div>`).join('')}</div>
+        <div class="muted" style="font-size:12px">שלב ${step + 1} מתוך 3</div>
+        <h2>${escapeHtml(s.title)}</h2>
+        <p class="muted" style="margin:0;line-height:1.6">${escapeHtml(s.body)}</p>
+        <div class="onboard-actions">
+          <button type="button" class="btn btn-outline" id="onboard-skip">דלג</button>
+          <button type="button" class="btn btn-primary" id="onboard-next">${step < 2 ? 'הבא' : 'התחל בשוק'}</button>
+        </div>
+      </div>`;
+      overlay.querySelector('#onboard-skip').onclick = close;
+      overlay.querySelector('#onboard-next').onclick = () => {
+        if (step < 2) { step++; render(); }
+        else { close(); location.hash = '#/magic'; }
+      };
+    }
+    function close() {
+      localStorage.setItem(ONBOARDING_LS, '1');
+      overlay.remove();
+    }
+    render();
+    document.body.appendChild(overlay);
   }
 
   // ---- Template preview modal ----
@@ -921,41 +1065,61 @@ async function renderMarketplace() {
     ],
   };
   function showTemplatePreview(tpl) {
-    const msgs = PREVIEW_CHATS[tpl.id] || [
-      { role: 'user', content: 'היי, מה אתה יכול לעשות?' },
-      { role: 'assistant', content: 'היי! אני ' + (tpl.nameHe || tpl.name) + '. אשמח לעזור בכל שאלה. ' + (tpl.description || '') },
-    ];
-    openModal(`
+    const em = TEMPLATE_EMOJI[tpl.id] || '✨';
+    const overlay = openModal(`
       <div class="modal-hdr">
-        <span class="icon-big">${catIcon(tpl.category)}</span>
-        <h3>${escapeHtml(tpl.nameHe || tpl.name)}</h3>
-        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x', 16)}</button>
+        <span class="icon-big" style="font-size:28px">${em}</span>
+        <h3>${escapeHtml(tpl.nameHe || tpl.name)} — נסה דוגמה</h3>
+        <button class="modal-close" id="preview-close">${icon('x', 16)}</button>
       </div>
-      <div class="modal-body">
-        <p class="muted" style="margin-bottom:16px">${escapeHtml(tpl.description)}</p>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap">
-          ${tpl.buyPriceIls > 0 ? `<span>קנייה: <b class="num">${tpl.buyPriceIls} ₪</b></span>` : `<span>ללא דמי הקמה · SaaS חודשי</span>`}
-          <span>שכירות: <b class="num">${tpl.rentPriceIls} ₪/חודש</b></span>
+      <div class="modal-body preview-chat">
+        <p class="muted" style="margin-bottom:10px">${escapeHtml(TEMPLATE_PLAIN[tpl.id] || tpl.description)}</p>
+        <div id="preview-win" class="chat-window" style="height:280px"></div>
+        <div class="composer" style="margin-top:10px">
+          <textarea id="preview-input" placeholder="כתוב הודעה... (למשל: שלום, מה אתה עושה?)" rows="2"></textarea>
+          <button class="btn btn-primary" id="preview-send">${icon('send', 16)} שלח</button>
         </div>
-        <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">
-          <div style="background:var(--surface2);padding:8px 14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)">${icon('chat', 14)} הצצה לשיחה</div>
-          <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
-            ${msgs.map((m) => `<div class="msg ${m.role}" style="max-width:95%">${escapeHtml(m.content)}</div>`).join('')}
-          </div>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:18px">
-          <button class="btn btn-primary" onclick="location.hash='#/workers/new/${tpl.id}';this.closest('.modal-overlay').remove()" style="flex:1">${icon('edit', 14)} התאם אישית</button>
-          <button onclick="this.closest('.modal-overlay').remove()" style="flex:1">סגור</button>
-        </div>
+        <button class="btn btn-primary btn-hero" id="preview-own" style="margin-top:14px;width:100%">${icon('zap', 16)} צור כזה לעסק שלי</button>
       </div>
     `);
+    const win = overlay.querySelector('#preview-win');
+    const input = overlay.querySelector('#preview-input');
+    const push = (role, text) => {
+      const d = document.createElement('div');
+      d.className = 'msg ' + role;
+      d.textContent = text;
+      win.appendChild(d);
+      win.scrollTop = win.scrollHeight;
+    };
+    push('assistant', 'שלום! אני ' + (tpl.nameHe || tpl.name) + '. שאל אותי משהו — זו דוגמה חיה.');
+    overlay.querySelector('#preview-close').onclick = () => closeModal(overlay);
+    overlay.querySelector('#preview-own').onclick = () => {
+      closeModal(overlay);
+      saveMagicState({ templateId: tpl.id, step: 0 });
+      location.hash = '#/magic';
+    };
+    async function sendPreview() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      push('user', text);
+      const r = await fetch('/api/public/demo-chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ templateId: tpl.id, message: text }),
+      });
+      const j = await r.json().catch(() => ({}));
+      push('assistant', j.reply || 'שלום! איך אוכל לעזור?');
+    }
+    overlay.querySelector('#preview-send').onclick = sendPreview;
+    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPreview(); } };
   }
 
   // ---- My Workers ----
   async function renderWorkersList() {
     setActive('workers');
-    if (!getKey()) {
-      app.innerHTML = `<div class="empty"><h2>${icon('lock', 20)} אין מפתח API</h2><p>הדבק את מפתח ה-<code>sk_...</code> שלך למעלה כדי לראות את העובדים שלך.</p></div>`;
+    if (!(await ensureSession('העסק שלי'))) {
+      app.innerHTML = `<div class="empty"><h2>בואו נתחיל</h2><p><button class="btn btn-primary btn-hero" onclick="location.hash='#/magic'">נסה עכשיו בחינם</button></p></div>`;
       return;
     }
     app.innerHTML = '<div class="grid" style="margin-top:20px">' + Array(3).fill(0).map(() => '<div class="card" style="height:160px;padding:0"><div class="shimmer" style="width:100%;height:100%"></div></div>').join('') + '</div>';
@@ -1845,225 +2009,115 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   }
 
-  // ---- Chat (with Paywall) ----
-  async function renderChat(workerId) {
+  // ---- Activation paywall (only when user wants production) ----
+  async function renderActivatePaywall(workerId) {
     setActive('workers');
-    if (!getKey()) { app.innerHTML = '<div class="empty"><h2>' + icon('lock', 20) + ' אין מפתח API</h2><p>הדבק את מפתח ה-<code>sk_...</code> שלך למעלה.</p></div>'; return; }
+    if (!(await ensureSession('העסק שלי'))) return;
     const wr = await api('/api/workers/' + workerId);
     if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
     const w = wr.body.worker;
-
-    // ---- Paywall for unpaid workers ----
-    if (!w.isActive) {
-      const tplRes = await api('/api/workers/templates');
-      const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
-      const price = template ? template.rentPriceIls : 99;
-      app.innerHTML = `
-        <div class="toolbar">
-          <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
-          <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
+    if (w.isActive) { location.hash = '#/workers/chat/' + workerId; return; }
+    const tplRes = await api('/api/workers/templates');
+    const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
+    const price = template ? template.rentPriceIls : 99;
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>${icon('shield', 20)} להפעיל ללקוחות</h2>
+        <a href="#/workers/chat/${workerId}" style="margin-right:auto">${icon('arrow-right', 16)} חזרה לניסיון</a>
+      </div>
+      <div class="paywall">
+        <div class="pw-icon">${icon('shield', 40)}</div>
+        <h2>${escapeHtml(w.name)} מוכן לעבודה מול לקוחות!</h2>
+        <p class="muted">אחרי תשלום ואישור — העובד יהיה זמין גם באתר שלך וללקוחות אמיתיים.</p>
+        <div class="pw-price">₪${price} <small>לחודש</small></div>
+        <div class="pw-methods">
+          ${BIT_PHONE ? `<div class="pw-method"><div class="pm-info"><div class="pm-title">Bit</div><div class="pm-desc">שלם ל-${BIT_PHONE}</div></div></div>` : ''}
+          ${PAYPAL_ME ? `<div class="pw-method"><div class="pm-info"><div class="pm-title">PayPal</div><div class="pm-desc">paypal.me/${PAYPAL_ME}</div></div></div>` : ''}
         </div>
-        <div class="paywall">
-          <div class="pw-icon">${icon('lock', 40)}</div>
-          <div style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:4px">עובד בהמתנה לתשלום</div>
-          <h2>${escapeHtml(w.name)} מוכן לעבודה!</h2>
-          <p class="muted" style="margin-bottom:4px">העובד הותאם אישית ומחכה שתפעיל אותו. בחר אמצעי תשלום:</p>
-          <div class="pw-price">₪${price} <small>לחודש</small></div>
-
-          <div class="pw-methods">
-            ${BIT_PHONE ? `
-            <div class="pw-method">
-              <div class="pm-icon" style="background:rgba(0,153,204,.15);color:#0099cc">${icon('zap', 18)}</div>
-              <div class="pm-info">
-                <div class="pm-title">Bit</div>
-                <div class="pm-desc">שלם ל-${BIT_PHONE} וציין "תשלום עובד AI"</div>
-              </div>
-            </div>` : ''}
-            ${PAYPAL_ME ? `
-            <div class="pw-method">
-              <div class="pm-icon" style="background:rgba(0,150,200,.15);color:#0099cc">${icon('globe', 18)}</div>
-              <div class="pm-info">
-                <div class="pm-title">PayPal</div>
-                <div class="pm-desc">שלם ב-paypal.me/${PAYPAL_ME}</div>
-              </div>
-            </div>` : ''}
-            ${BANK_ACCOUNT ? `
-            <div class="pw-method">
-              <div class="pm-icon" style="background:rgba(110,159,94,.15);color:var(--green)">${icon('shield', 18)}</div>
-              <div class="pm-info">
-                <div class="pm-title">העברה בנקאית</div>
-                <div class="pm-desc">${BANK_NAME} סניף ${BANK_BRANCH} חשבון ${BANK_ACCOUNT}</div>
-              </div>
-            </div>` : ''}
-            ${(!BIT_PHONE && !PAYPAL_ME && !BANK_ACCOUNT) ? `
-            <div class="pw-method">
-              <div class="pm-icon" style="background:var(--accent-glow);color:var(--accent)">${icon('alert', 18)}</div>
-              <div class="pm-info">
-                <div class="pm-title">צור קשר עם האדמין</div>
-                <div class="pm-desc">בקש סימון תשלום מהאדמין</div>
-              </div>
-            </div>` : ''}
-          </div>
-
-          <button class="btn btn-outline" id="pw-check" style="margin-top:8px">${icon('check', 14)} בדקתי, אפשר כניסה</button>
-          <div id="pw-status" class="muted" style="margin-top:8px"></div>
-
-          <div class="card" style="margin-top:18px;text-align:right;padding:16px">
-            <h3 style="font-size:15px;margin-bottom:10px">${icon('shield', 16)} שלח בקשת הפעלה</h3>
-            <div class="row" style="align-items:flex-start">
-              <div style="flex:1;min-width:130px">
-                <label>אמצעי תשלום</label>
-                <select id="pay-channel">
-                  <option value="bit">Bit</option>
-                  <option value="paypal">PayPal</option>
-                  <option value="bank-transfer">העברה בנקאית</option>
-                  <option value="manual">אחר</option>
-                </select>
-              </div>
-              <div style="flex:1;min-width:160px">
-                <label>אסמכתא / מספר העברה</label>
-                <input id="pay-reference" placeholder="למשל PP-123 / Bit screenshot" style="direction:ltr;text-align:left" />
-              </div>
-            </div>
-            <div class="fld" style="margin-top:10px">
-              <label>פרטי קשר לאישור</label>
-              <input id="pay-contact" placeholder="אימייל או טלפון" style="direction:ltr;text-align:left" />
-            </div>
-            <div class="fld">
-              <label>הערה לאדמין</label>
-              <textarea id="pay-note" placeholder="שם משלם, שעה, או פרטים שיעזרו לזהות את התשלום" style="min-height:56px"></textarea>
-            </div>
-            <button class="btn btn-primary" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
-            <div id="pay-submit-status" class="muted" style="margin-top:8px;min-height:20px"></div>
-          </div>
-
-          <div class="pw-note">
-            ${icon('clock', 14)} לאחר התשלום, לחץ "בדקתי" כדי לאמת. האדמין יסמן את העובד כפעיל ותוכל להתחיל לצ'וטט מיד.
-          </div>
+        <div class="card" style="margin-top:18px;text-align:right;padding:16px">
+          <h3 style="font-size:15px;margin-bottom:10px">שלחו אסמכתא תשלום</h3>
+          <div class="fld"><label>אימייל או טלפון</label><input id="pay-contact" placeholder="you@example.com" /></div>
+          <div class="fld"><label>אסמכתא</label><input id="pay-reference" placeholder="מספר העברה" /></div>
+          <button class="btn btn-primary" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
+          <div id="pay-submit-status" class="muted" style="margin-top:8px"></div>
         </div>
-      `;
-      document.getElementById('pay-submit').onclick = async () => {
-        const btn = document.getElementById('pay-submit');
-        const st = document.getElementById('pay-submit-status');
-        const contact = document.getElementById('pay-contact').value.trim();
-        if (!contact) {
-          st.innerHTML = '<span class="err">' + icon('alert', 14) + ' הכנס אימייל או טלפון לאישור</span>';
-          return;
-        }
-        btn.disabled = true;
-        btn.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח...';
-        st.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח בקשה...';
-        const r = await api('/api/workers/' + workerId + '/activation-request', {
-          method: 'POST',
-          body: JSON.stringify({
-            channel: document.getElementById('pay-channel').value,
-            reference: document.getElementById('pay-reference').value.trim(),
-            contact,
-            note: document.getElementById('pay-note').value.trim(),
-          }),
-        });
-        btn.disabled = false;
-        btn.innerHTML = icon('check', 14) + ' שלח לאישור';
-        if (r.ok) {
-          st.innerHTML = icon('check', 14) + ' הבקשה נשלחה. מספר בקשה: ' + escapeHtml(r.body.requestId);
-          toast('בקשת ההפעלה נשלחה לאישור', 'success');
-        } else {
-          st.innerHTML = '<span class="err">' + icon('alert', 14) + ' ' + escapeHtml(JSON.stringify(r.body)) + '</span>';
-        }
-      };
-      document.getElementById('pw-check').onclick = async () => {
-        const st = document.getElementById('pw-status');
-        st.innerHTML = icon('loading', 14, 'icon-spin') + ' בודק...';
-        const r = await api('/api/workers/' + workerId);
-        if (r.ok && r.body.worker.isActive) {
-          st.innerHTML = icon('check', 14) + ' העובד פעיל!';
-          setTimeout(() => renderChat(workerId), 500);
-        } else {
-          st.innerHTML = icon('alert', 14) + ' עדיין לא אושר. שלם ואז לחץ שוב.';
-        }
-      };
-      return;
-    }
+        <div class="pw-note">${icon('clock', 14)} ${typeof ACTIVATION_SLA_HE !== 'undefined' ? escapeHtml(ACTIVATION_SLA_HE) : 'אישור תוך 24 שעות בימי עסקים'}</div>
+      </div>`;
+    document.getElementById('pay-submit').onclick = async () => {
+      const contact = document.getElementById('pay-contact').value.trim();
+      if (!contact) { toast('הכנס אימייל או טלפון', 'error'); return; }
+      const r = await api('/api/workers/' + workerId + '/activation-request', {
+        method: 'POST',
+        body: JSON.stringify({ channel: 'bit', reference: document.getElementById('pay-reference').value.trim(), contact }),
+      });
+      document.getElementById('pay-submit-status').textContent = r.ok ? 'הבקשה נשלחה!' : JSON.stringify(r.body);
+    };
+  }
+
+  // ---- Chat (demo first, paywall only for production) ----
+  async function renderChat(workerId) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    const wr = await api('/api/workers/' + workerId);
+    if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
+    const w = wr.body.worker;
+    const isDemo = !w.isActive;
 
     const mr = await api('/api/workers/' + workerId + '/messages');
     const messages = mr.ok ? mr.body.messages : [];
 
-    const CUST_LS = 'paid-agent.customerId';
-    function getCustomerId() { return localStorage.getItem(CUST_LS) || ''; }
-    function setCustomerId(id) {
-      if (id) localStorage.setItem(CUST_LS, id);
-      else localStorage.removeItem(CUST_LS);
-    }
-
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
-        <span class="pill ${w.status === 'active' ? 'active' : 'pending'}">${escapeHtml(w.status)}</span>
-        <a href="#/workers/edit/${w.id}" style="margin-right:auto">${icon('edit', 14)} עריכה</a>
+        <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
       </div>
-      <div class="muted" style="margin-bottom:10px">תבנית: ${escapeHtml(w.templateId)} · בתשלום עד: ${fmtDate(w.paidUntil)}</div>
-      <div class="key-bar" style="margin-bottom:10px">
-        <label>לקוח</label>
-        <input id="c-customer-id" value="${escapeHtml(getCustomerId())}" placeholder="מזהה לקוח (או ריק)" style="flex:1;max-width:220px;font-family:monospace" />
-        <span class="muted">נשמר מקומית</span>
-      </div>
+      ${isDemo ? `<div class="demo-banner">
+        <span>${icon('zap', 14)} מצב ניסיון — דבר איתו חופשי!</span>
+        <a class="btn btn-primary btn-sm" href="#/workers/activate/${workerId}">${icon('shield', 14)} להפעיל ללקוחות</a>
+      </div>` : `<div class="demo-banner" style="border-color:rgba(102,173,120,.4)"><span>${icon('check', 14)} פעיל ללקוחות</span></div>`}
       <div id="chat-window" class="chat-window">
-        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' אין הודעות עדיין. תגיד שלום</div>' : ''}
+        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתוב שלום — העובד מחכה</div>' : ''}
         ${messages.map((m) => `<div class="msg ${m.role}">${escapeHtml(m.content)}</div>`).join('')}
       </div>
-      <div id="tool-log" style="margin-top:10px;display:none"></div>
       <div class="composer">
-        <textarea id="c-input" placeholder="כתוב הודעה... (Enter לשליחה, Shift+Enter לשורה חדשה)"></textarea>
+        <textarea id="c-input" placeholder="כתוב הודעה..." rows="2"></textarea>
         <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
       </div>
+      <details class="advanced-config" style="margin-top:16px">
+        <summary>${icon('edit', 14)} הגדרות מתקדמות</summary>
+        <div style="padding-top:12px">
+          <a href="#/workers/edit/${w.id}" class="btn btn-outline btn-sm">${icon('edit', 14)} ערוך הוראות וידע</a>
+        </div>
+      </details>
     `;
-    const custInput = document.getElementById('c-customer-id');
-    custInput.onchange = () => setCustomerId(custInput.value.trim());
     const win = document.getElementById('chat-window');
     win.scrollTop = win.scrollHeight;
     const input = document.getElementById('c-input');
     const send = document.getElementById('c-send');
-    const toolLog = document.getElementById('tool-log');
+    let gotFirstReply = messages.some((m) => m.role === 'assistant');
     async function doSend() {
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um); win.scrollTop = win.scrollHeight;
-      send.disabled = true; send.innerHTML = icon('loading', 16, 'icon-spin');
+      const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um);
+      send.disabled = true;
       const r = await api('/api/workers/' + workerId + '/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: text, customerId: getCustomerId() }),
+        body: JSON.stringify({ message: text, demoMode: isDemo }),
       });
-      send.disabled = false; send.innerHTML = icon('send', 16) + ' שלח';
-      if (r.ok) {
+      send.disabled = false;
+      if (r.ok && r.body.reply) {
         const am = document.createElement('div'); am.className = 'msg assistant'; am.textContent = r.body.reply; win.appendChild(am);
-        const meta = document.createElement('div'); meta.className = 'msg system'; meta.innerHTML = icon('zap', 12) + ' מנוע: ' + escapeHtml(r.body.runtime) + (r.body.error ? ', שגיאה: ' + escapeHtml(r.body.error) : ''); win.appendChild(meta);
-        if (r.body.toolCalls && r.body.toolCalls.length > 0) {
-          toolLog.style.display = 'block';
-          const stepsHtml = (r.body.agentSteps ?? []).map((s) => `<span style="margin-left:6px">${escapeHtml(s.phase)}${s.tool ? ':' + escapeHtml(s.tool) : ''}</span>`).join(' → ');
-          toolLog.innerHTML = '<details open><summary style="cursor:pointer;font-size:14px;color:var(--muted)">' + icon('zap', 16) + ' מסלול סוכן (' + (r.body.stepsUsed ?? r.body.toolCalls.length) + ' שלבים)</summary>' +
-            (stepsHtml ? '<div class="muted" style="font-size:12px;margin:6px 0">' + stepsHtml + '</div>' : '') +
-            '<div style="margin-top:8px;font-size:13px">' +
-            r.body.toolCalls.map((tc) => '<div style="background:#0a0a12;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px">' +
-              '<b style="color:var(--accent)">' + escapeHtml(tc.name) + '</b>' +
-              '<pre style="margin:6px 0 0;font-size:11px">' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</pre>' +
-              '<div class="muted" style="margin-top:4px">→ ' + escapeHtml((tc.result ?? '').slice(0, 200)) + ((tc.result ?? '').length > 200 ? '…' : '') + '</div>' +
-            '</div>').join('') +
-          '</div></details>';
-        } else {
-          toolLog.style.display = 'none';
-        }
+        if (!gotFirstReply) { gotFirstReply = true; celebrateFirstReply(workerId); }
       } else {
-        const em = document.createElement('div'); em.className = 'msg system'; em.style.color = 'var(--red)';
-        em.innerHTML = r.body.error === 'payment_required' ? icon('alert', 14) + ' נדרש תשלום — ' + escapeHtml(r.body.message) : icon('alert', 14) + ' ' + escapeHtml(JSON.stringify(r.body));
+        const em = document.createElement('div'); em.className = 'msg system err';
+        em.textContent = r.body?.message || r.body?.error || 'שגיאה בשליחה';
         win.appendChild(em);
       }
       win.scrollTop = win.scrollHeight;
     }
     send.onclick = doSend;
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-    };
+    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } };
   }
 
   // ---- Admin ----
