@@ -8,11 +8,14 @@
       "config": {
         "maxLambdaSize": "50mb",
         "includeFiles": [
+          "analytics-client.js",
           "bootstrap-env.js",
+          "legal-pages.js",
           "workers.js",
           "workers-ui.html",
           "mcp-client.js",
           "skills.js",
+          "docs/legal/**",
           "url-security.js"
         ]
       }

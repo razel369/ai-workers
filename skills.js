@@ -1,3 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __skillsDir = path.dirname(fileURLToPath(import.meta.url));
+const LEGAL_DIR = path.join(__skillsDir, 'docs', 'legal');
+
 export const SKILLS = [
   {
     id: 'web-research',
@@ -159,3 +166,216 @@ export function getSkillsByCategory(category) {
 export function skillCategories() {
   return [...new Set(SKILLS.map((s) => s.category))];
 }
+
+// --- Hebrew legal pages (/privacy, /terms) ---------------------------------
+
+const LEGAL_PAGES = {
+  '/privacy': { file: 'privacy-he.md', title: 'מדיניות פרטיות' },
+  '/terms': { file: 'terms-he.md', title: 'תנאי שימוש' },
+};
+
+const LEGAL_FALLBACK = {
+  'privacy-he.md': `# מדיניות פרטיות
+
+**עודכן לאחרונה:** יולי 2026
+
+## 1. מי אנחנו
+
+פלטפורמת AI Workers מספקת עובדי בינה מלאכותית לעסקים בישראל — צ'אט באתר, לידים, והסלמות לבעל העסק. אנו מעבדים מידע אישי רק כדי להפעיל את השירות שביקשתם.
+
+## 2. אילו נתונים נאספים
+
+- **פרטי חשבון:** אימייל, שם עסק, מפתח API (מוצפן), היסטוריית תשלומים ואישורי הפעלה.
+- **שיחות עובדים:** הודעות לקוחות עם העובד הווירטואלי, זיכרונות שהעובד שומר, לידים ופניות הסלמה.
+- **טכני:** כתובת IP (למניעת שימוש לרעה), לוגי שרת, מזהי סשן.
+
+## 3. מטרות עיבוד
+
+- הפעלת עובדים, תמיכה בלקוחותיכם, וחיוב מנוי חודשי.
+- אבטחה, מניעת הונאה, ועמידה בדרישות חוק.
+- שיפור המוצר (באגרגציה אנונימית בלבד).
+
+## 4. שיתוף עם צדדים שלישיים
+
+אנו משתמשים בספקי LLM (למשל OpenAI/Anthropic) לעיבוד שיחות — לפי מדיניות הפרטיות שלהם. תשלומים מתבצעים ישירות ביניכם לבין PayPal, Bit או העברה בנקאית; איננו שומרים פרטי כרטיס אשראי.
+
+## 5. אחסון ואבטחה
+
+נתונים נשמרים בשרת מאובטח (SQLite ותיקיות דיירים על ווליום קבוע ב-Railway). גישת אדמין מוגנת ב-\`ADMIN_TOKEN\`. מומלץ לסובב מפתחות API לאחר חשיפה.
+
+## 6. זכויותיכם
+
+לפי חוק הגנת הפרטיות, תוכלו לבקש גישה, תיקון או מחיקת נתונים — פנו לכתובת התמיכה שמופיעה בחשבונית (\`AGENT_OWNER_CONTACT\`).
+
+## 7. עוגיות
+
+האתר משתמש בעוגיות הכרחיות לסשן ולממשק המרקטפלייס בלבד. אין מעקב פרסומי מצדנו.
+
+## 8. שינויים
+
+נעדכן מדיניות זו בעת שינוי מהותי בשירות. המשך שימוש לאחר עדכון מהווה הסכמה.
+
+## 9. יצירת קשר
+
+שאלות בנושא פרטיות: ראו את פרטי הקשר בדף \`/invoice\` או במייל התמיכה של הפלטפורמה.`,
+  'terms-he.md': `# תנאי שימוש
+
+**עודכן לאחרונה:** יולי 2026
+
+## 1. קבלת התנאים
+
+בשימוש בפלטפורמת AI Workers ("השירות") אתם מסכימים לתנאים אלה. אם אינכם מסכימים — אל תשתמשו בשירות.
+
+## 2. השירות
+
+השירות מאפשר ליצור, להתאים ולהפעיל "עובדי AI" לעסקים: צ'אט באתר, איסוף לידים, כלים מובנים, והסלמה לבעל העסק. WhatsApp וערוצים נוספים עשויים להתווסף בהמשך.
+
+## 3. חשבון ואבטחה
+
+- אתם אחראים לשמירה על מפתח ה-API שלכם.
+- אסור לשתף מפתח עם צד שלישי לא מורשה.
+- אנו רשאים להשעות חשבון במקרה של שימוש לרעה או הפרת חוק.
+
+## 4. תשלום והפעלה
+
+- רכישת תבנית או מנוי חודשי מתבצעת דרך ערוצי התשלום שמוגדרים בפלטפורמה (PayPal, Bit, העברה בנקאית).
+- הפעלת עובד דורשת אישור תשלום ידני על ידי מנהל הפלטפורמה עד להפעלת סליקה אוטומטית.
+- מחירים מוצגים בשקלים (₪) אלא אם צוין אחרת.
+
+## 5. תוכן ואחריות
+
+- אתם אחראים לתוכן שהעובד מציג ללקוחותיכם ולעמידה בחוקי ישראל (פרסום, הגנת צרכן, פרטיות).
+- תשובות AI עלולות להיות שגויות — מומלץ לבדוק הגדרות persona וידע לפני הפעלה.
+- השירות מסופק "כמות שהוא" (AS IS) ללא אחריות לרווחים או לנזקים עקיפים.
+
+## 6. קניין רוחני
+
+תבניות, קוד וממשק שייכים למפעיל הפלטפורמה. תוכן שאתם מזינים (טקסטים, ידע עסקי) נשאר בבעלותכם; אתם מעניקים לנו רישיון להפעילו לצורך השירות בלבד.
+
+## 7. הגבלת אחריות
+
+אחריותנו המצטברת מוגבלת לסכום ששילמתם ב-12 החודשים האחרונים עבור השירות, במידה המרבית המותרת בחוק.
+
+## 8. ביטול
+
+ניתן להפסיק שימוש בכל עת. מנויים פעילים אינם מוחזרים באופן יחסי אלא אם נדרש בחוק. נתונים עשויים להימחק לאחר תקופת שמירה סבירה.
+
+## 9. שינויים
+
+נוכל לעדכן תנאים אלה; נפרסם גרסה מעודכנת בכתובת \`/terms\`. שימוש מתמשך לאחר עדכון מהווה הסכמה.
+
+## 10. דין וסמכות שיפוט
+
+הדין החל הוא דין מדינת ישראל. סמכות שיפוט בבתי המשפט המוסמכים בישראל.
+
+## 11. יצירת קשר
+
+לשאלות משפטיות או חיוב: פנו לכתובת התמיכה בחשבונית או ב-\`AGENT_OWNER_CONTACT\`.`,
+};
+
+const legalCache = new Map();
+
+function loadLegalMarkdown(filename) {
+  if (!legalCache.has(filename)) {
+    const filePath = path.join(LEGAL_DIR, filename);
+    try {
+      legalCache.set(filename, fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      legalCache.set(filename, LEGAL_FALLBACK[filename]);
+    }
+  }
+  return legalCache.get(filename);
+}
+
+function escapeLegalHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function legalMarkdownToHtml(md) {
+  const lines = md.split('\n');
+  const out = [];
+  let inList = false;
+  const closeList = () => {
+    if (inList) { out.push('</ul>'); inList = false; }
+  };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { closeList(); continue; }
+    if (line.startsWith('# ')) {
+      closeList();
+      out.push(`<h1>${escapeLegalHtml(line.slice(2))}</h1>`);
+    } else if (line.startsWith('## ')) {
+      closeList();
+      out.push(`<h2>${escapeLegalHtml(line.slice(3))}</h2>`);
+    } else if (line.startsWith('- ')) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push(`<li>${legalInlineFormat(line.slice(2))}</li>`);
+    } else {
+      closeList();
+      out.push(`<p>${legalInlineFormat(line)}</p>`);
+    }
+  }
+  closeList();
+  return out.join('\n');
+}
+
+function legalInlineFormat(text) {
+  let s = escapeLegalHtml(text);
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return s;
+}
+
+function wrapLegalPage(title, bodyHtml) {
+  return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeLegalHtml(title)} — AI Workers</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0a0908; --text: #f2ebe2; --muted: #8f857a; --accent: #d4a24a; }
+    body { font-family: system-ui, "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text);
+      line-height: 1.7; max-width: 720px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    a { color: var(--accent); }
+    h1 { font-size: 1.75rem; margin-bottom: .5rem; }
+    h2 { font-size: 1.15rem; margin: 1.5rem 0 .5rem; color: var(--text); }
+    p, li { color: var(--muted); }
+    code { background: #1e1a16; padding: .1em .35em; border-radius: 4px; font-size: .9em; }
+    .nav { margin-bottom: 2rem; font-size: .9rem; }
+    .nav a { margin-left: 1rem; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a href="/">דף הבית</a>
+    <a href="/marketplace">מרקטפלייס</a>
+    <a href="/privacy">פרטיות</a>
+    <a href="/terms">תנאים</a>
+  </nav>
+  ${bodyHtml}
+</body>
+</html>`;
+}
+
+/** @returns {boolean} true if handled */
+export function handleLegalRoutes(req, res, url, send) {
+  if (req.method !== 'GET') return false;
+  const page = LEGAL_PAGES[url.pathname];
+  if (!page) return false;
+  try {
+    const md = loadLegalMarkdown(page.file);
+    send(res, 200, wrapLegalPage(page.title, legalMarkdownToHtml(md)), { 'content-type': 'text/html; charset=utf-8' });
+    return true;
+  } catch (err) {
+    console.error('legal-pages:', err);
+    send(res, 500, { error: 'legal_page_unavailable' });
+    return true;
+  }
+}
+
+export const LEGAL_PATHS = Object.keys(LEGAL_PAGES);

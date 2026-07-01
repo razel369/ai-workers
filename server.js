@@ -49,6 +49,7 @@ import { DatabaseSync } from 'node:sqlite';
 import * as workers from './workers.js';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill } from './skills.js';
+import { handleLegalRoutes } from './legal-pages.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -101,6 +102,8 @@ const ADMIN_KEYS_LIMIT = 200;
 const ADMIN_AUDIT_LIMIT = 200;
 const ASSETS_CACHE_MAX_AGE = 86400;
 const DEFAULT_RENT_DAYS = 30;
+const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
+const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
 
 // --- SQLite ---------------------------------------------------------------
 
@@ -548,6 +551,10 @@ function getPublicMarketplaceStats() {
 }
 
 // --- HTTP helpers ---------------------------------------------------------
+
+function vercelAnalyticsScripts() {
+  return VERCEL_INLINE_SCRIPT + ANALYTICS_LANDING_SCRIPT;
+}
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -1027,6 +1034,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     loadStats(); setInterval(loadStats, ${STATS_POLL_MS});
     loadTemplates();
   </script>
+  ${vercelAnalyticsScripts()}
 </body>
 </html>`;
 }
@@ -1126,6 +1134,7 @@ const server = http.createServer(async (req, res) => {
       persistentStorage: !DB_PATH.includes('/tmp'),
     });
   }
+  if (handleLegalRoutes(req, res, url, send)) return;
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
   }
@@ -1261,7 +1270,7 @@ const server = http.createServer(async (req, res) => {
       bankAccount: BANK_ACCOUNT || '',
       payeeName: PAYEE_NAME || '',
     });
-    html = html.replace('</body>', `<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;</script></body>`);
+    html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;</script></body>`);
     return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
   }
 
@@ -1632,6 +1641,26 @@ const server = http.createServer(async (req, res) => {
     const mergedSkills = (w.skills ?? []).filter((s) => s !== body.skillId);
     const res2 = workers.updateWorker(tenantId, body.workerId, { tools: filteredTools, skills: mergedSkills });
     return send(res, res2.ok ? 200 : 400, res2);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/analytics-client.js') {
+    try {
+      const content = fs.readFileSync(path.join(__dirname, 'analytics-client.js'), 'utf8');
+      return send(res, 200, content, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public,max-age=' + ASSETS_CACHE_MAX_AGE });
+    } catch {
+      return send(res, 404, { error: 'not_found', path: url.pathname });
+    }
+  }
+  if (req.method === 'GET' && url.pathname === '/vendor/vercel-analytics.mjs') {
+    const vendorPath = path.resolve(__dirname, 'node_modules', '@vercel', 'analytics', 'dist', 'index.mjs');
+    const vendorRoot = path.resolve(__dirname, 'node_modules', '@vercel', 'analytics');
+    if (!vendorPath.startsWith(vendorRoot)) return send(res, 403, { error: 'forbidden' });
+    try {
+      const content = fs.readFileSync(vendorPath, 'utf8');
+      return send(res, 200, content, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public,max-age=31536000' });
+    } catch {
+      return send(res, 404, { error: 'not_found', path: url.pathname });
+    }
   }
 
   // Serve static assets from ./assets/
