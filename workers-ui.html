@@ -593,6 +593,16 @@
 <main id="app">
   <div class="empty">טוען...</div>
 </main>
+<footer class="site-footer" id="site-footer" aria-label="תחתית אתר">
+  <nav class="site-footer-nav">
+    <a href="/">דף הבית</a>
+    <a href="/marketplace">שוק העובדים</a>
+    <a href="/privacy">מדיניות פרטיות</a>
+    <a href="/terms">תנאי שימוש</a>
+    <a href="/invoice">איך משלמים</a>
+  </nav>
+  <p class="site-footer-note">תשלום ב-Bit, PayPal או העברה בנקאית — ללא כרטיס אשראי באתר · מפעיל פרטי · קבלה פשוטה לפי בקשה</p>
+</footer>
 <script>
 const APP = (() => {
   const app = document.getElementById('app');
@@ -2376,6 +2386,17 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   // ---- Activation paywall (only when user wants production) ----
+  function normalizeIlPhone(phone) {
+    const d = String(phone || '').replace(/\D/g, '');
+    if (d.startsWith('972')) return d;
+    if (d.startsWith('0')) return '972' + d.slice(1);
+    return d;
+  }
+  function bitPayUrl(phone) {
+    const n = normalizeIlPhone(phone);
+    return n ? `https://www.bitpay.co.il/app/me/${n}` : '';
+  }
+
   async function renderActivatePaywall(workerId, alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
@@ -2390,6 +2411,23 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const tplRes = await api('/api/workers/templates');
     const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
     const price = template ? template.rentPriceIls : 99;
+    const bitUrl = BIT_PHONE ? bitPayUrl(BIT_PHONE) : '';
+    const bitDisplay = BIT_PHONE ? (BIT_PHONE.replace(/^972/, '0').replace(/^(\d{3})(\d+)/, '$1-$2') || BIT_PHONE) : '';
+    const hasBit = Boolean(BIT_PHONE);
+    const hasPaypal = Boolean(PAYPAL_ME);
+    const hasBank = Boolean(BANK_ACCOUNT && PAYEE_NAME);
+    const hasAnyPay = hasBit || hasPaypal || hasBank;
+  const payMethods = [
+      hasBit ? `<a class="pw-method pw-method-link" href="${escapeHtml(bitUrl)}" target="_blank" rel="noopener" data-channel="bit">
+        <div class="pm-info"><div class="pm-title">${icon('ils', 16)} Bit</div><div class="pm-desc">לחצו לתשלום · ${escapeHtml(bitDisplay)}</div></div>
+        <span class="pm-go">פתחו Bit ←</span></a>` : '',
+      hasPaypal ? `<a class="pw-method pw-method-link" href="https://paypal.me/${escapeHtml(PAYPAL_ME)}" target="_blank" rel="noopener" data-channel="paypal">
+        <div class="pm-info"><div class="pm-title">PayPal</div><div class="pm-desc">paypal.me/${escapeHtml(PAYPAL_ME)}</div></div>
+        <span class="pm-go">פתחו PayPal ←</span></a>` : '',
+      hasBank ? `<div class="pw-method pw-method-bank" data-channel="bank">
+        <div class="pm-info"><div class="pm-title">העברה בנקאית</div>
+        <div class="pm-desc">${escapeHtml(PAYEE_NAME)} · ${escapeHtml(BANK_NAME || '')} סניף ${escapeHtml(BANK_BRANCH || '')} חשבון ${escapeHtml(BANK_ACCOUNT || '')}</div></div></div>` : '',
+    ].filter(Boolean).join('');
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('shield', 20)} להפעיל ללקוחות</h2>
@@ -2400,15 +2438,20 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <h2>${escapeHtml(w.name)} מוכן לעבודה מול לקוחות!</h2>
         <p class="muted">אחרי תשלום ואישור — העובד יהיה זמין גם באתר שלך וללקוחות אמיתיים.</p>
         <div class="pw-price">₪${price} <small>לחודש</small></div>
-        <div class="pw-methods">
-          ${BIT_PHONE ? `<div class="pw-method"><div class="pm-info"><div class="pm-title">Bit</div><div class="pm-desc">שלם ל-${BIT_PHONE}</div></div></div>` : ''}
-          ${PAYPAL_ME ? `<div class="pw-method"><div class="pm-info"><div class="pm-title">PayPal</div><div class="pm-desc">paypal.me/${PAYPAL_ME}</div></div></div>` : ''}
-        </div>
+        ${hasAnyPay ? `<p class="pw-individual-note">${icon('shield', 14)} תשלום ישיר למפעיל — Bit / PayPal / בנק. ללא כרטיס אשראי באתר. קבלה פשוטה לפי בקשה (לא חשבונית מס).</p>` : `<p class="pw-individual-note err">ערוצי תשלום בדרך להגדרה — פנו לתמיכה.</p>`}
+        <div class="pw-methods">${payMethods || '<p class="muted">אין ערוצי תשלום מוגדרים</p>'}</div>
         <div class="card" style="margin-top:18px;text-align:right;padding:16px">
-          <h3 style="font-size:15px;margin-bottom:10px">שלחו אסמכתא תשלום</h3>
-          <div class="fld"><label>אימייל או טלפון</label><input id="pay-contact" placeholder="you@example.com" /></div>
-          <div class="fld"><label>אסמכתא</label><input id="pay-reference" placeholder="מספר העברה" /></div>
-          <button class="btn btn-primary" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
+          <h3 style="font-size:15px;margin-bottom:10px">אחרי התשלום — שלחו אסמכתא</h3>
+          <div class="fld"><label>איך שילמתם?</label>
+            <select id="pay-channel" class="magic-input">
+              ${hasBit ? '<option value="bit">Bit</option>' : ''}
+              ${hasPaypal ? '<option value="paypal">PayPal</option>' : ''}
+              ${hasBank ? '<option value="bank-transfer">העברה בנקאית</option>' : ''}
+            </select>
+          </div>
+          <div class="fld"><label>אימייל או טלפון ליצירת קשר</label><input id="pay-contact" placeholder="you@example.com" /></div>
+          <div class="fld"><label>אסמכתא / מספר אישור</label><input id="pay-reference" placeholder="מספר העברה או אישור PayPal" /></div>
+          <button class="btn btn-primary" id="pay-submit" ${hasAnyPay ? '' : 'disabled'}>${icon('check', 14)} שלח לאישור</button>
           <div id="pay-submit-status" class="muted" style="margin-top:8px"></div>
         </div>
         <div class="pw-note">${icon('clock', 14)} ${typeof ACTIVATION_SLA_HE !== 'undefined' ? escapeHtml(ACTIVATION_SLA_HE) : 'אישור תוך 24 שעות בימי עסקים'}</div>
@@ -2416,9 +2459,11 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     document.getElementById('pay-submit').onclick = async () => {
       const contact = document.getElementById('pay-contact').value.trim();
       if (!contact) { toast('הכנס אימייל או טלפון', 'error'); return; }
+      const channelEl = document.getElementById('pay-channel');
+      const channel = channelEl ? channelEl.value : 'bit';
       const r = await api('/api/workers/' + workerId + '/activation-request', {
         method: 'POST',
-        body: JSON.stringify({ channel: 'bit', reference: document.getElementById('pay-reference').value.trim(), contact }),
+        body: JSON.stringify({ channel, reference: document.getElementById('pay-reference').value.trim(), contact }),
       });
       document.getElementById('pay-submit-status').textContent = r.ok ? 'הבקשה נשלחה!' : friendlyApiError(r.body, 'שליחת הבקשה נכשלה');
     };

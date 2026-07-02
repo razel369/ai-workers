@@ -1095,11 +1095,13 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <div class="footer">
     <div class="fm">
       <a href="/marketplace">שוק העובדים</a>
-      <a href="/invoice">חשבונית</a>
-      <a href="/marketplace#/admin">ניהול</a>
+      <a href="/invoice">איך משלמים</a>
+      <a href="/privacy">מדיניות פרטיות</a>
+      <a href="/terms">תנאי שימוש</a>
       ${AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">צור קשר</a>` : ''}
     </div>
     <p>${escapeHtml(AGENT_NAME)} · ${escapeHtml(AGENT_DESCRIPTION)}</p>
+    <p class="footer-legal-note">תשלום ב-Bit, PayPal או העברה בנקאית — ללא סליקת כרטיסי אשראי באתר</p>
   </div>
 
   <script>

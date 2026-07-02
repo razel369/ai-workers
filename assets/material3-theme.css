@@ -808,3 +808,62 @@ body.landing-page .btn-mkt {
 @media (prefers-reduced-motion: reduce) {
   .preview-msg, .preview-typing, .w-card { animation: none !important; }
 }
+
+/* ── Site footer (marketplace SPA) ── */
+.site-footer {
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  padding: 20px 24px 28px;
+  margin-top: 8px;
+  text-align: center;
+}
+.site-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.site-footer-nav a {
+  color: var(--md-sys-color-on-surface-variant);
+  text-decoration: none;
+  font: var(--md-sys-typescale-label-large);
+}
+.site-footer-nav a:hover { color: var(--md-sys-color-primary); }
+.site-footer-note {
+  font: var(--md-sys-typescale-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.45;
+}
+
+/* ── Paywall payment links ── */
+.pw-method-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s, background 0.2s;
+}
+.pw-method-link:hover {
+  border-color: color-mix(in srgb, var(--md-sys-color-primary) 40%, var(--md-sys-color-outline-variant));
+  background: color-mix(in srgb, var(--md-sys-color-primary-container) 18%, transparent);
+}
+.pw-method-link .pm-go {
+  font: var(--md-sys-typescale-label-medium);
+  color: var(--md-sys-color-primary);
+  white-space: nowrap;
+}
+.pw-individual-note {
+  font: var(--md-sys-typescale-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 12px 0;
+  line-height: 1.5;
+}
+body.landing-page .footer-legal-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
