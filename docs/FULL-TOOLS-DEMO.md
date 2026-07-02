@@ -74,7 +74,7 @@ Copy-Item .env.demo.example .env
 
 | | **Vercel** | **Railway** |
 |---|------------|-------------|
-| URL לדוגמה | https://paid-agent-demo.vercel.app | `https://<your-service>.up.railway.app` |
+| URL לדוגמה | `https://paid-agent-demo-production.up.railway.app` |
 | LLM | Mock (אין persistence ל-API key ב-/tmp) | `LLM_API_KEY` ב-Variables |
 | SQLite | אфמרלי — `/tmp`, מתאפס | Volume ב-`/app/data` |
 | מתאים ל | UI, Magic flow, mock tools | דמו production, webhooks, היסטוריה |
@@ -254,7 +254,7 @@ npm test
 | **Local** | http://localhost:8765/marketplace |
 | **Magic** | http://localhost:8765/marketplace#/magic |
 | **Admin** | http://localhost:8765/marketplace#/admin |
-| **Vercel demo** | https://paid-agent-demo.vercel.app/marketplace |
+| **Production** | https://paid-agent-demo-production.up.railway.app/marketplace |
 | **Railway** | https://\<your-app\>.up.railway.app/marketplace |
 
 ---

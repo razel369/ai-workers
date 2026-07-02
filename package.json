@@ -27,6 +27,7 @@
     "business"
   ],
   "license": "MIT",
+  "homepage": "https://paid-agent-demo-production.up.railway.app",
   "devDependencies": {
     "playwright": "^1.61.1"
   },

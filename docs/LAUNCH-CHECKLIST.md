@@ -1,15 +1,17 @@
 # AI Workers — Launch Checklist (Israel)
 
+**Production site:** https://paid-agent-demo-production.up.railway.app
+
 ## Phase 0 — Infrastructure (this sprint)
 
-- [ ] Push to `github.com/razel369/ai-workers`
-- [ ] **Production DB (Railway — recommended)**
-  - [ ] Create Railway project from GitHub repo (uses `Dockerfile` + `railway.toml`)
-  - [ ] Add **persistent volume** mounted at `/app/data` (SQLite + tenant DBs)
-  - [ ] Set env vars in Railway dashboard (see below)
-  - [ ] Set `PUBLIC_BASE_URL` to the Railway URL (e.g. `https://ai-workers-production.up.railway.app`)
-  - [ ] Verify `GET /health` returns `"persistentStorage": true`
-- [ ] Vercel (`paid-agent-demo.vercel.app`) — demos only; SQLite is ephemeral on `/tmp`
+- [x] Push to `github.com/razel369/ai-workers`
+- [x] **Production DB (Railway)**
+  - [x] Railway project from GitHub (`Dockerfile` + `railway.toml`)
+  - [x] Persistent volume at `/app/data`
+  - [x] `PUBLIC_BASE_URL` = `https://paid-agent-demo-production.up.railway.app`
+  - [x] `GET /health` → `persistentStorage: true`, `llmConfigured: true`
+  - [x] GitHub repo homepage → Railway URL
+- [ ] Disconnect Vercel project (optional — avoids two live URLs)
 - [ ] Run `npm test` green on GitHub Actions
 
 ## Phase 1 — Product readiness
@@ -67,7 +69,16 @@
 4. Deploy → open `https://<your-service>.up.railway.app/health`
 5. Smoke test: signup → buy template → activation proof → admin approve → chat
 
-### Vercel (demos only)
+## Phase 0 — Still missing for real launch
+
+- [ ] **Payment channel** — set `BIT_PHONE` or `PAYPAL_ME` in Railway (health shows `channels: []`)
+- [ ] **Custom domain** (optional) — e.g. `ai-workers.co.il` → Railway
+- [ ] **WhatsApp** — Meta/Twilio env + webhook at `/api/webhooks/whatsapp`
+- [ ] **Legal pages live** — privacy + terms linked from landing (files exist in `docs/legal/`)
+- [ ] **LLM budget** — free OpenRouter tier is ~50 req/day; upgrade before marketing push
+- [ ] **Backup** — Railway volume snapshot or export plan for `/app/data`
+
+### Vercel (demos only — disconnect recommended)
 
 - Ephemeral `/tmp/ai-workers-data` — data resets on cold deploy
 - Use for UI previews; **do not** use as primary production DB

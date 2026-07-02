@@ -1,5 +1,8 @@
 # AI Workers — AI Employees for Israeli Businesses
 
+**Production:** https://paid-agent-demo-production.up.railway.app  
+**Marketplace:** https://paid-agent-demo-production.up.railway.app/marketplace
+
 Hire AI employees — pick a template, customize it, deploy it. Your worker handles customers 24/7 on web chat. WhatsApp coming soon.
 
 - **B2B Lead Qualifier** — qualifies Hebrew/English leads, books meetings
@@ -151,7 +154,8 @@ Deployment checklist:
 - Verify `/health` after deploy and run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
 - Roll back by redeploying the previous image/revision, then verify `/health` and the admin audit panel.
 
-**Vercel** (`paid-agent-demo.vercel.app`) is fine for UI demos; SQLite lives on ephemeral `/tmp` and resets on cold deploy. Use Railway (or Fly/Render) for production data.
+**Production URL:** `https://paid-agent-demo-production.up.railway.app` — this is the only supported live environment.  
+Vercel (if still connected) uses ephemeral `/tmp` storage and is not used for real customers; disconnect it in the Vercel dashboard to avoid confusion.
 
 ## Why this is worth paying for (2026)
 
