@@ -55,7 +55,7 @@ async function sendWhatsAppReply(tenantId, route, to, text) {
 }
 
 export async function processWhatsAppInbound(platformDb, deps, inbound) {
-  const { chatWithWorker, logAgentActions } = deps;
+  const { chatWithWorker, logAgentActions, getWorker } = deps;
   if (!inbound?.from) return { ok: false, error: 'missing_sender' };
 
   const route = resolveWhatsAppRoute(platformDb, {
@@ -70,11 +70,13 @@ export async function processWhatsAppInbound(platformDb, deps, inbound) {
   const customerId = `wa:${normalizeDigits(inbound.from)}`;
   const userMessage = (inbound.text || '').trim() || '(הודעה ללא טקסט)';
 
+  const worker = getWorker?.(route.tenantId, route.workerId);
   const chat = await chatWithWorker({
     tenantId: route.tenantId,
     workerId: route.workerId,
     userMessage,
     customerId,
+    demoMode: !worker?.isActive,
   });
 
   if (!chat.ok) {
@@ -89,6 +91,9 @@ export async function processWhatsAppInbound(platformDb, deps, inbound) {
   if (!replyText) return { ok: true, replied: false, runtime: chat.runtime };
 
   const sendResult = await sendWhatsAppReply(route.tenantId, route, inbound.from, replyText.slice(0, 4096));
+  if (!sendResult?.ok) {
+    return { ok: false, error: 'send_failed', replied: false, runtime: chat.runtime };
+  }
   return {
     ok: true,
     replied: true,

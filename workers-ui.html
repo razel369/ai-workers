@@ -601,12 +601,28 @@ const APP = (() => {
   const ONBOARDING_LS = 'paid-agent.onboardingDone';
   const MAGIC_LS = 'paid-agent.magicState';
   const ADVANCED_LS = 'paid-agent.advancedMode';
+  let routeSeq = 0;
 
   function isAdvancedMode() { return localStorage.getItem(ADVANCED_LS) === '1'; }
   function setAdvancedMode(on) { localStorage.setItem(ADVANCED_LS, on ? '1' : '0'); }
 
   async function ensureSession(businessName) {
-    if (getKey()) return true;
+    const existing = getKey();
+    if (existing) {
+      try {
+        const chk = await fetch('/api/account', { headers: { authorization: 'Bearer ' + existing } });
+        if (chk.ok) return true;
+        if (chk.status === 401) {
+          setKey('');
+        } else {
+          toast('בעיית תקשורת עם השרת — נסו שוב בעוד רגע', 'error');
+          return false;
+        }
+      } catch {
+        toast('אין חיבור לשרת — בדקו אינטרנט ונסו שוב', 'error');
+        return false;
+      }
+    }
     const r = await fetch('/api/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -619,6 +635,16 @@ const APP = (() => {
     }
     toast('לא הצלחנו להתחיל — נסה שוב בעוד רגע', 'error');
     return false;
+  }
+
+  function friendlyApiError(body, fallback = 'משהו השתבש — נסו שוב') {
+    if (!body || typeof body !== 'object') return fallback;
+    if (body.messageHe) return body.messageHe;
+    if (body.error === 'auth_required') return 'ההתחברות פגה — רעננו את הדף ונסו שוב';
+    if (body.error === 'not_found') return 'לא מצאנו את העובד — ייתכן שהנתונים נמחקו. התחילו מההתחלה.';
+    if (body.error === 'unknown_template') return 'תבנית לא נמצאה — בחרו שוב מהקטלוג';
+    if (body.error === 'payment_required') return 'נדרש תשלום להפעלה מלאה — אפשר להמשיך בניסיון חינם';
+    return fallback;
   }
 
   function showShareSuccess(workerId, workerName) {
@@ -889,7 +915,7 @@ const APP = (() => {
     localStorage.setItem(MAGIC_LS, JSON.stringify({ ...loadMagicState(), ...patch }));
   }
 
-  async function renderMagicWizard() {
+  async function renderMagicWizard(alive = () => true) {
     setActive('marketplace');
     const tr = await fetch('/api/workers/templates');
     const templates = tr.ok ? (await tr.json()).templates : [];
@@ -940,7 +966,8 @@ const APP = (() => {
           <h1 class="magic-title">מה העובד צריך לעשות?</h1>
           <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
           <div class="tpl-pick">${picks}</div>
-          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} דבר איתו עכשיו!</button>
+          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} המשך לחיבור ערוצים</button>
+          <button class="btn btn-outline btn-hero" id="magic-skip-to-chat" style="margin-top:10px" ${state.templateId ? '' : 'disabled'}>${icon('zap', 14)} דלג — צור עובד ודבר עכשיו</button>
         </div>`;
         app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
           btn.onclick = () => {
@@ -948,6 +975,8 @@ const APP = (() => {
             saveMagicState({ templateId: state.templateId });
             app.querySelectorAll('.tpl-pick-btn').forEach((b) => b.classList.toggle('selected', b.dataset.tpl === state.templateId));
             document.getElementById('magic-next').disabled = false;
+            const skipBtn = document.getElementById('magic-skip-to-chat');
+            if (skipBtn) skipBtn.disabled = false;
           };
         });
         document.getElementById('magic-next').onclick = async () => {
@@ -955,6 +984,11 @@ const APP = (() => {
           saveMagicState({ step: 2 });
           step = 2;
           paint();
+        };
+        const skipChat = document.getElementById('magic-skip-to-chat');
+        if (skipChat) skipChat.onclick = async () => {
+          if (!state.templateId) return;
+          await finishMagic();
         };
         return;
       }
@@ -999,54 +1033,76 @@ const APP = (() => {
 
     async function finishMagic() {
       state = { ...loadMagicState(), ...state };
+      if (!state.templateId) {
+        toast('בחרו תפקיד בשלב הקודם', 'error');
+        step = 1;
+        return paint();
+      }
       app.innerHTML = `<div class="magic-wrap"><div class="empty">${icon('loading', 32, 'icon-spin')} מכין את העובד שלך...</div></div>`;
-      const businessName = state.businessName || 'העסק שלי';
-      if (!(await ensureSession(businessName))) { step = 0; return paint(); }
-      const buy = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId: state.templateId }) });
-      if (!buy.ok) { toast('לא הצלחנו — נסה שוב', 'error'); step = 1; return paint(); }
-      const workerId = buy.body.workerId;
-      const tpl = templates.find((t) => t.id === state.templateId);
-      const knRes = await fetch('/api/workers/smart-knowledge?' + new URLSearchParams({ templateId: state.templateId, businessName }));
-      const smartKnowledge = knRes.ok ? (await knRes.json()).knowledge : `שם העסק: ${businessName}\nשעות פעילות: א-ה 09:00-18:00`;
-      await api('/api/workers/' + workerId, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          name: (tpl?.nameHe || 'העובד שלי') + ' — ' + businessName,
-          knowledge: smartKnowledge,
-        }),
-      });
-      if (state.notifyPhone) {
-        await api('/api/integrations/connect', {
-          method: 'POST',
-          body: JSON.stringify({ type: 'whatsapp', workerId, config: { ownerNotifyPhone: state.notifyPhone, provider: 'meta' } }),
+      try {
+        const businessName = state.businessName || 'העסק שלי';
+        if (!(await ensureSession(businessName))) { step = 0; return paint(); }
+        let workerId = state.workerId;
+        if (!workerId) {
+          const buy = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId: state.templateId }) });
+          if (!buy.ok) {
+            toast(friendlyApiError(buy.body, 'לא הצלחנו ליצור את העובד — נסו שוב'), 'error');
+            step = buy.status === 401 ? 0 : 1;
+            return paint();
+          }
+          workerId = buy.body.workerId;
+          saveMagicState({ workerId });
+        }
+        const tpl = templates.find((t) => t.id === state.templateId);
+        const knRes = await fetch('/api/workers/smart-knowledge?' + new URLSearchParams({ templateId: state.templateId, businessName }));
+        const smartKnowledge = knRes.ok ? (await knRes.json()).knowledge : `שם העסק: ${businessName}\nשעות פעילות: א-ה 09:00-18:00`;
+        const patchRes = await api('/api/workers/' + workerId, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: (tpl?.nameHe || 'העובד שלי') + ' — ' + businessName,
+            knowledge: smartKnowledge,
+          }),
         });
-        await api('/api/workers/' + workerId + '/whatsapp-route', {
-          method: 'POST',
-          body: JSON.stringify({ provider: 'meta' }),
-        });
+        if (!patchRes.ok) {
+          toast(friendlyApiError(patchRes.body, 'העובד נוצר אבל ההתאמה נכשלה — ממשיכים לשיחה'), 'error');
+        }
+        if (state.notifyPhone) {
+          const waRes = await api('/api/integrations/connect', {
+            method: 'POST',
+            body: JSON.stringify({ type: 'whatsapp', workerId, config: { ownerNotifyPhone: state.notifyPhone, provider: 'meta' } }),
+          });
+          if (!waRes.ok) toast('חיבור WhatsApp נכשל — אפשר לנסות שוב מהגדרות העובד', 'error');
+        }
+        if (state.bookingLink) {
+          const calRes = await api('/api/integrations/connect', {
+            method: 'POST',
+            body: JSON.stringify({ type: 'google_calendar', workerId, config: { bookingLink: state.bookingLink } }),
+          });
+          if (!calRes.ok) toast('חיבור יומן נכשל — אפשר לנסות שוב מהגדרות העובד', 'error');
+        }
+        localStorage.removeItem(MAGIC_LS);
+        localStorage.setItem(ONBOARDING_LS, '1');
+        location.hash = '#/workers/chat/' + workerId;
+      } catch (e) {
+        console.error('[magic]', e);
+        toast('משהו השתבש בדרך — נסו שוב או דלגו על חיבור ערוצים', 'error');
+        step = 2;
+        return paint();
       }
-      if (state.bookingLink) {
-        await api('/api/integrations/connect', {
-          method: 'POST',
-          body: JSON.stringify({ type: 'google_calendar', workerId, config: { bookingLink: state.bookingLink } }),
-        });
-      }
-      localStorage.removeItem(MAGIC_LS);
-      localStorage.setItem(ONBOARDING_LS, '1');
-      location.hash = '#/workers/chat/' + workerId;
     }
 
     if (step === 2) await paint();
     else await paint();
   }
 
-  async function renderWorkerInsights(workerId) {
+  async function renderWorkerInsights(workerId, alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
     app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען נתונים...</div>`;
     const r = await api('/api/workers/' + workerId + '/insights');
+    if (!alive()) return;
     if (!r.ok) {
-      app.innerHTML = `<div class="empty err">לא הצלחנו לטעון את הלוח — ${escapeHtml(JSON.stringify(r.body))}</div>`;
+      app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון את הלוח</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`;
       return;
     }
     const { worker, counts, recentLeads, recentEscalations, recentActions, recentOutbox } = r.body;
@@ -1136,23 +1192,25 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     fab.classList.toggle('visible', show);
   }
   async function route() {
+    const mySeq = ++routeSeq;
+    const alive = () => mySeq === routeSeq;
     checkOAuthReturn();
     syncAdminNav();
     const h = (location.hash || '#/').slice(1);
     const [, section, ...rest] = h.split('/');
     syncM3Fab(section, rest);
-    if (!section || section === '') return renderMarketplace();
-    if (section === 'magic') return renderMagicWizard();
-    if (section === 'workers' && rest.length === 0) return renderWorkersList();
-    if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] });
-    if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] });
-    if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1]);
-    if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1]);
-    if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(rest[1]);
-    if (section === 'admin') return renderAdmin();
-    return renderMarketplace();
+    if (!section || section === '') return renderMarketplace(alive);
+    if (section === 'magic') return renderMagicWizard(alive);
+    if (section === 'workers' && rest.length === 0) return renderWorkersList(alive);
+    if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] }, alive);
+    if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] }, alive);
+    if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1], alive);
+    if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1], alive);
+    if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(rest[1], alive);
+    if (section === 'admin') return renderAdmin(alive);
+    return renderMarketplace(alive);
   }
-async function renderMarketplace() {
+async function renderMarketplace(alive = () => true) {
   function renderCards(tpls) {
     if (tpls.length === 0) {
       const msg = currentSearch.trim()
@@ -1268,25 +1326,18 @@ async function renderMarketplace() {
           <a class="btn btn-outline btn-hero" href="#/workers">${icon('users', 14)} העובדים שלי</a>
         </div>
       </div>
-      <aside class="hero-preview" aria-label="תצוגה מקדימה">
-        <div class="hero-preview-glow"></div>
-        <div class="preview-window">
-          <div class="preview-titlebar">
-            <div class="preview-dots"><span></span><span></span><span></span></div>
-            <div class="preview-title">עובד שירות — דוגמה חיה</div>
-            <div class="preview-status">פעיל</div>
-          </div>
-          <div class="preview-chat">
-            <div class="preview-msg user">שלום, יש לכם מקום ליום שישי בערב?</div>
-            <div class="preview-msg bot">בטח! לכמה אנשים? ויש העדפה לשעה מסוימת?</div>
-            <div class="preview-msg bot">אם תרצו, אשמח גם לשמור שם וטלפון לחזרה מהירה.</div>
-            <div class="preview-typing"><span></span><span></span><span></span></div>
-          </div>
-          <div class="preview-metrics">
-            <div class="preview-metric"><div class="val">24/7</div><div class="lbl">זמינות</div></div>
-            <div class="preview-metric"><div class="val">&lt;30s</div><div class="lbl">תגובה</div></div>
-            <div class="preview-metric"><div class="val">עברית</div><div class="lbl">שפה</div></div>
-          </div>
+      <aside class="hero-showcase" aria-label="מה מקבלים">
+        <div class="showcase-card accent">
+          <div class="showcase-label">זמינות</div>
+          <div class="showcase-metric"><span class="showcase-num">24/7</span><span class="showcase-txt">גם מחוץ לשעות העבודה</span></div>
+        </div>
+        <div class="showcase-card">
+          <div class="showcase-label">שפה</div>
+          <div class="showcase-metric"><span class="showcase-num">עברית</span><span class="showcase-txt">טבעית, בלי מונחים טכניים</span></div>
+        </div>
+        <div class="showcase-card">
+          <div class="showcase-label">התחלה</div>
+          <div class="showcase-metric"><span class="showcase-num">חינם</span><span class="showcase-txt">דוגמה חיה לפני תשלום</span></div>
         </div>
       </aside>
     </div>
@@ -1460,15 +1511,17 @@ async function renderMarketplace() {
   }
 
   // ---- My Workers ----
-  async function renderWorkersList() {
+  async function renderWorkersList(alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) {
+      if (!alive()) return;
       app.innerHTML = `<div class="empty"><h2>בואו נתחיל</h2><p><button class="btn btn-primary btn-hero" onclick="location.hash='#/magic'">נסה עכשיו בחינם</button></p></div>`;
       return;
     }
     app.innerHTML = '<div class="grid" style="margin-top:20px">' + Array(3).fill(0).map(() => '<div class="card" style="height:160px;padding:0"><div class="shimmer" style="width:100%;height:100%"></div></div>').join('') + '</div>';
     const r = await api('/api/workers');
-    if (!r.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(r.body))}</div>`; return; }
+    if (!alive()) return;
+    if (!r.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון עובדים</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`; return; }
     const workers = r.body.workers;
     if (!workers.length) {
       app.innerHTML = `<div class="empty"><h2>אין עדיין עובדים</h2><p>לך ל<a href="#/">שוק העובדים</a> כדי לקנות את העובד הראשון שלך.</p></div>`;
@@ -1511,7 +1564,7 @@ async function renderMarketplace() {
         if (!confirm('למחוק את העובד ואת השיחות שלו?')) return;
         const r = await api('/api/workers/' + b.dataset.del, { method: 'DELETE' });
         if (r.ok) renderWorkersList();
-        else toast('המחיקה נכשלה: ' + JSON.stringify(r.body), 'error');
+        else toast('המחיקה נכשלה: ' + friendlyApiError(r.body), 'error');
       };
     });
   }
@@ -1895,15 +1948,19 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     `;
   }
 
-  async function renderBuilder({ workerId, templateId }) {
+  async function renderBuilder({ workerId, templateId }, alive = () => true) {
     setActive('marketplace');
+    if (!(await ensureSession('העסק שלי'))) return;
     let worker = null;
     if (workerId) {
       const r = await api('/api/workers/' + workerId);
-      if (!r.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(r.body))}</div>`; return; }
+      if (!alive()) return;
+      if (!r.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון את העובד</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`; return; }
       worker = r.body.worker;
     } else if (templateId) {
       const r = await api('/api/workers/templates');
+      if (!alive()) return;
+      if (!r.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון תבניות</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`; return; }
       const t = r.body.templates.find((x) => x.id === templateId);
       if (!t) { app.innerHTML = '<div class="empty err">תבנית לא ידועה</div>'; return; }
       worker = {
@@ -2310,7 +2367,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             const newId = r.body.workerId || workerId;
             setTimeout(() => { location.hash = '#/workers/edit/' + newId; }, 500);
           } else {
-            status.innerHTML = icon('alert', 14) + ' ' + JSON.stringify(r.body);
+            status.innerHTML = icon('alert', 14) + ' ' + escapeHtml(friendlyApiError(r.body));
           }
         };
     }
@@ -2319,11 +2376,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   // ---- Activation paywall (only when user wants production) ----
-  async function renderActivatePaywall(workerId) {
+  async function renderActivatePaywall(workerId, alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
     const wr = await api('/api/workers/' + workerId);
-    if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
+    if (!alive()) return;
+    if (!wr.ok) {
+      app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לפתוח את השיחה</h2><p>${escapeHtml(friendlyApiError(wr.body))}</p><p><button class="btn btn-primary" onclick="location.hash='#/magic'">התחילו מחדש</button></p></div>`;
+      return;
+    }
     const w = wr.body.worker;
     if (w.isActive) { location.hash = '#/workers/chat/' + workerId; return; }
     const tplRes = await api('/api/workers/templates');
@@ -2359,7 +2420,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         method: 'POST',
         body: JSON.stringify({ channel: 'bit', reference: document.getElementById('pay-reference').value.trim(), contact }),
       });
-      document.getElementById('pay-submit-status').textContent = r.ok ? 'הבקשה נשלחה!' : JSON.stringify(r.body);
+      document.getElementById('pay-submit-status').textContent = r.ok ? 'הבקשה נשלחה!' : friendlyApiError(r.body, 'שליחת הבקשה נכשלה');
     };
   }
 
@@ -2403,24 +2464,30 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     return doneData;
   }
 
-  function shareWorkerChat(workerId, workerName) {
-    const link = location.origin + '/marketplace#/workers/chat/' + workerId;
-    const text = `שלום! אפשר לדבר עם ${workerName} כאן: ${link}`;
+  function shareWorkerChat(workerId, workerName, isActive) {
+    const link = location.origin + '/try/' + workerId;
+    const text = isActive
+      ? `שלום! אפשר לדבר עם ${workerName} כאן: ${link}`
+      : `שלום! ${workerName} עדיין במצב ניסיון — בעל העסק יפעיל אותו בקרוב. בינתיים: ${location.origin}/marketplace`;
     return { link, text, wa: 'https://wa.me/?text=' + encodeURIComponent(text) };
   }
 
-  async function renderChat(workerId) {
+  async function renderChat(workerId, alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
     const wr = await api('/api/workers/' + workerId);
-    if (!wr.ok) { app.innerHTML = `<div class="empty err">${escapeHtml(JSON.stringify(wr.body))}</div>`; return; }
+    if (!alive()) return;
+    if (!wr.ok) {
+      app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לפתוח את השיחה</h2><p>${escapeHtml(friendlyApiError(wr.body))}</p><p><button class="btn btn-primary" onclick="location.hash='#/magic'">התחילו מחדש</button></p></div>`;
+      return;
+    }
     const w = wr.body.worker;
     const suggestions = wr.body.suggestions || [];
     const isDemo = !w.isActive;
 
     const mr = await api('/api/workers/' + workerId + '/messages');
     const messages = mr.ok ? mr.body.messages : [];
-    const share = shareWorkerChat(workerId, w.name);
+    const share = shareWorkerChat(workerId, w.name, w.isActive);
     const chips = suggestions.slice(0, 3).map((s) =>
       `<button type="button" class="suggestion-chip" data-suggest="${escapeHtml(s)}">${escapeHtml(s)}</button>`
     ).join('');
@@ -2496,7 +2563,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     document.getElementById('notify-wa-save').onclick = async () => {
       const phone = document.getElementById('notify-wa-phone').value.trim();
       if (!phone) { toast('הכנס מספר וואטסאפ', 'error'); return; }
-      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
+      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', workerId, config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
       toast(r.ok ? 'נשמר — נשלח התראות למספר הזה' : 'משהו נתעכב, נסה שוב', r.ok ? 'success' : 'error');
     };
 
@@ -2620,7 +2687,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   // ---- Admin ----
-  async function renderAdmin() {
+  async function renderAdmin(alive = () => true) {
     setActive('admin');
     syncAdminNav();
     const adminTok = localStorage.getItem(ADMIN_LS) || '';
@@ -2651,7 +2718,16 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       setTimeout(renderAdmin, 1200);
       return;
     }
-    const r = await adminResp.json();
+    if (!adminResp.ok) {
+      app.innerHTML = '<div class="empty err"><h2>שגיאה בטעינת ניהול</h2><p>נסו שוב בעוד רגע (קוד ' + adminResp.status + ')</p></div>';
+      return;
+    }
+    let r;
+    try { r = await adminResp.json(); } catch {
+      app.innerHTML = '<div class="empty err"><h2>שגיאה בטעינת ניהול</h2><p>תשובה לא תקינה מהשרת</p></div>';
+      return;
+    }
+    if (!alive()) return;
     const reqResp = await fetch('/api/admin/activation-requests?status=pending', { headers: adminHeaders });
     const activationRequests = reqResp.ok ? (await reqResp.json()).requests ?? [] : [];
     const auditResp = await fetch('/api/admin/audit-events?limit=12', { headers: adminHeaders });

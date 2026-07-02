@@ -924,25 +924,18 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <span class="trust-pill">ללא מונחים טכניים</span>
       </div>
       </div>
-      <aside class="hero-preview" aria-label="תצוגה מקדימה">
-        <div class="hero-preview-glow"></div>
-        <div class="preview-window">
-          <div class="preview-titlebar">
-            <div class="preview-dots"><span></span><span></span><span></span></div>
-            <div class="preview-title">עובד שירות — דוגמה חיה</div>
-            <div class="preview-status">פעיל</div>
-          </div>
-          <div class="preview-chat">
-            <div class="preview-msg user">שלום, יש לכם מקום ליום שישי בערב?</div>
-            <div class="preview-msg bot">בטח! לכמה אנשים? ויש העדפה לשעה מסוימת?</div>
-            <div class="preview-msg bot">אם תרצו, אשמח גם לשמור שם וטלפון לחזרה מהירה.</div>
-            <div class="preview-typing"><span></span><span></span><span></span></div>
-          </div>
-          <div class="preview-metrics">
-            <div class="preview-metric"><div class="val">24/7</div><div class="lbl">זמינות</div></div>
-            <div class="preview-metric"><div class="val">&lt;30s</div><div class="lbl">תגובה</div></div>
-            <div class="preview-metric"><div class="val">עברית</div><div class="lbl">שפה</div></div>
-          </div>
+      <aside class="hero-showcase" aria-label="דוגמאות תוצאה">
+        <div class="showcase-card">
+          <div class="showcase-label">דוגמה מפיילוט</div>
+          <div class="showcase-metric"><span class="showcase-num">78%</span><span class="showcase-txt">מהפניות נענו בלי אדם</span></div>
+        </div>
+        <div class="showcase-card accent">
+          <div class="showcase-label">זמן תגובה</div>
+          <div class="showcase-metric"><span class="showcase-num">&lt;30 שנ׳</span><span class="showcase-txt">ממוצע ללקוח שכותב בערב</span></div>
+        </div>
+        <div class="showcase-card">
+          <div class="showcase-label">התחלה</div>
+          <div class="showcase-metric"><span class="showcase-num">3 צעדים</span><span class="showcase-txt">שם עסק → תפקיד → שיחה ראשונה</span></div>
         </div>
       </aside>
     </div>
@@ -1161,6 +1154,27 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 </html>`;
 }
 
+function buildTryPage(workerId, workerName, baseUrl = PUBLIC_BASE_URL) {
+  const name = workerName || 'עובד וירטואלי';
+  return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>שיחה עם ${name}</title>
+  <style>body{margin:0;min-height:100vh;background:#121218;color:#e8e8e8;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}p{color:#9a9aa8;max-width:420px;line-height:1.5}a{color:#d4a24a}</style>
+</head>
+<body>
+  <div>
+    <h1 style="font-size:1.25rem;font-weight:600;margin:0 0 8px">${name}</h1>
+    <p>לחצו על הכפתור בפינה לפתיחת שיחה. מופעל על ידי AI Workers.</p>
+    <p><a href="${baseUrl}/marketplace">לשוק העובדים ←</a></p>
+  </div>
+  <script src="${baseUrl}/embed.js" data-worker="${workerId}"></script>
+</body>
+</html>`;
+}
+
 function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   const TEMPLATES = workers.TEMPLATES ?? [];
   const tplRows = TEMPLATES.map((t) =>
@@ -1329,6 +1343,7 @@ const server = http.createServer(async (req, res) => {
     processInbound: (inbound) => processWhatsAppInbound(db, {
       chatWithWorker: workers.chatWithWorker,
       logAgentActions: workers.logAgentActions,
+      getWorker: workers.getWorker,
     }, inbound),
   })) return;
 
@@ -1410,12 +1425,13 @@ const server = http.createServer(async (req, res) => {
     if (!found) return send(res, 404, { error: 'not_found' }, cors);
     if (tenantFromKey && tenantFromKey !== found.tenantId) return send(res, 403, { error: 'forbidden' }, cors);
     const worker = workers.getWorker(found.tenantId, found.id);
-    if (!worker.isActive) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' }, cors);
+    if (!worker.isActive && !EMBED_ALLOW_PUBLIC) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' }, cors);
     const res2 = await workers.chatWithWorker({
       tenantId: found.tenantId,
       workerId: found.id,
       userMessage: body.message,
       customerId: body.customerId ?? 'embed_visitor',
+      demoMode: !worker.isActive,
     });
     return send(res, res2.status ?? 200, { reply: res2.reply ?? res2.message, ...res2 }, cors);
   }
@@ -1519,6 +1535,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   // --- Workers: marketplace + builder + chat -----------------------------
+  const tryMatch = url.pathname.match(/^\/try\/([A-Za-z0-9_]+)$/);
+  if (req.method === 'GET' && tryMatch) {
+    const found = workers.adminFindWorker(tryMatch[1]);
+    if (!found) return send(res, 404, { error: 'not_found' });
+    const worker = workers.getWorker(found.tenantId, found.id);
+    const html = buildTryPage(found.id, worker.name, resolveBaseUrl(req));
+    return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
+  }
   // HTML pages
   if (req.method === 'GET' && (url.pathname === '/marketplace' || url.pathname === '/builder' || url.pathname.startsWith('/workers/') || url.pathname === '/workers')) {
     let html = fs.readFileSync(path.join(__dirname, 'workers-ui.html'), 'utf8');
