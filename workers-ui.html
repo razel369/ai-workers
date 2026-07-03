@@ -266,7 +266,9 @@ const APP = (() => {
   const TEMPLATE_EMOJI = {
     'sales-leads-il': '💼', 'support-he': '💬', 'data-entry': '📋', 'content-he': '✍️',
     'real-estate-il': '🏠', 'clinic-receptionist-he': '🏥', 'restaurant-manager-he': '🍽️',
-    'ecom-support-he': '🛒', 'property-manager-he': '🔧', 'social-media-creator-he': '📱',
+    'ecom-support-he': '🛒', 'property-manager-he': '🔧',     'social-media-creator-he': '📱',
+    'social-strategist-he': '💄',
+    'market-research-he': '🔍',
     'hr-recruiter-he': '👥', 'complaints-desk-he': '📣', 'legal-receptionist-he': '⚖️',
   };
   const TEMPLATE_PLAIN = {
@@ -280,6 +282,8 @@ const APP = (() => {
     'content-he': 'כותב תוכן שיווקי בעברית',
     'property-manager-he': 'מקבל פניות תחזוקה מדיירים',
     'social-media-creator-he': 'יוצר רעיונות לפוסטים ותמונות',
+    'social-strategist-he': 'מנהלת סושיאל מלאה — פוסטים, תמונות, וואטסאפ',
+    'market-research-he': 'חוקר מתחרים ומסכם דוחות שוק',
     'hr-recruiter-he': 'מסנן מועמדים וקובע ראיונות',
     'complaints-desk-he': 'מתעד תלונות ומסלים דחוף',
     'legal-receptionist-he': 'מקבל פניות וקובע פגישות במשרד',
@@ -320,14 +324,25 @@ const APP = (() => {
 
   // ---- Integration connect (OAuth / no API keys) ----
   function checkOAuthReturn() {
-    const params = new URLSearchParams(location.search);
+    let params = new URLSearchParams(location.search);
+    let cleanHash = location.hash;
+    const qi = cleanHash.indexOf('?');
+    if (!params.get('oauth') && qi >= 0) {
+      params = new URLSearchParams(cleanHash.slice(qi + 1));
+      cleanHash = cleanHash.slice(0, qi);
+    }
     if (params.get('oauth') === 'success') {
       toast('החיבור הושלם בהצלחה!', 'success', 5000);
-      history.replaceState(null, '', location.pathname + location.hash);
+      history.replaceState(null, '', location.pathname + cleanHash);
     } else if (params.get('oauth') === 'error') {
       toast(decodeURIComponent(params.get('msg') || 'החיבור נכשל'), 'error', 6000);
-      history.replaceState(null, '', location.pathname + location.hash);
+      history.replaceState(null, '', location.pathname + cleanHash);
     }
+  }
+
+  function routeId(segment) {
+    if (!segment) return segment;
+    return String(segment).split(/[?&#]/)[0];
   }
 
   async function startOAuthConnect(item, extra = {}) {
@@ -754,9 +769,9 @@ const APP = (() => {
   // ---- Category filter state ----
   let currentFilter = 'all';
   let currentSearch = '';
-const CATEGORIES = { sales:'מכירות', support:'שירות', ops:'תפעול', admin:'משרד', content:'תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'נכסים' };
-const CAT_LABELS = { sales:'מכירות', support:'שירות לקוחות', ops:'תפעול ונתונים', admin:'משרד וניהול', content:'כתיבת תוכן', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'ניהול נכסים' };
-const CAT_ICONS = { sales:'sales', support:'support', ops:'database', admin:'users', content:'content', realestate:'estate', healthcare:'heart', hospitality:'restaurant', ecommerce:'cart', property:'property' };
+const CATEGORIES = { sales:'מכירות', support:'שירות', ops:'תפעול', admin:'משרד', content:'תוכן', research:'מחקר', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'נכסים' };
+const CAT_LABELS = { sales:'מכירות', support:'שירות לקוחות', ops:'תפעול ונתונים', admin:'משרד וניהול', content:'כתיבת תוכן', research:'מחקר שוק', realestate:'נדל"ן', healthcare:'בריאות', hospitality:'אירוח', ecommerce:'איקומרס', property:'ניהול נכסים' };
+const CAT_ICONS = { sales:'sales', support:'support', ops:'database', admin:'users', content:'content', research:'activity', realestate:'estate', healthcare:'heart', hospitality:'restaurant', ecommerce:'cart', property:'property' };
 const FIT_LABELS = {
   sales:'מתאים לעסקים שמטפלים בלידים ושיחות מכירה',
   support:'מתאים לעסקים עם הרבה שאלות חוזרות מלקוחות',
@@ -768,6 +783,7 @@ const FIT_LABELS = {
   hospitality:'מתאים למסעדות, מלונות ואירוח',
   ecommerce:'מתאים לחנויות אונליין',
   property:'מתאים לניהול נכסים ודיירים',
+  research:'מתאים לעסקים שרוצים להבין מתחרים ומגמות שוק',
 };
 const OUTCOME_LABELS = {
   sales:'אוסף פרטים, מסנן פניות ומקדם ליד לשיחת מכירה.',
@@ -775,6 +791,7 @@ const OUTCOME_LABELS = {
   ops:'מקבל מידע לא מסודר ומחזיר מבנה שאפשר לעבוד איתו.',
   admin:'מטפל בפניות משרדיות, תיאומים ושאלות שגרה.',
   content:'מייצר טיוטות שימושיות לפי קול המותג והקהל.',
+  research:'סורק מתחרים, מסכם מחירים ומיצוב, ומחזיר דוח מסודר עם מקורות.',
   realestate:'עוזר לסנן מחפשים ולרכז דרישות לפני שיחה.',
   healthcare:'עוזר לתאם פניות, לקבוע תורים ולענות על שאלות בסיס.',
   hospitality:'מנהל הזמנות ושאלות אורחים בשפה טבעית.',
@@ -810,13 +827,13 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (!section || section === '') return renderMarketplace(alive);
     if (section === 'magic') return renderMagicWizard(alive);
     if (section === 'workers' && rest.length === 0) return renderWorkersList(alive);
-    if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] }, alive);
-    if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] }, alive);
-    if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1], alive);
-    if (section === 'workers' && rest[0] === 'live') return renderGoLive(rest[1], alive);
-    if (section === 'workers' && rest[0] === 'connect') return renderConnectTools(rest[1], alive);
-    if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1], alive);
-    if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(rest[1], alive);
+    if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: routeId(rest[1]) }, alive);
+    if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: routeId(rest[1]) }, alive);
+    if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(routeId(rest[1]), alive);
+    if (section === 'workers' && rest[0] === 'live') return renderGoLive(routeId(rest[1]), alive);
+    if (section === 'workers' && rest[0] === 'connect') return renderConnectTools(routeId(rest[1]), alive);
+    if (section === 'workers' && rest[0] === 'chat') return renderChat(routeId(rest[1]), alive);
+    if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(routeId(rest[1]), alive);
     if (section === 'admin') return renderAdmin(alive);
     return renderMarketplace(alive);
   }
@@ -831,7 +848,7 @@ async function renderMarketplace(alive = () => true) {
     return tpls.map((t, idx) => {
       const popular = t.id === 'support-he' || t.id === 'sales-leads-il';
       const bestVal = t.id === 'data-entry';
-      const isNew = t.id === 'property-manager-he' || t.id === 'clinic-receptionist-he';
+      const isNew = t.id === 'property-manager-he' || t.id === 'clinic-receptionist-he' || t.id === 'social-strategist-he' || t.id === 'market-research-he';
       const categoryLabel = CATEGORIES[t.category] || t.category;
       const outcome = OUTCOME_LABELS[t.category] || 'מקבל פניות, שואל שאלות המשך ומחזיר תשובה מוכנה לעבודה.';
       const badge = popular
@@ -2026,14 +2043,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             mcpServers: mcpServers,
           };
           let r;
-          if (workerId) {
-            r = await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify(fields) });
+          if (builderWorkerId) {
+            r = await api('/api/workers/' + builderWorkerId, { method: 'PATCH', body: JSON.stringify(fields) });
           } else {
             r = await api('/api/workers', { method: 'POST', body: JSON.stringify({ templateId: worker.templateId, ...fields }) });
           }
           if (r.ok) {
             status.innerHTML = icon('check', 14) + ' נשמר!';
-            const newId = r.body.workerId || workerId;
+            const newId = r.body.workerId || builderWorkerId;
+            builderWorkerId = newId;
             setTimeout(() => { location.hash = '#/workers/edit/' + newId; }, 500);
           } else {
             status.innerHTML = icon('alert', 14) + ' ' + escapeHtml(friendlyApiError(r.body));

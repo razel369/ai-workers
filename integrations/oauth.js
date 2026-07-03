@@ -1,6 +1,7 @@
 // OAuth connect flows — tokens stored encrypted per tenant; users never paste API keys.
 
 import crypto from 'node:crypto';
+import { buildOAuthReturnUrl } from '../url-security.js';
 import { connectIntegration } from './store.js';
 import { OAUTH_PROVIDERS } from './auth-providers.js';
 
@@ -216,8 +217,7 @@ export async function handleOAuthCallback({ code, state, error }) {
   }
 
   const returnPath = row.return_path || '/marketplace';
-  const sep = returnPath.includes('?') ? '&' : (returnPath.includes('#') ? '?' : '?');
-  const redirectTo = `${returnPath}${sep}oauth=success&type=${encodeURIComponent(row.integration_type)}`;
+  const redirectTo = buildOAuthReturnUrl(returnPath, `oauth=success&type=${encodeURIComponent(row.integration_type)}`);
 
   return { ok: true, redirectTo, integrationId: result.id, type: row.integration_type };
 }

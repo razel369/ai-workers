@@ -1,5 +1,7 @@
 // E2E tests for the Workers feature (v0.5.0).
 import crypto from 'node:crypto';
+import { validateConfig } from './integrations/registry.js';
+import { buildOAuthReturnUrl } from './url-security.js';
 // payment-gated chat (mock + LLM-free), admin mark-paid, admin listing,
 // per-tenant isolation, platform-provided AI (no BYOK).
 
@@ -37,7 +39,7 @@ console.log(`Workers tests against ${BASE}\n`);
 {
   const r = await req('/api/workers/templates');
   expect('GET /api/workers/templates -> 200', r.status === 200);
-  expect('  has 13 templates', r.body.templates?.length >= 13);
+  expect('  has 15 templates', r.body.templates?.length >= 15);
   expect('  all have id/name/buyPriceIls', r.body.templates?.every((t) => t.id && t.name && t.buyPriceIls >= 0));
   expect('  sales-leads-il present', !!r.body.templates?.find((t) => t.id === 'sales-leads-il'));
   expect('  support-he present', !!r.body.templates?.find((t) => t.id === 'support-he'));
@@ -52,10 +54,16 @@ console.log(`Workers tests against ${BASE}\n`);
   expect('  hr-recruiter-he present', !!r.body.templates?.find((t) => t.id === 'hr-recruiter-he'));
   expect('  complaints-desk-he present', !!r.body.templates?.find((t) => t.id === 'complaints-desk-he'));
   expect('  legal-receptionist-he present', !!r.body.templates?.find((t) => t.id === 'legal-receptionist-he'));
+  expect('  social-strategist-he present', !!r.body.templates?.find((t) => t.id === 'social-strategist-he'));
+  expect('  market-research-he present', !!r.body.templates?.find((t) => t.id === 'market-research-he'));
   const hrTpl = r.body.templates?.find((t) => t.id === 'hr-recruiter-he');
   expect('  hr template has agent tools', hrTpl?.defaultTools?.includes('save_lead') && hrTpl?.defaultTools?.includes('book_meeting_link'));
   const complaintsTpl = r.body.templates?.find((t) => t.id === 'complaints-desk-he');
   expect('  complaints template has escalate tool', complaintsTpl?.defaultTools?.includes('escalate_to_human'));
+  const socialTpl = r.body.templates?.find((t) => t.id === 'social-strategist-he');
+  expect('  social strategist has image + webhook tools', socialTpl?.defaultTools?.includes('generate_image') && socialTpl?.defaultTools?.includes('notify_webhook'));
+  const researchTpl = r.body.templates?.find((t) => t.id === 'market-research-he');
+  expect('  market research has fetch_web_page', researchTpl?.defaultTools?.includes('fetch_web_page'));
 }
 
 // 3. Need a tenant API key to test private endpoints
@@ -687,6 +695,21 @@ let integrationId = null;
     body: JSON.stringify({ workerId: 'wk_nonexistent' }),
   });
   expect('bit webhook rejects missing worker', r.status === 400);
+}
+
+{
+  expect('OAuth return URL puts query before hash',
+    buildOAuthReturnUrl('/marketplace#/workers/connect/wk_abc', 'oauth=success&type=google_calendar')
+    === '/marketplace?oauth=success&type=google_calendar#/workers/connect/wk_abc');
+  const wa = validateConfig('whatsapp', { ownerNotifyPhone: '0501234567' });
+  expect('whatsapp connect accepts phone-only config', wa.ok === true && wa.config.provider === 'meta');
+}
+{
+  const r = await req('/api/integrations/connect', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ type: 'whatsapp', config: { ownerNotifyPhone: '0507654321' } }),
+  });
+  expect('POST whatsapp connect with phone only -> 201/200', r.status === 201 || r.status === 200);
 }
 
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);

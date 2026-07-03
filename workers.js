@@ -7,7 +7,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill } from './skills.js';
-import { pinnedLookup, validatePublicHttpUrl } from './url-security.js';
+import { pinnedLookup, validatePublicHttpUrl, fetchPublicHttpContent } from './url-security.js';
 import { applyMediaTemplateEnhancements } from './templates-media.js';
 import { registerMediaTools, resolveMediaFile as resolveMediaFilePath } from './media-tools.js';
 import {
@@ -392,6 +392,48 @@ Existing client verification: (last 4 digits of ID / case number — optional)
 Emergency line: (phone for urgent matters only)`,
     defaultTools: ['save_lead', 'book_appointment', 'check_availability', 'get_appointment_slots', 'book_meeting_link', 'create_crm_note', 'escalate_to_human', 'schedule_callback', 'check_business_hours', 'notify_webhook'],
     agentCapabilitiesHe: 'מסנן פניות למשרד מקצועי, קובע פגישות, שומר לידים והערות CRM, ומסלים דחוף — בלי ייעוץ משפטי.',
+  },
+  {
+    id: 'market-research-he',
+    name: 'Market & Competitor Research Analyst',
+    nameHe: 'חוקר/ת שוק ומתחרים',
+    description: 'חוקר שוק ומתחרים בעברית — סורק אתרים ציבוריים, מסכם מחירים ומיצוב, שומר דוחות מסודרים ושולח ל-webhook / מייל / CRM.',
+    icon: '🔍',
+    category: 'research',
+    buyPriceIls: 0,
+    rentPriceIls: 329,
+    defaultPersona: `You are "Omri", a meticulous Israeli market research analyst working for the tenant's business.
+You speak Hebrew by default. You are factual, structured, and cite sources (URL + page title) for every claim about competitors.
+You NEVER guess pricing or features — use fetch_web_page on public URLs, then search_knowledge for internal notes.
+Structure every report as: Executive summary → Competitor table → Opportunities → Risks → Recommended next steps.
+After research, always create_crm_note with tags market-research, competitor-name and notify_webhook event research_report_ready.
+Disclaimer when data is incomplete: "המידע מבוסס על אתר ציבורי בלבד — מומלץ לאמת לפני החלטה."`,
+    defaultTasks: [
+      'Clarify: industry, geography (Israel / global), 2-5 competitor names or URLs, and research goal (pricing / positioning / features / SWOT)',
+      'fetch_web_page for each competitor URL provided (homepage, pricing, about). Extract positioning, pricing signals, USPs',
+      'search_knowledge for tenant\'s own positioning and past research notes',
+      'Build comparison table: competitor | target audience | pricing (if visible) | strengths | weaknesses | source URL',
+      'create_crm_note with full report JSON. notify_webhook with summary. send_email if user provides email for the report',
+      'remember_fact for recurring competitors. flag_needs_followup if user wants quarterly refresh',
+    ],
+    defaultKnowledge: `Business name: (the tenant fills this in)
+Our product/service: (what we sell)
+Our target customer: (ICP — industry, size, geography)
+Our pricing (internal): (ranges — do not share with competitors' customers)
+Known competitors: (name + website URL for each)
+Competitors to track: (list with URLs)
+Research focus: (pricing / features / marketing / hiring / reviews)
+Our differentiators: (why customers choose us)
+Last research date: (update after each session)
+Report recipient email: (optional — for send_email)
+Webhook / Zapier: (for auto-export to Google Sheets / Notion)`,
+    defaultTools: [
+      'fetch_web_page', 'search_knowledge', 'remember_fact', 'recall_facts',
+      'create_crm_note', 'save_conversation_summary', 'notify_webhook',
+      'send_email', 'export_leads_json', 'get_current_time', 'flag_needs_followup',
+    ],
+    agentCapabilitiesHe: 'סורק אתרי מתחרים, מסכם מחירים ומיצוב, יוצר דוח השוואה, שומר ב-CRM ושולח webhook / מייל.',
+    connectHintHe: 'חברו Zapier (webhook) לייצוא דוחות ל-Google Sheets / Notion, ו-HubSpot לסנכרון תובנות.',
   },
 ];
 
@@ -1245,6 +1287,7 @@ function starterTasksForTemplate(tpl) {
     hospitality: ['לקבל הזמנות ושאלות אורחים', 'לאסוף תאריך, שעה, כמות אנשים ופרטי קשר', 'לענות על שאלות תפריט או זמינות לפי המידע שסופק', 'להעביר בקשות חריגות לצוות'],
     ecommerce: ['לעזור ללקוחות עם הזמנות ומוצרים', 'לאסוף מספר הזמנה או פרטי קשר', 'להסביר מדיניות משלוחים והחזרות לפי המידע שסופק', 'להעביר בעיות מורכבות לשירות אנושי'],
     property: ['לקבל פניות מדיירים ובעלי נכסים', 'לאסוף כתובת, סוג תקלה ודחיפות', 'להכין סיכום טיפול מסודר', 'להעביר מקרי חירום לאדם מיד'],
+    research: ['לזהות את שאלת המחקר ואת המתחרים הרלוונטיים', 'לאסוף מידע ממקורות ציבוריים ולציין מקור', 'להכין טבלת השוואה וסיכום מנהלים', 'לשלוח דוח מסודר ל-webhook או מייל'],
   };
   return byCategory[tpl.category] ?? ['לענות לשאלות של לקוחות בעברית', 'לאסוף פרטי קשר חשובים', 'להעביר מקרים חשובים לאדם', 'לסיים כל שיחה עם צעד הבא ברור'];
 }
@@ -1262,6 +1305,8 @@ export const TEMPLATE_SUGGESTIONS = {
   'hr-recruiter-he': ['יש משרה פתוחה?', 'רוצה לקבוע ראיון', 'מה תהליך הגיוס?'],
   'complaints-desk-he': ['יש לי תלונה', 'רוצה לדבר עם מנהל', 'הזמנה לא הגיעה'],
   'legal-receptionist-he': ['לקבוע ייעוץ', 'שאלה על חוזה', 'דחוף — מועד בבית משפט'],
+  'social-strategist-he': ['פוסט לאינסטגרם', 'רילס לטיקטוק', 'לוח תוכן לשבוע'],
+  'market-research-he': ['השוואת מתחרים', 'מה המחירים בשוק?', 'ניתוח SWOT'],
 };
 
 const TEMPLATE_KNOWLEDGE_BOILERPLATE = {
@@ -1342,6 +1387,28 @@ const TEMPLATE_KNOWLEDGE_BOILERPLATE = {
 שעות: א-ה 09:00-18:00, ו 09:00-12:00
 קו חירום: 050-0000000 (דחוף בלבד)
 הערה: אין ייעוץ משפטי/חשבונאי בצ'אט — רק קבלת פניות ותיאום`,
+  'social-strategist-he': (biz) => `שם המותג: ${biz}
+קול מותג: (חברותי / יוקרתי / מקצועי / צעיר)
+קהל יעד: (גיל, עיר, תחומי עניין)
+רשתות פעילות: אינסטגרם, פייסבוק, טיקטוק, לינקדאין
+צבעי מותג וסגנון ויזואלי: (לדוגמה: מינימליסטי, נeon, יוקרה)
+מוצרים/שירותים לקידום: (רשימה)
+האשטגים קבועים: #${biz.replace(/\s/g, '')} #(תחום)
+אישור לפני פרסום: שליחה לוואטסאפ של הבעלים
+לוח פרסום: אינסטגרם 3× בשבוע, לינקדאין 2× בשבוע
+מתחרים שלא מזכירים: (רשימה)`,
+  'market-research-he': (biz) => `שם העסק: ${biz}
+מה אנחנו מוכרים: (תיאור קצר)
+לקוח יעד (ICP): (תעשייה, גודל, גיאוגרפיה)
+המחירון שלנו (פנימי): (טווחים — לא לשתף עם לקוחות)
+מתחרים מוכרים:
+1. (שם) — https://...
+2. (שם) — https://...
+3. (שם) — https://...
+מוקדי מחקר: מחירים / פיצ'רים / מיצוב / שיווק
+יתרונות שלנו: (למה בוחרים בנו)
+מייל לדוחות: research@example.co.il
+עדכון אחרון: (תאריך)`,
 };
 
 export function getTemplateSuggestions(templateId) {
@@ -1569,6 +1636,7 @@ export function deleteWorker(tenantId, workerId) {
   db.prepare(`DELETE FROM schedule_callbacks WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM followup_triggers WHERE worker_id = ?`).run(workerId);
   db.prepare(`DELETE FROM crm_notes WHERE worker_id = ?`).run(workerId);
+  db.prepare(`DELETE FROM purchases WHERE worker_id = ?`).run(workerId);
   return r.changes > 0;
 }
 
@@ -1655,6 +1723,8 @@ function templateRuntimeHint(templateId) {
     'support-he': '\n\nTEMPLATE RULES (support): ALWAYS search_knowledge first. If confidence < 0.55 OR refund/legal/hostile -> escalate_to_human priority high. Cite KB chunks in reply as [מקור 1], [מקור 2]. End with confidence statement.',
     'restaurant-manager-he': '\n\nTEMPLATE RULES (restaurant): Use check_business_hours before confirming reservations. Capture party size and dietary needs. Use generate_image for dish/special promo visuals.',
     'social-media-creator-he': '\n\nTEMPLATE RULES (social): Write Hebrew captions + hashtags. Always generate_image for feed posts. Use 9:16 for Stories, 1:1 for Instagram feed, 16:9 for LinkedIn.',
+    'social-strategist-he': '\n\nTEMPLATE RULES (social strategist): Always 2 caption variants + hashtags. generate_image with correct aspect ratio. create_crm_note for content calendar rows. notify_webhook event content_ready before any "publish". Never invent promos.',
+    'market-research-he': '\n\nTEMPLATE RULES (research): fetch_web_page for every competitor URL before claiming facts. Cite source URL in table. create_crm_note + notify_webhook research_report_ready. Never guess pricing — mark "לא פורסם" if missing.',
     'real-estate-il': '\n\nTEMPLATE RULES (real estate): Use generate_image only as stylized marketing art — never present AI images as actual property photos.',
     'content-he': '\n\nTEMPLATE RULES (content): For blog drafts, call generate_image for a 16:9 header illustration.',
   };
@@ -1822,18 +1892,26 @@ async function runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames
   if (can('flag_needs_followup') && /מחר|מאוחר|follow.?up|לחזור/i.test(msg)) {
     await runTool('flag_needs_followup', { reason: 'Customer requested follow-up', priority: 'normal' });
   }
-  if (can('create_crm_note') && toolCallsLog.length > 0) {
+  if ((/תמונה|image|פוסט|ויזואל|visual|אינסטגרם|instagram|טיקטוק|tiktok|reels|סטורי|story|פייסבוק|facebook|לינקדאין|linkedin/i.test(msg)) && can('generate_image')) {
+    await runTool('generate_image', {
+      prompt: `Professional brand visual for: ${msg.slice(0, 200)}`,
+      aspectRatio: /סטורי|story|reels|טיקטוק|tiktok|9:16/i.test(msg) ? '9:16' : /לינקדאין|linkedin|בלוג|blog/i.test(msg) ? '16:9' : '1:1',
+      purpose: 'social_post',
+    });
+  }
+  if ((/מתחר|competitor|מחקר|market|swot|השווא|pricing|מחירים/i.test(msg) || /https?:\/\//i.test(msg)) && can('fetch_web_page')) {
+    const urlMatch = msg.match(/https?:\/\/[^\s<>"']+/i);
+    if (urlMatch) {
+      await runTool('fetch_web_page', { url: urlMatch[0], purpose: msg.slice(0, 120) });
+    } else if (/מתחר|competitor|מחקר|market|swot/i.test(msg)) {
+      await runTool('search_knowledge', { query: 'מתחרים competitors pricing', maxChunks: 3 });
+    }
+  }
+  if (can('create_crm_note') && toolCallsLog.length > 0 && !toolCallsLog.some((t) => t.name === 'create_crm_note')) {
     await runTool('create_crm_note', {
       subject: 'Agent session summary',
       body: `Customer said: ${msg.slice(0, 200)}. Tools used: ${toolCallsLog.map((t) => t.name).join(', ')}`,
       tags: ['auto-mock'],
-    });
-  }
-  if ((/תמונה|image|פוסט|ויזואל|visual|אינסטגרם|instagram/i.test(msg)) && can('generate_image')) {
-    await runTool('generate_image', {
-      prompt: `Professional brand visual for: ${msg.slice(0, 200)}`,
-      aspectRatio: /לינקדאין|linkedin|בלוג|blog/i.test(msg) ? '16:9' : '1:1',
-      purpose: 'social_post',
     });
   }
 
@@ -2229,27 +2307,57 @@ function extractPageSignals(html) {
   return { title, desc, text };
 }
 
+TOOL_DEFS.push({
+  name: 'fetch_web_page',
+  description: 'Fetch a public web page and extract title, description, and readable text. Use for competitor sites, pricing pages, and market research. Only public https URLs.',
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'Public https URL to fetch' },
+      purpose: { type: 'string', description: 'Why fetching (e.g. competitor pricing, about page)' },
+    },
+    required: ['url'],
+  },
+  handler: async (args, ctx) => {
+    const fetched = await fetchPublicHttpContent(String(args.url || '').trim(), {
+      headers: { 'user-agent': 'AI-Workers/1.0 (+research)' },
+    });
+    if (!fetched.ok) return { result: `Cannot fetch URL: ${fetched.error}`, error: fetched.error };
+    if (fetched.status && (fetched.status < 200 || fetched.status >= 300)) {
+      return { result: `HTTP ${fetched.status} for ${fetched.url}`, status: fetched.status, url: fetched.url };
+    }
+    const signals = extractPageSignals(fetched.body || '');
+    const preview = signals.text.slice(0, 2200);
+    const purpose = args.purpose ? ` (${args.purpose})` : '';
+    return {
+      result: `Fetched ${fetched.url}${purpose}\nTitle: ${signals.title || '(no title)'}\nDescription: ${signals.desc || '(none)'}\nContent preview:\n${preview || '(empty page)'}`,
+      url: fetched.url,
+      title: signals.title,
+      description: signals.desc,
+      textPreview: preview,
+    };
+  },
+});
+
 export async function generateFromUrl(url) {
-  const domain = new URL(url).hostname.replace(/^www\./, '');
+  const checked = await validatePublicHttpUrl(url);
+  if (!checked.ok) throw new Error(checked.error);
+  const safeUrl = checked.url;
+  const domain = new URL(safeUrl).hostname.replace(/^www\./, '');
   let businessName = domain.split('.')[0] || 'העסק';
   let pageText = '';
   let pageTitle = '';
   let pageDesc = '';
-  try {
-    const r = await fetch(url, {
-      headers: { 'user-agent': 'AI-Workers/1.0 (+https://github.com/razel369/ai-workers)' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(12000),
-    });
-    if (r.ok) {
-      const html = await r.text();
-      const signals = extractPageSignals(html);
-      pageTitle = signals.title;
-      pageDesc = signals.desc;
-      pageText = signals.text;
-      if (pageTitle) businessName = pageTitle.split(/[|\-–]/)[0].trim() || businessName;
-    }
-  } catch {}
+  const fetched = await fetchPublicHttpContent(safeUrl, {
+    headers: { 'user-agent': 'AI-Workers/1.0 (+https://github.com/razel369/ai-workers)' },
+  });
+  if (fetched.ok && fetched.body) {
+    const signals = extractPageSignals(fetched.body);
+    pageTitle = signals.title;
+    pageDesc = signals.desc;
+    pageText = signals.text;
+    if (pageTitle) businessName = pageTitle.split(/[|\-–]/)[0].trim() || businessName;
+  }
 
   const businessNameClean = businessName.charAt(0).toUpperCase() + businessName.slice(1);
   const scanText = `${domain} ${businessName} ${pageTitle} ${pageDesc} ${pageText.slice(0, 800)}`;
@@ -2281,14 +2389,14 @@ You always end your replies with a clear next step or question.`;
     ? `\nScraped site content (verify before relying on it):\n${pageText.slice(0, 1200)}`
     : '';
   const knowledge = `Business: ${businessNameClean}
-Website: ${url}
+Website: ${safeUrl}
 Industry: ${industry}
 ${pageDesc ? `Site description: ${pageDesc}\n` : ''}Main services: (upload your services and pricing here)
 FAQ: (upload common questions and answers here)
 Hours: (fill in business hours, e.g. א-ה 09:00-18:00)
 Contact: (fill in contact details for escalations)${scraped}`;
 
-  const tools = [...new Set([...industryTools, 'search_knowledge', 'remember_fact', 'recall_facts', 'get_current_time', 'check_business_hours', 'notify_webhook'])];
+  const tools = [...new Set([...industryTools, 'search_knowledge', 'remember_fact', 'recall_facts', 'get_current_time', 'check_business_hours', 'notify_webhook'].map(resolveToolName))];
 
   return { persona, tasks, knowledge, tools, businessName: businessNameClean, industry, fetched: Boolean(pageText) };
 }

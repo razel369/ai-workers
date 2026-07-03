@@ -1,5 +1,5 @@
 import * as mcpClient from '../mcp-client.js';
-import { validatePublicHttpUrl, pinnedLookup, safeUrlForError } from '../url-security.js';
+import { validatePublicHttpUrl, fetchPublicHttpContent, safeUrlForError } from '../url-security.js';
 import { getIntegrationSecrets, updateTestResult } from './store.js';
 import { getIntegrationType } from './registry.js';
 
@@ -17,21 +17,13 @@ function redactForLog(obj) {
 }
 
 async function safeFetch(url, init = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  const checked = await validatePublicHttpUrl(url);
-  if (!checked.ok) return { ok: false, error: checked.error, status: 0 };
-  const lookup = pinnedLookup(checked.resolved);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(checked.url, { ...init, signal: ctrl.signal, dispatcher: undefined });
-    const text = await r.text().catch(() => '');
-    return { ok: r.ok, status: r.status, body: text.slice(0, 500), url: checked.url };
-  } catch (e) {
-    const msg = e?.name === 'AbortError' ? 'timeout' : (e?.message ?? String(e));
-    return { ok: false, error: msg, status: 0 };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await fetchPublicHttpContent(url, {
+    timeoutMs,
+    headers: init.headers,
+    maxBytes: 500,
+  });
+  if (!result.ok) return { ok: false, error: result.error, status: 0 };
+  return { ok: result.status >= 200 && result.status < 300, status: result.status, body: (result.body || '').slice(0, 500), url: result.url };
 }
 
 export async function testIntegration(tenantId, integrationId) {

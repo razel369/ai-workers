@@ -1665,12 +1665,12 @@ const server = http.createServer(async (req, res) => {
     if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
     const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId });
     if (!res2.ok) return send(res, 400, res2);
-    // apply builder-provided overrides immediately
-    workers.updateWorker(tenantId, res2.workerId, {
+    const updated = workers.updateWorker(tenantId, res2.workerId, {
       name: body.name, persona: body.persona, tasks: body.tasks,
       knowledge: body.knowledge, tools: body.tools, agentMode: body.agentMode,
       llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
     });
+    if (!updated.ok) return send(res, 500, { error: 'update_failed', reason: updated.error, workerId: res2.workerId });
     return send(res, 200, { ok: true, workerId: res2.workerId });
   }
 
@@ -2196,6 +2196,11 @@ const server = http.createServer(async (req, res) => {
     if (userConfig.url) {
       const checked = await validatePublicHttpUrl(userConfig.url);
       if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+    }
+    if (userConfig.bookingLink) {
+      const checked = await validatePublicHttpUrl(userConfig.bookingLink);
+      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+      userConfig.bookingLink = checked.url;
     }
     if (body.type === 'mcp' && userConfig.preset) {
       const preset = MCP_PRESETS[userConfig.preset];

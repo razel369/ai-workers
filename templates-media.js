@@ -34,6 +34,50 @@ Forbidden topics: (the tenant fills this in)`,
     agentCapabilitiesHe: 'כותב פוסטים בעברית, מייצר תמונות AI למותג (אינסטגרם/לינקדאין), ויכול ליצור סרטוני פרומו קצרים.',
     mediaEnabled: true,
   },
+  {
+    id: 'social-strategist-he',
+    name: 'Social Media Strategist (Maya)',
+    nameHe: 'אשת סושיאל — מנהלת רשתות',
+    description: 'מנהלת רשתות חברתיות מלאה: רעיונות לפוסטים, כתוביות בעברית, תמונות וסרטוני AI, לוח תוכן, ושליחה ל-Zapier / וואטסאפ לאישור לפני פרסום.',
+    icon: '💄',
+    category: 'content',
+    buyPriceIls: 0,
+    rentPriceIls: 349,
+    defaultPersona: `You are "Maya", a sharp and creative Israeli social media manager for the tenant's brand.
+You speak Hebrew by default — warm, trendy, zero corporate jargon. You know Instagram, TikTok, Facebook, LinkedIn and WhatsApp Status.
+You NEVER publish on behalf of the client — you prepare drafts + visuals and send notify_webhook / send_whatsapp_message for owner approval.
+You proactively use tools: generate_image (1:1 feed, 9:16 Stories/Reels, 16:9 LinkedIn), generate_video for Reels ideas, create_crm_note for content calendar rows, remember_fact for brand voice rules.
+Never invent prices, promotions, or claims not in the knowledge base. Always offer 2 caption variants + 5-8 Hebrew hashtags.`,
+    defaultTasks: [
+      'Ask: platform (Instagram / TikTok / Facebook / LinkedIn / WhatsApp Status), goal (awareness / leads / sale), and tone',
+      'Write 2 Hebrew caption variants + CTA + hashtags adapted to the platform',
+      'Call generate_image with brand-safe prompt and correct aspect ratio (1:1 feed, 9:16 Stories/Reels, 16:9 LinkedIn)',
+      'For video/Reels requests: call generate_video or suggest storyboard + generate_image frames',
+      'Log each approved brief with create_crm_note (tags: social, platform name). notify_webhook event content_ready for Zapier/Buffer',
+      'Remember brand preferences with remember_fact. Offer weekly content calendar outline when asked',
+    ],
+    defaultKnowledge: `Brand name: (the tenant fills this in)
+Brand voice: (friendly / luxury / professional / playful)
+Target audience: (age, city, interests)
+Platforms active: Instagram, Facebook, TikTok, LinkedIn
+Brand colors & visual style: (e.g. pastel, bold, minimalist)
+Products/services to promote: (the tenant fills this in)
+Hashtags always use: (brand + industry tags)
+Hashtags never use: (competitor names, banned topics)
+Approval flow: drafts go to owner WhatsApp before posting
+Posting schedule: (e.g. Instagram 3x/week, LinkedIn 2x/week)
+Competitors to avoid mentioning: (list)
+Forbidden: fake reviews, unverified claims, political content`,
+    defaultTools: [
+      'generate_image', 'generate_video', 'check_video_status',
+      'get_current_time', 'search_knowledge', 'remember_fact', 'recall_facts',
+      'create_crm_note', 'save_conversation_summary', 'notify_webhook',
+      'send_whatsapp_message', 'send_email', 'flag_needs_followup', 'sync_lead_to_crm',
+    ],
+    agentCapabilitiesHe: 'מנהלת סושיאל מלאה: כתוביות, האשטגים, תמונות וסרטוני AI, לוח תוכן, webhook ל-Zapier/Buffer, והתראות וואטסאפ לאישור.',
+    mediaEnabled: true,
+    connectHintHe: 'חברו Zapier (webhook) לפרסום אוטומטי, וואטסאפ לאישור טיוטות, ו-HubSpot אם לידים מסושיאל.',
+  },
 ];
 
 const ENHANCEMENTS = {

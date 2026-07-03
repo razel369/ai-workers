@@ -100,3 +100,87 @@ export function pinnedLookup(resolved) {
 export function safeUrlForError(value) {
   return cleanText(value, 160);
 }
+
+const MAX_PUBLIC_FETCH_REDIRECTS = 5;
+const DEFAULT_PUBLIC_FETCH_MAX_BYTES = 512_000;
+
+/**
+ * Fetch a public HTTP(S) URL with DNS pinning and per-redirect re-validation (SSRF-safe).
+ */
+export async function fetchPublicHttpContent(rawUrl, options = {}) {
+  const {
+    timeoutMs = 12_000,
+    headers = {},
+    maxBytes = DEFAULT_PUBLIC_FETCH_MAX_BYTES,
+    maxRedirects = MAX_PUBLIC_FETCH_REDIRECTS,
+  } = options;
+
+  let current = String(rawUrl ?? '').trim();
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const checked = await validatePublicHttpUrl(current);
+    if (!checked.ok) return { ok: false, error: checked.error, url: current };
+
+    const parsed = new URL(checked.url);
+    const lib = parsed.protocol === 'https:' ? await import('node:https') : await import('node:http');
+    const lookup = pinnedLookup(checked.resolved);
+
+    const result = await new Promise((resolve, reject) => {
+      const req = lib.request({
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: { 'user-agent': 'AI-Workers/1.0', ...headers },
+        lookup,
+        timeout: timeoutMs,
+      }, (res) => {
+        const status = res.statusCode ?? 0;
+        const location = res.headers.location;
+        if ([301, 302, 303, 307, 308].includes(status) && location) {
+          res.resume();
+          try {
+            resolve({ redirect: new URL(location, checked.url).toString() });
+          } catch {
+            reject(new Error('invalid_redirect'));
+          }
+          return;
+        }
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          size += chunk.length;
+          if (size <= maxBytes) chunks.push(chunk);
+        });
+        res.on('end', () => {
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            body: Buffer.concat(chunks).toString('utf8'),
+            url: checked.url,
+          });
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.end();
+    }).catch((e) => ({ ok: false, error: e?.message ?? String(e), url: checked.url }));
+
+    if (result.redirect) {
+      current = result.redirect;
+      continue;
+    }
+    return result;
+  }
+  return { ok: false, error: 'too_many_redirects', url: current };
+}
+
+/** Put OAuth query params before the hash so SPA routers and location.search both work. */
+export function buildOAuthReturnUrl(returnPath, queryString) {
+  const path = returnPath || '/marketplace';
+  const hashIdx = path.indexOf('#');
+  const base = hashIdx >= 0 ? path.slice(0, hashIdx) : path;
+  const hash = hashIdx >= 0 ? path.slice(hashIdx) : '';
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}${queryString}${hash}`;
+}

@@ -14,14 +14,15 @@ export const SKILLS = [
     icon: '🔍',
     category: 'research',
     mcpServers: [],
-    addTools: ['search_knowledge', 'remember_fact'],
+    addTools: ['fetch_web_page', 'search_knowledge', 'remember_fact', 'create_crm_note', 'notify_webhook'],
     addKnowledge: `SKILL: Web Research
-You can research topics by asking the user for information or using available search tools.
+You research topics using fetch_web_page on public competitor URLs and search_knowledge for internal notes.
 When researching:
-1. Ask clarifying questions before searching
-2. Cite sources when providing information
-3. Summarize findings concisely
-4. Offer to dig deeper on any point`,
+1. Ask clarifying questions before searching (industry, competitors, goal)
+2. fetch_web_page each competitor URL — cite title + URL for every claim
+3. Summarize findings in a comparison table + executive summary
+4. create_crm_note + notify_webhook when report is ready
+5. Never guess pricing — mark "לא פורסם" if not on the page`,
     persona: '',
   },
   {

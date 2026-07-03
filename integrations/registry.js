@@ -235,6 +235,20 @@ export function validateConfig(typeId, config = {}) {
     return { ok: true, config: { ...config } };
   }
 
+  if (typeId === 'whatsapp') {
+    const phone = String(config.ownerNotifyPhone ?? '').trim();
+    if (phone) {
+      return {
+        ok: true,
+        config: {
+          ownerNotifyPhone: phone,
+          provider: config.provider || 'meta',
+          authMethod: 'phone',
+        },
+      };
+    }
+  }
+
   const clean = {};
   for (const field of def.fields) {
     const val = config[field.key];
@@ -251,12 +265,6 @@ export function validateConfig(typeId, config = {}) {
   if (typeId === 'webhook' && config.secret) clean.secret = config.secret;
   if (typeId === 'webhook' && config.mode) clean.mode = config.mode;
   if (typeId === 'webhook' && config.hookId) clean.hookId = config.hookId;
-  if (typeId === 'whatsapp' && (config.ownerNotifyPhone || clean.ownerNotifyPhone)) {
-    clean.ownerNotifyPhone = String(config.ownerNotifyPhone || clean.ownerNotifyPhone).trim();
-    clean.provider = clean.provider || config.provider || 'meta';
-    clean.authMethod = 'phone';
-    return { ok: true, config: clean };
-  }
   if (typeId === 'google_calendar' && clean.bookingLink) {
     clean.mode = 'link';
     clean.authMethod = clean.authMethod || 'link';
