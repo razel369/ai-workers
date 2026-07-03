@@ -6,430 +6,12 @@
 <title>AI Workers — עובדי AI לעסקים בישראל</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/material3-theme.css">
-<style>
-  :root { color-scheme:dark; --bg:#090b0d; --surface:#12161b; --surface2:#182028; --surface3:#202a34; --border:#26313c; --border-light:#344351; --text:#f5f1e8; --body:#c6cbd2; --muted:#87929e; --accent:#d6a04d; --accent-dark:#ad7d33; --accent-glow:rgba(214,160,77,.16); --accent-glow-2:rgba(214,160,77,.08); --green:#66ad78; --green-bg:rgba(102,173,120,.13); --red:#d45d5d; --red-bg:rgba(212,93,93,.12); --blue:#5aa6b8; --radius:8px; --radius-sm:6px; --radius-lg:10px; --shadow-lg:0 12px 40px rgba(0,0,0,.36); --font:'Rubik',system-ui,sans-serif; }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font:15px/1.55 var(--font); background:var(--bg); color:var(--body); min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; font-feature-settings:"kern" 1; }
-  main,header,.key-bar,.toast-container { position:relative; z-index:1; }
-  
-  /* === HEADER === */
-  header { position:sticky; top:0; z-index:100; background:rgba(8,7,11,.75); backdrop-filter:blur(20px) saturate(1.5); border-bottom:1px solid var(--border); padding:10px 28px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header .logo { display:flex; align-items:center; gap:10px; text-decoration:none; padding:4px 12px 4px 0; border-inline-start:1px solid var(--border); margin-inline-start:12px; }
-  header .logo .logo-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 0 20px var(--accent-glow); animation:logoGlow 3s ease-in-out infinite alternate; }
-  @keyframes logoGlow { 0%{box-shadow:0 0 20px var(--accent-glow)} 100%{box-shadow:0 0 35px rgba(201,149,62,.25)} }
-  header .logo .logo-text { display:flex; flex-direction:column; line-height:1.2; }
-  header .logo .logo-main { font-size:18px; font-weight:800; letter-spacing:0; color:var(--text); }
-  header .logo .logo-sub { font-size:10px; color:var(--muted); font-weight:500; }
-  header nav { display:flex; gap:2px; margin-right:auto; flex-wrap:wrap; }
-  header nav a { color:var(--muted); text-decoration:none; padding:8px 16px; border-radius:var(--radius-sm); font-size:14px; font-weight:500; transition:all .2s ease; position:relative; }
-  header nav a:hover { background:var(--surface2); color:var(--body); }
-  header nav a.active { background:var(--accent-glow); color:var(--accent); }
-  header nav a.active::after { content:''; position:absolute; bottom:2px; left:50%; transform:translateX(-50%); width:18px; height:2px; background:var(--accent); border-radius:2px; }
-  header .header-cta { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff!important; padding:8px 18px!important; border-radius:var(--radius-sm)!important; font-weight:700!important; animation:ctaPulse 2.5s ease-in-out infinite; }
-  @keyframes ctaPulse { 0%,100%{box-shadow:0 0 0 0 rgba(201,149,62,.3)} 50%{box-shadow:0 0 25px 5px rgba(201,149,62,.15)} }
-  main { max-width:1200px; margin:0 auto; padding:28px 28px 60px; min-height:calc(100vh - 64px); }
-  h1 { font-size:28px; font-weight:800; color:var(--text); }
-  h2 { font-size:22px; font-weight:700; color:var(--text); }
-  h3 { font-size:17px; font-weight:700; color:var(--text); }
-  a { color:var(--accent); text-decoration:none; }
-  code { font-family:monospace; font-size:13px; background:var(--surface2); padding:2px 6px; border-radius:4px; color:var(--accent); }
-  
-  /* === CARDS === */
-  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:22px 24px; transition:all .3s cubic-bezier(.22,1,.36,1); position:relative; overflow:hidden; }
-  .card::before { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(255,255,255,.02) 0%,transparent 50%); pointer-events:none; }
-  .card:hover { border-color:var(--border-light); transform:translateY(-2px); box-shadow:0 8px 32px rgba(0,0,0,.35); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:20px; margin-top:18px; }
-  
-  /* === BUTTONS === */
-  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 22px; border-radius:var(--radius-sm); font:600 14px/1 var(--font); border:1px solid var(--border); background:var(--surface2); color:var(--body); cursor:pointer; transition:all .2s ease; text-decoration:none; white-space:nowrap; }
-  .btn:hover { background:var(--surface3); color:var(--text); transform:translateY(-2px); text-decoration:none; }
-  .btn:active { transform:translateY(0) scale(.98); }
-  .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff; border-color:transparent; font-weight:700; box-shadow:0 4px 15px var(--accent-glow); }
-  .btn-primary:hover { box-shadow:0 6px 25px var(--accent-glow); color:#fff; }
-  .btn-danger { background:var(--red-bg); color:var(--red); border-color:rgba(212,80,80,.2); }
-  .btn-sm { padding:7px 16px; font-size:13px; }
-  .btn-outline { background:transparent; border:1px solid var(--border); color:var(--muted); }
-  .btn-outline:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
-  /* === PILLS === */
-  .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 12px; border-radius:100px; font-size:12px; font-weight:600; background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
-  .pill-active { background:var(--green-bg); color:var(--green); border-color:rgba(110,159,94,.25); }
-  .pill-pending { background:rgba(201,149,62,.12); color:var(--accent); border-color:rgba(201,149,62,.2); }
-  .pill-expired { background:var(--red-bg); color:var(--red); border-color:rgba(212,80,80,.2); }
-  .badge-dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
-  .badge-dot.active { background:var(--green); box-shadow:0 0 8px var(--green); }
-  
-  /* === UTILITIES === */
-  .toolbar { display:flex; align-items:center; gap:14px; margin-bottom:20px; flex-wrap:wrap; }
-  .toolbar h2 { margin:0; }
-  .empty { text-align:center; padding:60px 20px; color:var(--muted); }
-  .empty h2 { font-size:20px; margin-bottom:8px; color:var(--text); }
-  .muted { color:var(--muted); font-size:13px; }
-  .ok { color:var(--green); }
-  .err { color:var(--red); }
-  .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  
-  /* === INPUTS === */
-  input,textarea,select { font:14px/1.5 var(--font); background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); padding:10px 14px; outline:none; transition:all .2s ease; width:100%; }
-  input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
-  textarea { resize:vertical; min-height:80px; }
-  label { font-size:13px; font-weight:600; color:var(--muted); display:block; margin-bottom:4px; }
-  .key-bar { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 18px; margin-bottom:20px; flex-wrap:wrap; }
-  .key-bar label { margin:0; font-size:13px; white-space:nowrap; }
-  .key-bar input { width:auto; flex:1; min-width:180px; padding:8px 12px; font-size:13px; font-family:monospace; }
-  
-  /* === MARKETPLACE HERO === */
-  .mkt-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:24px; align-items:stretch; padding:22px 0 26px; border-bottom:1px solid var(--border); margin-bottom:22px; }
-  .hero-copy { display:flex; flex-direction:column; justify-content:center; min-height:260px; }
-  .hero-badge { display:inline-flex; align-items:center; gap:8px; width:max-content; padding:5px 10px; border-radius:var(--radius-sm); background:rgba(214,160,77,.1); border:1px solid rgba(214,160,77,.24); color:var(--accent); font-size:12px; font-weight:700; margin-bottom:12px; }
-  .mkt-hero h1 { font-size:clamp(32px,5vw,56px); line-height:1.02; font-weight:900; color:var(--text); margin-bottom:14px; max-width:850px; }
-  .mkt-hero p { font-size:17px; color:var(--body); max-width:720px; margin:0; }
-  .hero-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
-  .hero-proof { background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015)); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; align-self:stretch; display:flex; flex-direction:column; justify-content:space-between; box-shadow:var(--shadow-lg); }
-  .hero-proof .proof-label { color:var(--muted); font-size:12px; font-weight:700; margin-bottom:8px; }
-  .hero-proof .proof-number { font-size:42px; font-weight:900; line-height:1; color:var(--text); }
-  .hero-proof .proof-copy { color:var(--muted); font-size:13px; margin-top:8px; }
-  .proof-list { display:grid; gap:8px; margin-top:18px; }
-  .proof-list span { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--body); }
-  .proof-list svg { color:var(--green); }
-  .trust-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:18px; }
-  .trust-item { background:rgba(255,255,255,.025); border:1px solid var(--border); border-radius:var(--radius); padding:12px; min-height:76px; }
-  .trust-item .sn { display:flex; align-items:center; gap:8px; font-size:20px; font-weight:900; color:var(--text); line-height:1.1; }
-  .trust-item .sl { font-size:12px; color:var(--muted); margin-top:6px; line-height:1.35; }
-  
-  /* === FILTER BAR === */
-  .market-heading { display:flex; gap:12px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; margin-bottom:12px; }
-  .market-heading h2 { margin:0; }
-  .market-heading p { margin:3px 0 0; color:var(--muted); font-size:13px; max-width:620px; }
-  .filter-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px; padding:6px; background:rgba(255,255,255,.018); border:1px solid var(--border); border-radius:var(--radius); }
-  .filter-btn { padding:9px 14px; border-radius:var(--radius-sm); font:700 13px/1 var(--font); border:1px solid transparent; background:transparent; color:var(--muted); cursor:pointer; transition:all .2s ease; }
-  .filter-btn:hover { color:var(--body); background:var(--surface2); }
-  .filter-btn.active { background:var(--surface3); color:var(--text); border-color:var(--border-light); box-shadow:inset 0 -2px 0 var(--accent); }
-  
-  /* === WORKER CARD === */
-  .w-card { background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.012)),var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; transition:all .25s ease; position:relative; overflow:hidden; cursor:pointer; display:flex; flex-direction:column; min-height:360px; animation:cardAppear .35s ease both; }
-  .w-card:nth-child(1) { animation-delay:0s }
-  .w-card:nth-child(2) { animation-delay:.05s }
-  .w-card:nth-child(3) { animation-delay:.1s }
-  .w-card:nth-child(4) { animation-delay:.15s }
-  .w-card:nth-child(5) { animation-delay:.2s }
-  .w-card:nth-child(6) { animation-delay:.25s }
-  .w-card:nth-child(7) { animation-delay:.3s }
-  .w-card:nth-child(8) { animation-delay:.35s }
-  .w-card:nth-child(9) { animation-delay:.4s }
-  @keyframes cardAppear { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
-  .w-card:hover { transform:translateY(-3px); border-color:var(--border-light); box-shadow:0 16px 42px rgba(0,0,0,.34); }
-  .w-card.popular { border-top:3px solid var(--accent); }
-  .w-card.best { border-top:3px solid var(--green); }
-  
-  /* Worker card badge */
-  .w-badge { position:absolute; top:12px; inset-inline-start:12px; z-index:2; }
-  .badge { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:800; }
-  .badge.popular { background:rgba(214,160,77,.14); color:var(--accent); border:1px solid rgba(214,160,77,.24); }
-  .badge.best { background:var(--green-bg); color:var(--green); border:1px solid rgba(102,173,120,.28); }
-  .badge.new { background:rgba(90,166,184,.13); color:var(--blue); border:1px solid rgba(90,166,184,.28); }
-  
-  /* Worker top section */
-  .w-top { display:flex; align-items:flex-start; gap:13px; margin-bottom:14px; padding-inline-start:78px; }
-  .w-top .wi { width:46px; height:46px; background:var(--surface2); border-radius:var(--radius); display:flex; align-items:center; justify-content:center; font-size:22px; border:1px solid var(--border); flex-shrink:0; color:var(--accent); }
-  .w-top .wi-info h3 { font-size:17px; margin:0; line-height:1.35; padding-inline-start:2px; font-weight:600; }
-  .w-fit { font-size:12px; color:var(--muted); margin-top:4px; }
-  
-  /* Tags */
-  .w-tags { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
-  .worker-state, .tag { padding:4px 9px; border-radius:var(--radius-sm); font-size:11px; font-weight:700; }
-  .worker-state { background:rgba(255,255,255,.035); color:var(--body); border:1px solid var(--border); }
-  .tag-sales { background:rgba(214,160,77,.1); color:var(--accent); border:1px solid rgba(214,160,77,.18); }
-  .tag-support { background:rgba(94,186,125,.1); color:var(--green); border:1px solid rgba(94,186,125,.15); }
-  .tag-admin { background:rgba(91,142,201,.1); color:var(--blue); border:1px solid rgba(91,142,201,.15); }
-  .tag-content { background:rgba(90,166,184,.1); color:var(--blue); border:1px solid rgba(90,166,184,.18); }
-  
-  /* Worker description */
-  .desc { font-size:13px; color:var(--body); line-height:1.55; margin-bottom:14px; flex:1; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-  .w-outcome { display:flex; align-items:flex-start; gap:8px; padding:10px; background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); font-size:12px; line-height:1.45; margin-bottom:14px; min-height:60px; }
-  .w-outcome svg { color:var(--green); margin-top:2px; }
-  
-  /* Worker pricing */
-  .pricing { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:stretch; padding-top:12px; border-top:1px solid var(--border); margin-bottom:14px; }
-  .pricing .pr { text-align:right; background:rgba(255,255,255,.022); border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px 10px; }
-  .pricing .pr .amt { font-size:21px; line-height:1.05; font-weight:900; color:var(--text); }
-  .pricing .pr .amt .currency { font-size:14px; font-weight:600; color:var(--muted); }
-  .pricing .pr .pd { font-size:11px; color:var(--muted); margin-top:1px; }
-  .pricing .pr.buy .amt { color:var(--body); }
-  .pricing .pr.rent .amt { color:var(--accent); }
-  .pricing .pdv { display:none; }
-  .w-card .pricing .pr .amt { font-size:20px; font-weight:800; }
-  
-  /* Worker CTA section */
-  .w-cta { display:flex; gap:8px; }
-  .w-cta .btn { flex:1; }
-  
-  /* === MY WORKERS ITEM === */
-  .w-item { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; transition:all .3s ease; }
-  .w-item:hover { border-color:var(--border-light); }
-  .w-item .hdr { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-  .w-item .hdr h3 { margin:0; flex:1; font-size:16px; }
-  .w-item .meta { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; font-size:12px; color:var(--muted); }
-  .w-item .acts { display:flex; gap:8px; }
-  
-  /* === BUILDER === */
-  .b-sec { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:16px; }
-  .b-sec h3 { font-size:15px; margin-bottom:14px; display:flex; align-items:center; gap:8px; color:var(--text); }
-  .b-sec .fld { margin-bottom:14px; }
-  .b-sec textarea { min-height:100px; font-size:13px; }
-  .l-prog { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
-  .l-prog .step { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); }
-  .l-prog .step.active { color:var(--text); }
-  .l-prog .step.done { color:var(--green); }
-  .l-prog .step.error { color:var(--red); }
-
-  /* === SKILLS & MCP CARDS === */
-  .skill-card, .mcp-card { display:flex; align-items:center; gap:10px; background:linear-gradient(135deg,rgba(255,255,255,.02),transparent); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; transition:all .25s ease; position:relative; overflow:hidden; }
-  .skill-card:hover, .mcp-card:hover { border-color:var(--border-light); background:rgba(255,255,255,.04); transform:translateX(-2px); }
-  .skill-card .sk-icon, .mcp-card .mcp-icon { width:36px; height:36px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,var(--surface2),var(--surface3)); border:1px solid var(--border); flex-shrink:0; color:var(--accent); }
-  .skill-card.installed { border-color:rgba(110,159,94,.2); }
-  .skill-card.installed .sk-icon { color:var(--green); border-color:rgba(110,159,94,.3); }
-  .mcp-card .mcp-icon { color:var(--blue); }
-  .mcp-section-hdr { display:flex; align-items:center; gap:8px; margin-top:20px; margin-bottom:8px; font-size:16px; font-weight:700; color:var(--text); }
-  .mcp-section-hdr svg { color:var(--accent); }
-  .mcp-empty { font-size:13px; color:var(--muted); padding:12px 0; }
-  .mcp-add-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
-  .mcp-status { font-size:12px; margin-top:6px; min-height:20px; }
-  .int-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; margin-top:12px; }
-  .int-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; display:flex; flex-direction:column; gap:8px; }
-  .int-card.connected { border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.04); }
-  .int-card h4 { margin:0; font-size:14px; display:flex; align-items:center; gap:8px; }
-  .int-card .int-desc { font-size:12px; color:var(--muted); line-height:1.4; }
-  .int-card .int-status { font-size:11px; }
-  .int-form { display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
-  .int-card.expanded .int-form { display:block; }
-  .connect-panel { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
-  .connect-oauth-btn { width:100%; justify-content:center; }
-  .hook-url-box { font-size:11px; padding:8px 10px; background:#0a0c10; border:1px solid var(--border); border-radius:8px; direction:ltr; text-align:left; word-break:break-all; font-family:monospace; color:var(--accent); }
-  .connect-hint { font-size:11px; color:var(--muted); line-height:1.4; }
-
-  /* === AGENT MODE === */
-  .agent-banner { background:linear-gradient(135deg,rgba(214,160,77,.08),rgba(90,166,184,.06)); border:1px solid rgba(214,160,77,.22); border-radius:var(--radius); padding:14px 16px; margin-bottom:14px; }
-  .agent-banner h4 { font-size:14px; color:var(--text); margin-bottom:6px; }
-  .agent-banner p { font-size:13px; color:var(--muted); margin:0; line-height:1.5; }
-  .agent-toggle { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
-  .agent-toggle button { flex:1; min-width:140px; padding:10px 14px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface2); color:var(--muted); font-weight:700; cursor:pointer; }
-  .agent-toggle button.active { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
-  .tool-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-  .tool-chip { font-size:11px; padding:4px 8px; border-radius:100px; background:var(--surface3); border:1px solid var(--border); color:var(--body); font-family:monospace; }
-  .agent-test { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
-  .agent-trace { font-size:12px; background:#0a0c10; border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px; margin-top:8px; max-height:200px; overflow:auto; }
-  .agent-trace .step { margin-bottom:6px; color:var(--muted); }
-  .agent-trace .step b { color:var(--accent); }
-
-  /* === INTEGRATIONS HUB === */
-  .integrations-hub { margin-top:16px; padding:16px; border:1px solid var(--border); border-radius:var(--radius); background:rgba(255,255,255,.02); }
-  .integrations-hub h3 { font-size:15px; margin-bottom:4px; display:flex; align-items:center; gap:8px; }
-  .integration-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-top:12px; }
-  .integration-card { border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; background:var(--surface2); position:relative; }
-  .integration-card.connected { border-color:var(--green); background:rgba(74,222,128,.06); }
-  .integration-card .ic-icon { font-size:22px; margin-bottom:6px; }
-  .integration-card .ic-title { font-size:13px; font-weight:700; color:var(--text); }
-  .integration-card .ic-desc { font-size:11px; color:var(--muted); margin:4px 0 8px; line-height:1.4; min-height:32px; }
-  .integration-card .ic-badge { position:absolute; top:8px; left:8px; font-size:10px; padding:2px 6px; border-radius:100px; background:var(--green); color:#052e16; font-weight:800; }
-  .integration-card .ic-actions { display:flex; gap:6px; flex-wrap:wrap; }
-  .integration-card .ic-actions .btn { padding:5px 8px; font-size:11px; }
-  .integration-form { margin-top:10px; padding-top:10px; border-top:1px solid var(--border); display:none; }
-  .integration-form.open { display:block; }
-  .integration-form .fld { margin-bottom:8px; }
-  .integration-form label { font-size:11px; }
-
-  /* === WIZARD === */
-  .wizard-progress { display:flex; gap:4px; margin-bottom:24px; padding:4px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-  .wizard-progress .wp-step { flex:1; padding:10px 6px; text-align:center; font-size:11px; font-weight:600; color:var(--muted); border-radius:var(--radius-sm); transition:all .3s ease; cursor:pointer; position:relative; }
-  .wizard-progress .wp-step .wp-num { display:inline-flex; width:22px; height:22px; border-radius:50%; align-items:center; justify-content:center; font-size:11px; background:var(--surface2); border:1px solid var(--border); margin-bottom:4px; transition:all .3s ease; }
-  .wizard-progress .wp-step.active { color:var(--text); background:var(--accent-glow); }
-  .wizard-progress .wp-step.active .wp-num { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .wizard-progress .wp-step.done { color:var(--green); }
-  .wizard-progress .wp-step.done .wp-num { background:var(--green); color:#fff; border-color:var(--green); }
-  .wizard-progress .wp-step:not(:last-child)::after { content:''; position:absolute; left:-2px; top:50%; width:4px; height:4px; border-radius:50%; background:var(--border); }
-  .wizard-step { display:none; animation:fadeIn .3s ease both; }
-  .wizard-step.active { display:block; }
-  .wizard-actions { display:flex; gap:10px; margin-top:20px; padding-top:16px; border-top:1px solid var(--border); }
-  .wizard-actions .btn { min-width:120px; }
-  .setup-coach { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr); gap:16px; align-items:start; }
-  .coach-panel { background:linear-gradient(180deg,rgba(214,160,77,.08),rgba(255,255,255,.018)); border:1px solid rgba(214,160,77,.22); border-radius:var(--radius); padding:16px; }
-  .coach-panel h3 { font-size:15px; margin-bottom:8px; }
-  .coach-panel .coach-list { display:grid; gap:8px; margin-top:12px; }
-  .coach-panel .coach-list span { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--body); line-height:1.45; }
-  .coach-panel svg { color:var(--green); margin-top:2px; }
-  .beginner-note { background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; color:var(--muted); font-size:13px; line-height:1.55; margin-bottom:14px; }
-  .quick-choices { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-  .quick-choice { border:1px solid var(--border); background:var(--surface2); color:var(--body); border-radius:var(--radius-sm); padding:7px 10px; font:700 12px/1 var(--font); cursor:pointer; }
-  .quick-choice:hover { border-color:var(--accent); color:var(--accent); }
-  .review-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
-  .review-item { background:rgba(255,255,255,.026); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; min-height:88px; }
-  .review-item .ri-label { font-size:11px; font-weight:800; color:var(--muted); margin-bottom:6px; }
-  .review-item .ri-value { color:var(--text); font-size:13px; line-height:1.45; white-space:pre-wrap; }
-  details.advanced-config { margin-top:14px; border:1px solid var(--border); border-radius:var(--radius); background:rgba(255,255,255,.018); }
-  details.advanced-config > summary { cursor:pointer; padding:12px 14px; color:var(--body); font-weight:700; }
-  details.advanced-config > div { padding:0 14px 14px; border-top:1px solid var(--border); }
-
-  /* === LIVE PREVIEW === */
-  .live-preview { position:sticky; top:80px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; text-align:center; min-height:200px; }
-  .live-preview .lp-avatar { width:64px; height:64px; margin:0 auto 10px; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); border-radius:16px; display:flex; align-items:center; justify-content:center; color:#fff; box-shadow:0 0 25px var(--accent-glow); }
-  .live-preview .lp-name { font-size:18px; font-weight:800; color:var(--text); }
-  .live-preview .lp-role { font-size:12px; color:var(--muted); margin-bottom:12px; }
-  .live-preview .lp-stats { display:flex; gap:10px; justify-content:center; font-size:11px; }
-  .live-preview .lp-stats span { background:var(--surface2); padding:4px 10px; border-radius:100px; color:var(--muted); }
-
-  /* === PAYWALL === */
-  .paywall { text-align:center; padding:40px 20px; max-width:500px; margin:0 auto; }
-  .paywall .pw-icon { width:80px; height:80px; margin:0 auto 16px; background:linear-gradient(135deg,var(--accent-glow),transparent); border-radius:50%; display:flex; align-items:center; justify-content:center; }
-  .paywall h2 { margin-bottom:8px; }
-  .paywall .pw-price { font-size:42px; font-weight:900; color:var(--accent); margin:12px 0; }
-  .paywall .pw-price small { font-size:16px; font-weight:600; color:var(--muted); }
-  .paywall .pw-methods { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
-  .paywall .pw-method { display:flex; align-items:center; gap:10px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 16px; text-align:right; transition:all .2s; }
-  .paywall .pw-method:hover { border-color:var(--border-light); background:var(--surface3); }
-  .paywall .pw-method .pm-icon { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; }
-  .paywall .pw-method .pm-info { flex:1; }
-  .paywall .pw-method .pm-info .pm-title { font-weight:600; color:var(--text); font-size:14px; }
-  .paywall .pw-method .pm-info .pm-desc { font-size:12px; color:var(--muted); }
-  .paywall .pw-note { font-size:12px; color:var(--muted); margin-top:12px; padding:12px; background:rgba(255,255,255,.02); border-radius:var(--radius-sm); border:1px solid var(--border); }
-
-  /* === ONBOARDING MODAL === */
-  .onboard-overlay { position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px; }
-  .onboard-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); max-width:480px; width:100%; padding:28px; text-align:right; }
-  .onboard-card h2 { margin:0 0 8px; font-size:20px; }
-  .onboard-steps { display:flex; gap:8px; margin:16px 0; }
-  .onboard-step { flex:1; height:4px; border-radius:2px; background:var(--border); }
-  .onboard-step.active { background:var(--accent); }
-  .onboard-actions { display:flex; gap:10px; margin-top:20px; justify-content:flex-end; }
-
-  /* === MAGIC FLOW === */
-  .magic-wrap { max-width:560px; margin:0 auto; padding:8px 0 40px; }
-  .magic-step-label { font-size:13px; color:var(--accent); font-weight:700; margin-bottom:6px; }
-  .magic-title { font-size:clamp(24px,5vw,32px); font-weight:900; color:var(--text); margin-bottom:8px; line-height:1.25; }
-  .magic-sub { color:var(--muted); font-size:16px; margin-bottom:22px; line-height:1.6; }
-  .magic-input { font-size:18px; padding:16px 18px; min-height:56px; }
-  .magic-progress { display:flex; gap:8px; margin-bottom:24px; }
-  .magic-progress span { flex:1; height:5px; border-radius:3px; background:var(--border); }
-  .magic-progress span.on { background:var(--accent); }
-  .tpl-pick { display:grid; gap:12px; }
-  .tpl-pick-btn { display:flex; align-items:center; gap:14px; text-align:right; padding:16px 18px; border:2px solid var(--border); border-radius:var(--radius); background:var(--surface2); cursor:pointer; transition:all .2s; width:100%; font:inherit; color:var(--text); }
-  .tpl-pick-btn:hover,.tpl-pick-btn.selected { border-color:var(--accent); background:var(--accent-glow); }
-  .tpl-pick-btn .emoji { font-size:32px; line-height:1; }
-  .tpl-pick-btn .tp-title { font-size:17px; font-weight:800; }
-  .tpl-pick-btn .tp-desc { font-size:14px; color:var(--muted); margin-top:2px; }
-  .demo-banner { background:var(--accent-glow); border:1px solid rgba(214,160,77,.35); border-radius:var(--radius); padding:12px 16px; margin-bottom:14px; font-size:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; }
-  .celebration-banner { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:10000; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#111; font-weight:800; font-size:18px; padding:14px 28px; border-radius:999px; box-shadow:var(--shadow-lg); animation:celebrateIn .5s ease; }
-  @keyframes celebrateIn { from{opacity:0;transform:translateX(-50%) translateY(-12px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
-  @media (prefers-reduced-motion: reduce) { .celebration-banner { animation:none; } }
-  .preview-chat { display:flex; flex-direction:column; height:min(420px,55vh); }
-  .preview-chat .chat-window { flex:1; min-height:200px; }
-  .btn-hero { padding:16px 28px; font-size:17px; font-weight:800; min-height:52px; width:100%; max-width:360px; }
-  @media (max-width:600px) {
-    main { padding:16px 14px 48px; }
-    header { padding:8px 12px; }
-    header nav a { padding:10px 12px; font-size:15px; }
-    .btn, .btn-primary { min-height:48px; font-size:16px; }
-    .magic-input { font-size:17px; }
-    .grid { grid-template-columns:1fr; }
-    .w-cta { flex-direction:column; }
-    .w-cta .btn { width:100%; min-height:48px; }
-  }
-  
-  /* === CHAT === */
-  .chat-hdr { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
-  .chat-hdr h2 { margin:0; font-size:18px; flex:1; }
-  .chat-window { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; height:420px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
-  .chat-window::-webkit-scrollbar { width:6px; }
-  .chat-window::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
-  .msg { max-width:85%; padding:12px 18px; border-radius:18px; font-size:14px; line-height:1.55; animation:msgIn .3s cubic-bezier(.22,1,.36,1) both; word-break:break-word; }
-  @keyframes msgIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-  .msg.user { background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff; align-self:flex-end; border-bottom-right-radius:6px; box-shadow:0 2px 10px var(--accent-glow); }
-  .msg.assistant { background:var(--surface2); color:var(--body); border:1px solid var(--border); align-self:flex-start; border-bottom-left-radius:6px; }
-  .msg.system { background:rgba(255,255,255,.03); color:var(--muted); font-size:12px; align-self:center; text-align:center; padding:8px 16px; border-radius:20px; }
-  .composer { display:flex; gap:10px; align-items:flex-end; }
-  .composer textarea { flex:1; min-height:48px; max-height:120px; padding:12px 16px; border-radius:var(--radius); resize:none; }
-  .composer .btn { height:48px; padding:0 28px; border-radius:var(--radius); }
-  .composer-actions { display:flex; gap:8px; align-items:flex-end; }
-  .btn-mic { width:48px; height:48px; padding:0; border-radius:var(--radius); font-size:20px; flex-shrink:0; }
-  .btn-mic.listening { background:var(--red-bg); border-color:rgba(212,93,93,.4); color:var(--red); animation:micPulse 1.2s ease-in-out infinite; }
-  @keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(212,93,93,.3)} 50%{box-shadow:0 0 0 8px rgba(212,93,93,0)} }
-  .chat-suggestions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
-  .suggestion-chip { padding:8px 14px; border-radius:100px; border:1px solid var(--border); background:var(--surface2); color:var(--body); font-size:13px; cursor:pointer; transition:all .15s; }
-  .suggestion-chip:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
-  .confidence-badge { display:inline-block; margin-top:6px; font-size:11px; color:var(--muted); padding:2px 8px; border-radius:100px; background:rgba(255,255,255,.04); }
-  .confidence-badge.high { color:var(--green); }
-  .confidence-badge.medium { color:var(--accent); }
-  .confidence-badge.low { color:var(--red); }
-  .stream-cursor { display:inline-block; width:2px; height:1em; background:var(--accent); margin-right:2px; animation:blink 1s step-end infinite; vertical-align:text-bottom; }
-  @keyframes blink { 50%{opacity:0} }
-  .share-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-  .health-card { display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:var(--radius-sm); background:var(--surface2); border:1px solid var(--border); margin:10px 0 14px; font-size:13px; }
-  .health-card.ok { border-color:rgba(102,173,120,.35); color:var(--green); }
-  .health-card.warn { border-color:rgba(214,160,77,.35); color:var(--accent); }
-  .health-card.info { border-color:var(--border); color:var(--muted); }
-  .magic-connect { margin-top:18px; padding:16px; border:1px dashed var(--border); border-radius:var(--radius); background:rgba(255,255,255,.02); }
-  .magic-connect h4 { font-size:14px; margin-bottom:10px; color:var(--text); }
-  .magic-connect .fld { margin-bottom:10px; }
-  .magic-connect .fld label { font-size:12px; }
-  .insights-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; margin:16px 0 24px; }
-  .insight-card { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:14px; text-align:center; }
-  .insight-card .n { font-size:26px; font-weight:800; color:var(--accent); line-height:1.1; }
-  .insight-card .l { font-size:12px; color:var(--muted); margin-top:4px; }
-  .insights-table { width:100%; border-collapse:collapse; font-size:13px; }
-  .insights-table th,.insights-table td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:right; }
-  .insights-table th { color:var(--muted); font-weight:600; font-size:12px; }
-  .test-reply-edit { width:100%; margin-top:8px; min-height:72px; font-size:13px; }
-  .tool-log .tc { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; margin-bottom:6px; }
-  .tool-log .tc .tn { font-weight:700; color:var(--accent); font-size:13px; }
-  .tool-log .tc pre { font-size:11px; margin:6px 0 0; color:var(--muted); white-space:pre-wrap; }
-  
-  /* === ADMIN === */
-  .aw { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px 22px; display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
-  .aw .info { flex:1; min-width:200px; }
-  .aw .info h4 { font-size:15px; color:var(--text); margin-bottom:4px; }
-  .aw .acts { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  
-  /* === MODAL === */
-  .modal-overlay { position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.65); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; animation:overlayIn .2s ease both; padding:20px; }
-  .modal-overlay.closing { animation:overlayOut .2s ease both; }
-  @keyframes overlayIn { from{opacity:0} to{opacity:1} }
-  @keyframes overlayOut { from{opacity:1} to{opacity:0} }
-  .modal { background:var(--surface); border:1px solid var(--border-light); border-radius:var(--radius-lg); max-width:560px; width:100%; max-height:85vh; overflow-y:auto; box-shadow:0 0 60px rgba(0,0,0,.5); animation:modalIn .35s cubic-bezier(.22,1,.36,1) both; }
-  .modal-overlay.closing .modal { animation:modalOut .2s ease both; }
-  @keyframes modalIn { from{opacity:0;transform:scale(.93) translateY(15px)} to{opacity:1;transform:scale(1) translateY(0)} }
-  @keyframes modalOut { from{opacity:1;transform:scale(1)} to{opacity:0;transform:scale(.93)} }
-  .modal-hdr { display:flex; align-items:center; gap:12px; padding:20px 24px 0; }
-  .modal-hdr .icon-big { width:48px; height:48px; background:linear-gradient(135deg,var(--surface2),var(--surface3)); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; }
-  .modal-hdr h3 { flex:1; font-size:18px; }
-  .modal-close { width:32px; height:32px; border-radius:50%; border:none; background:var(--surface2); color:var(--muted); font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all .2s; }
-  .modal-close:hover { background:var(--surface3); color:var(--text); transform:rotate(90deg); }
-  .modal-body { padding:16px 24px 24px; }
-  
-  /* === TOAST === */
-  .toast-container { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:300; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; }
-  .toast { background:var(--surface); border:1px solid var(--border-light); border-radius:var(--radius); padding:12px 22px; font-size:14px; font-weight:500; color:var(--text); box-shadow:0 8px 40px rgba(0,0,0,.5); pointer-events:auto; transition:all .3s ease; opacity:0; transform:translateY(-10px); max-width:90vw; }
-  .toast.show { opacity:1; transform:translateY(0); }
-  .toast-success { border-color:rgba(110,159,94,.3); }
-  .toast-error { border-color:rgba(212,80,80,.3); }
-  
-  /* === SHIMMER / LOADING === */
-  .svg-icon { display:inline-block; vertical-align:middle; flex-shrink:0; transition:color .2s, opacity .2s; }
-  .icon-spin { animation:iconSpin 1.5s linear infinite; }
-  @keyframes iconSpin { 100%{transform:rotate(360deg)} }
-  .shimmer { background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%); background-size:200% 100%; animation:shimmer 1.5s ease-in-out infinite; border-radius:var(--radius-sm); }
-  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-  .page-enter { animation:pageIn .35s cubic-bezier(.22,1,.36,1) both; }
-  @keyframes pageIn { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-  }
-  
-  @media (max-width:900px) { .mkt-hero{grid-template-columns:1fr}.hero-copy{min-height:auto}.trust-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.setup-coach{grid-template-columns:1fr}.review-grid{grid-template-columns:1fr} }
-  @media (max-width:768px) { body{padding-bottom:92px} header{padding:10px 16px} header .logo{order:1;margin-inline-start:0;border-inline-start:0;padding-inline-end:0} header .logo .logo-sub{display:none} header nav{order:3;width:100%;margin:4px 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px} header nav a{padding:8px 6px;font-size:12px;text-align:center} header nav a.active::after{bottom:1px}.header-cta{padding:8px 6px!important} main{padding:16px 16px 96px}.key-bar{margin:0 0 18px;border-radius:0;border-inline:0;justify-content:center}.key-bar label{width:100%;text-align:center}.key-bar input{min-width:0;flex-basis:100%;font-size:12px}.key-bar .btn{padding:8px 10px}.mkt-hero{padding-top:12px;gap:14px}.mkt-hero h1{font-size:32px}.hero-actions .btn{width:100%}.trust-strip{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.toolbar h2{font-size:20px}.wizard-progress{margin-bottom:18px}.wizard-progress .wp-step{font-size:10px;padding:8px 4px}.b-sec{padding:18px}.quick-choice{width:100%;justify-content:center}.w-top{padding-inline-start:70px}.w-cta{flex-direction:column}.chat-window{height:300px}.composer{flex-direction:column}.composer .btn{width:100%}.toast-container{top:auto;bottom:88px;width:calc(100vw - 24px)}.toast{width:100%;text-align:center;padding:10px 14px} }
-</style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Secular+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/material3-theme.css?v=nightdesk10">
+<link rel="stylesheet" href="/assets/workers-list.css?v=wl1">
+<style>.icon-spin{animation:spin 1s linear infinite;color:var(--lamp)}@keyframes spin{to{transform:rotate(360deg)}}</style>
 </head>
-<body>
+<body class="night-desk">
 <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <symbol id="icon-robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -577,10 +159,10 @@
 
 <header>
   <a href="#/" class="logo">
-    <span class="logo-icon"><svg class="svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="14" rx="3"/><circle cx="9" cy="12" r="1.5" fill="#fff"/><circle cx="15" cy="12" r="1.5" fill="#fff"/><path d="M12 7V4M8 21v1h8v-1"/><path d="M8 4L6 2M16 4l2-2" stroke-width="1.2"/></svg></span>
+    <img src="/assets/logo-mark.png" alt="עובדי AI" class="logo-img">
     <span class="logo-text">
-      <span class="logo-main">AI Workers</span>
-      <span class="logo-sub">עובדים חכמים לעסקים</span>
+      <span class="logo-main">עובדי AI</span>
+      <span class="logo-sub">שירות לעסקים בישראל</span>
     </span>
   </a>
   <nav id="nav">
@@ -657,6 +239,12 @@ const APP = (() => {
     return fallback;
   }
 
+  function tryPageUrl(workerId) { return location.origin + '/try/' + workerId; }
+  function embedSnippet(workerId) {
+    return '<script src="' + location.origin + '/embed.js" data-worker="' + workerId + '" data-label="שאלו אותנו"><\/script>';
+  }
+  function waShareUrl(text) { return 'https://wa.me/?text=' + encodeURIComponent(text); }
+
   function showShareSuccess(workerId, workerName) {
     const key = 'paid-agent.celebrated-' + workerId;
     if (localStorage.getItem(key)) return;
@@ -679,6 +267,7 @@ const APP = (() => {
     'sales-leads-il': '💼', 'support-he': '💬', 'data-entry': '📋', 'content-he': '✍️',
     'real-estate-il': '🏠', 'clinic-receptionist-he': '🏥', 'restaurant-manager-he': '🍽️',
     'ecom-support-he': '🛒', 'property-manager-he': '🔧', 'social-media-creator-he': '📱',
+    'hr-recruiter-he': '👥', 'complaints-desk-he': '📣', 'legal-receptionist-he': '⚖️',
   };
   const TEMPLATE_PLAIN = {
     'sales-leads-il': 'מסנן לידים ואוסף פרטי קשר',
@@ -691,6 +280,9 @@ const APP = (() => {
     'content-he': 'כותב תוכן שיווקי בעברית',
     'property-manager-he': 'מקבל פניות תחזוקה מדיירים',
     'social-media-creator-he': 'יוצר רעיונות לפוסטים ותמונות',
+    'hr-recruiter-he': 'מסנן מועמדים וקובע ראיונות',
+    'complaints-desk-he': 'מתעד תלונות ומסלים דחוף',
+    'legal-receptionist-he': 'מקבל פניות וקובע פגישות במשרד',
   };
 
   function syncAdminNav() {
@@ -756,14 +348,20 @@ const APP = (() => {
     return { ok: false, body: r.body };
   }
 
-  async function connectIntegrationItem(item, panelEl, onSuccess) {
+  async function connectIntegrationItem(item, panelEl, onSuccess, opts = {}) {
     const type = item.type || item.id;
     const authMethod = item.authMethod || 'oauth';
+    const workerId = opts.workerId || null;
+    const connectBody = (extra = {}) => {
+      const payload = { type, ...extra };
+      if (workerId) payload.workerId = workerId;
+      return payload;
+    };
 
     if (authMethod === 'generated') {
-      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type }) });
+      const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify(connectBody()) });
       if (r.ok) {
-        toast('קישור Webhook נוצר!', 'success');
+        toast('הקישור מוכן — העתיקו ל-Zapier / Make', 'success');
         if (r.body.hookUrl && panelEl) {
           panelEl.innerHTML = '<p class="connect-hint">העתק את הקישור ל-Zapier / Make:</p><div class="hook-url-box">' + escapeHtml(r.body.hookUrl) + '</div><button type="button" class="btn btn-sm btn-outline" style="margin-top:6px" id="copy-hook">' + icon('copy', 12) + ' העתק</button>';
           panelEl.querySelector('#copy-hook').onclick = async () => {
@@ -808,7 +406,7 @@ const APP = (() => {
         panelEl.querySelector('.connect-save').onclick = async () => {
           const config = {};
           panelEl.querySelectorAll('.connect-field').forEach((el) => { if (el.value.trim()) config[el.dataset.key] = el.value.trim(); });
-          const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type, config }) });
+          const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify(connectBody({ config })) });
           if (r.ok) { toast('חובר בהצלחה', 'success'); if (onSuccess) onSuccess(r.body); resolve(r); }
           else { toast(r.body.messageHe || r.body.error || 'שגיאה', 'error'); resolve(r); }
         };
@@ -842,7 +440,7 @@ const APP = (() => {
       : '';
     const linkHint = item.authMethod === 'oauth_or_link' && !item.oauthAvailable
       ? '<p class="connect-hint">התחברות Google לא מוגדרת בשרת — הדבק קישור Cal.com למטה.</p>'
-      : (item.authMethod === 'generated' ? '<p class="connect-hint">לחיצה אחת — ניצור קישור Webhook בשבילך.</p>' : '');
+      : (item.authMethod === 'generated' ? '<p class="connect-hint">לחיצה אחת — ניצור קישור להעתקה.</p>' : '');
 
     panel.innerHTML = linkHint + oauthBtn;
 
@@ -976,7 +574,7 @@ const APP = (() => {
           <h1 class="magic-title">מה העובד צריך לעשות?</h1>
           <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
           <div class="tpl-pick">${picks}</div>
-          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} המשך לחיבור ערוצים</button>
+          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} המשך</button>
           <button class="btn btn-outline btn-hero" id="magic-skip-to-chat" style="margin-top:10px" ${state.templateId ? '' : 'disabled'}>${icon('zap', 14)} דלג — צור עובד ודבר עכשיו</button>
         </div>`;
         app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
@@ -1006,21 +604,21 @@ const APP = (() => {
       if (step === 2) {
         app.innerHTML = `<div class="magic-wrap page-enter">
           ${progressHtml()}
-          <div class="magic-step-label">שלב 3 מתוך 3</div>
-          <h1 class="magic-title">רוצים לחבר ערוצים?</h1>
-          <p class="magic-sub">אופציונלי — אפשר לדלג ולחבר אחר כך מהגדרות העובד.</p>
+          <div class="magic-step-label">שלב 3 מתוך 3 · אופציונלי</div>
+          <h1 class="magic-title">רוצים שניידיע לכם כשמישהו כותב?</h1>
+          <p class="magic-sub">אפשר לדלג — תמיד אפשר למלא אחר כך.</p>
           <div class="magic-connect">
-            <h4>${icon('chat', 14)} WhatsApp — התראות לבעל העסק</h4>
+            <h4>${icon('chat', 14)} הטלפון שלכם — לקבלת התראה</h4>
             <div class="fld">
-              <label>מספר לקבלת התראות על לידים ופניות</label>
+              <label>כשלקוח כותב, נשלח לכם הודעה למספר הזה</label>
               <input id="magic-wa-phone" class="magic-input" type="tel" placeholder="05X-XXXXXXX" dir="ltr" value="${escapeHtml(state.notifyPhone || '')}" />
             </div>
           </div>
           <div class="magic-connect" style="margin-top:12px">
-            <h4>${icon('clock', 14)} יומן — קביעת תורים</h4>
+            <h4>${icon('clock', 14)} קישור לקביעת תורים</h4>
             <div class="fld">
-              <label>קישור Cal.com / Google Calendar</label>
-              <input id="magic-cal-link" class="magic-input" type="url" placeholder="https://cal.com/your-business" dir="ltr" value="${escapeHtml(state.bookingLink || '')}" />
+              <label>אם יש לכם יומן אונליין — הדביקו כאן את הקישור</label>
+              <input id="magic-cal-link" class="magic-input" type="url" placeholder="https://cal.com/..." dir="ltr" value="${escapeHtml(state.bookingLink || '')}" />
             </div>
           </div>
           <div class="row" style="margin-top:20px;gap:10px">
@@ -1095,7 +693,7 @@ const APP = (() => {
         location.hash = '#/workers/chat/' + workerId;
       } catch (e) {
         console.error('[magic]', e);
-        toast('משהו השתבש בדרך — נסו שוב או דלגו על חיבור ערוצים', 'error');
+        toast('משהו השתבש בדרך — נסו שוב', 'error');
         step = 2;
         return paint();
       }
@@ -1215,6 +813,8 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'new') return renderBuilder({ templateId: rest[1] }, alive);
     if (section === 'workers' && rest[0] === 'edit') return renderBuilder({ workerId: rest[1] }, alive);
     if (section === 'workers' && rest[0] === 'activate') return renderActivatePaywall(rest[1], alive);
+    if (section === 'workers' && rest[0] === 'live') return renderGoLive(rest[1], alive);
+    if (section === 'workers' && rest[0] === 'connect') return renderConnectTools(rest[1], alive);
     if (section === 'workers' && rest[0] === 'chat') return renderChat(rest[1], alive);
     if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(rest[1], alive);
     if (section === 'admin') return renderAdmin(alive);
@@ -1228,56 +828,87 @@ async function renderMarketplace(alive = () => true) {
         : 'אין תבניות בקטגוריה זו.';
       return '<div class="empty" style="grid-column:1/-1">' + msg + '</div>';
     }
-    return tpls.map((t) => {
+    return tpls.map((t, idx) => {
       const popular = t.id === 'support-he' || t.id === 'sales-leads-il';
       const bestVal = t.id === 'data-entry';
       const isNew = t.id === 'property-manager-he' || t.id === 'clinic-receptionist-he';
       const categoryLabel = CATEGORIES[t.category] || t.category;
-      const fit = FIT_LABELS[t.category] || 'מתאים לעסק שרוצה להוריד עומס תפעולי';
       const outcome = OUTCOME_LABELS[t.category] || 'מקבל פניות, שואל שאלות המשך ומחזיר תשובה מוכנה לעבודה.';
       const badge = popular
-        ? '<div class="w-badge"><span class="badge popular">' + icon('shield', 12) + ' בחירת עסקים</span></div>'
+        ? '<span class="badge popular">' + icon('shield', 10) + ' בחירת עסקים</span>'
         : bestVal
-          ? '<div class="w-badge"><span class="badge best">' + icon('ils', 12) + ' עלות נמוכה</span></div>'
+          ? '<span class="badge best">' + icon('ils', 10) + ' עלות נמוכה</span>'
           : isNew
-            ? '<div class="w-badge"><span class="badge new">' + icon('sparkle', 12) + ' תבנית חדשה</span></div>'
+            ? '<span class="badge new">' + icon('sparkle', 10) + ' חדש</span>'
             : '';
-      return `<div class="w-card ${popular ? 'popular' : ''} ${bestVal ? 'best' : ''}">
-        ${badge}
-        <div class="w-top">
-          <div class="wi">${catIcon(t.category)}</div>
-          <div class="wi-info">
-            <h3>${escapeHtml(t.nameHe || t.name)}</h3>
-            <div class="w-fit">${escapeHtml(fit)}</div>
+      const idNum = String(100 + idx).slice(-3);
+      return `<article class="staff-badge cat-${escapeHtml(t.category || 'sales')}">
+        <div class="sb-stripe"></div>
+        <div class="sb-inner">
+          <span class="sb-id">#${idNum}</span>
+          <div class="sb-tag-row">${badge}</div>
+          <div class="sb-avatar">${catIcon(t.category)}</div>
+          <h3>${escapeHtml(t.nameHe || t.name)}</h3>
+          <p class="sb-role">${escapeHtml(categoryLabel)}</p>
+          <p class="sb-outcome">${escapeHtml(outcome)}</p>
+          <div class="sb-foot">
+            <div class="sb-price">₪${t.rentPriceIls}<small>/חודש</small></div>
+            <div class="sb-btns">
+              <button class="btn btn-primary btn-sm" data-preview="${escapeHtml(t.id)}">${icon('chat', 14)} נסה</button>
+              <button class="btn btn-sm btn-outline" data-magic="${escapeHtml(t.id)}">${icon('zap', 14)} צור</button>
+            </div>
           </div>
         </div>
-        <div class="w-tags">
-          <span class="worker-state">${icon('check', 12)} מוכן להתאמה</span>
-          <span class="tag tag-${t.category}">${escapeHtml(categoryLabel)}</span>
-        </div>
-        <div class="desc">${escapeHtml(t.description)}</div>
-        <div class="w-outcome">${icon('activity', 14)} <span>${escapeHtml(outcome)}</span></div>
-        <div class="pricing">
-          ${t.buyPriceIls > 0 ? `<div class="pr buy">
-            <div class="amt"><span class="currency">₪</span>${t.buyPriceIls}</div>
-            <div class="pd">רכישה חד-פעמית</div>
-          </div>
-          <div class="pdv"></div>` : `<div class="pr buy">
-            <div class="amt" style="font-size:15px">ללא דמי הקמה</div>
-            <div class="pd">SaaS חודשי</div>
-          </div>
-          <div class="pdv"></div>`}
-          <div class="pr rent">
-            <div class="amt"><span class="currency">₪</span>${t.rentPriceIls}</div>
-            <div class="pd">לחודש</div>
-          </div>
-        </div>
-        <div class="w-cta">
-          <button class="btn btn-primary btn-sm" data-preview="${escapeHtml(t.id)}">${icon('chat', 14)} נסה דוגמה</button>
-          <button class="btn btn-sm btn-outline" data-magic="${escapeHtml(t.id)}">${icon('zap', 14)} צור לעסק שלי</button>
-        </div>
-      </div>`;
+      </article>`;
     }).join('');
+  }
+  function shiftBoardHtml() {
+    return `<div class="monitor-wrap"><aside class="shift-board" aria-label="דוח משמרת">
+      <div class="sb-header">
+        <div>
+          <div class="sb-title">דוח משמרת · הלילה</div>
+          <span class="sb-status"><span class="sb-dot"></span> נועה · קבלה</span>
+        </div>
+        <span class="sb-clock" id="sb-clock">23:14</span>
+      </div>
+      <div class="sb-feed">
+        <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בוואטסאפ — נענה</span></div>
+        <div class="sb-event"><time>23:12</time><span class="sb-check">✓</span><span>תור נקבע למחר ב-10:00</span></div>
+        <div class="sb-event"><time>23:14</time><span class="sb-check">✓</span><span>ליד חם הועבר לבעל העסק</span></div>
+      </div>
+      <div class="sb-foot-note">דוגמה — עד עכשיו הכל שקט. 3 פניות טופלו, אפס המתינו.</div>
+    </aside></div>`;
+  }
+  function initShiftBoard(root) {
+    const feed = root?.querySelector('.sb-feed');
+    const clock = root?.querySelector('#sb-clock');
+    if (clock && !clock.dataset.init) {
+      clock.dataset.init = '1';
+      const tick = () => {
+        const d = new Date();
+        clock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+      };
+      tick(); setInterval(tick, 15000);
+    }
+    if (!feed || feed.dataset.init) return;
+    feed.dataset.init = '1';
+    const events = [
+      { t: '23:11', m: 'לקוח כתב בוואטסאפ — נענה' },
+      { t: '23:12', m: 'תור נקבע למחר ב-10:00' },
+      { t: '23:14', m: 'ליד חם הועבר לבעל העסק' },
+      { t: '23:16', m: 'אישור הזמנה נשלח ב-SMS' },
+      { t: '23:19', m: 'שאלה חוזרת — נענתה מהידע' },
+    ];
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let i = 3;
+    setInterval(() => {
+      i = (i + 1) % events.length;
+      const el = document.createElement('div');
+      el.className = 'sb-event sb-event-new';
+      el.innerHTML = '<time>' + events[i].t + '</time><span class="sb-check">✓</span><span>' + events[i].m + '</span>';
+      feed.insertBefore(el, feed.firstChild);
+      while (feed.children.length > 4) feed.lastChild.remove();
+    }, 4600);
   }
   function filterMarketplaceTemplates(allTpls) {
     return (currentFilter === 'all' ? allTpls : allTpls.filter((t) => t.category === currentFilter))
@@ -1328,28 +959,15 @@ async function renderMarketplace(alive = () => true) {
   app.innerHTML = `
       <div class="mkt-hero">
       <div class="hero-copy">
-        <div class="hero-badge">${icon('shield', 14)} עובדים מוכנים להפעלה לעסקים בישראל</div>
-        <h1>עובד חכם לעסק — בלי מונחים טכניים</h1>
-        <p>בשלושה צעדים פשוטים: שם העסק, בחירת תפקיד, ושיחה ראשונה. בלי תשלום כדי לראות שזה עובד.</p>
+        <div class="hero-badge">${icon('zap', 14)} משמרת לילה · עובדים חיים</div>
+        <h1>העסק <em>לא ישן</em> — גם כשאתה כן</h1>
+        <p>עובד AI שמקבל פניות, עונה ללקוחות ומעביר רק מה שדחוף. בלי מונחים טכניים, בלי כרטיס אשראי לניסיון.</p>
         <div class="hero-actions">
-          <button class="btn btn-primary btn-hero" id="mkt-start">${icon('zap', 16)} נסה עכשיו בחינם</button>
+          <button class="btn btn-primary btn-hero" id="mkt-start">${icon('zap', 16)} התחל ניסיון חינם</button>
           <a class="btn btn-outline btn-hero" href="#/workers">${icon('users', 14)} העובדים שלי</a>
         </div>
       </div>
-      <aside class="hero-showcase" aria-label="מה מקבלים">
-        <div class="showcase-card accent">
-          <div class="showcase-label">זמינות</div>
-          <div class="showcase-metric"><span class="showcase-num">24/7</span><span class="showcase-txt">גם מחוץ לשעות העבודה</span></div>
-        </div>
-        <div class="showcase-card">
-          <div class="showcase-label">שפה</div>
-          <div class="showcase-metric"><span class="showcase-num">עברית</span><span class="showcase-txt">טבעית, בלי מונחים טכניים</span></div>
-        </div>
-        <div class="showcase-card">
-          <div class="showcase-label">התחלה</div>
-          <div class="showcase-metric"><span class="showcase-num">חינם</span><span class="showcase-txt">דוגמה חיה לפני תשלום</span></div>
-        </div>
-      </aside>
+      ${shiftBoardHtml()}
     </div>
       <div class="trust-strip">
         <div class="trust-item"><div class="sn">${icon('copy', 18)} ${allTpls.length}</div><div class="sl">תבניות שניתן להתאים לעסק</div></div>
@@ -1371,7 +989,7 @@ async function renderMarketplace(alive = () => true) {
       <div class="filter-bar">
         ${cats.map((c) => `<button class="filter-btn${c === currentFilter ? ' active' : ''}" data-cat="${c}">${c === 'all' ? 'הכל' : escapeHtml(CAT_LABELS[c] || c)}</button>`).join('')}
       </div>
-      <div class="grid page-enter" id="mkt-grid">
+      <div class="staff-wall page-enter" id="mkt-grid">
         ${renderCards(filtered)}
       </div>
     `;
@@ -1386,6 +1004,7 @@ async function renderMarketplace(alive = () => true) {
       };
     }
     bindMarketplaceActions(allTpls);
+    initShiftBoard(app);
     showOnboardingModal();
   }
 
@@ -1534,39 +1153,79 @@ async function renderMarketplace(alive = () => true) {
     if (!r.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון עובדים</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`; return; }
     const workers = r.body.workers;
     if (!workers.length) {
-      app.innerHTML = `<div class="empty"><h2>אין עדיין עובדים</h2><p>לך ל<a href="#/">שוק העובדים</a> כדי לקנות את העובד הראשון שלך.</p></div>`;
+      app.innerHTML = `
+        <div class="wl-page">
+          <div class="wl-empty">
+            <div class="wl-empty-lamp"><span class="wl-empty-ic">${icon('robot', 40)}</span></div>
+            <h3>אין עובדים עדיין</h3>
+            <p>בחר עובד מהשוק והתחל ניסיון בלי כרטיס אשראי. תוך דקה יש לך עובד AI פעיל שעונה ללקוחות.</p>
+            <a class="wl-empty-cta" href="#/marketplace">${icon('arrow-right', 16)} לשוק העובדים</a>
+          </div>
+        </div>
+      `;
       return;
     }
+    const catOf = (w) => (w.template && (w.template.category || w.template.cat)) || w.category || 'sales';
+    const daysLeft = (iso) => {
+      if (!iso) return null;
+      const ms = new Date(iso).getTime() - Date.now();
+      return Math.ceil(ms / 86400000);
+    };
     app.innerHTML = `
-      <div class="toolbar">
-        <h2>העובדים שלי</h2>
-        <span class="muted">${workers.length} עובדים</span>
-      </div>
-      <div class="grid">
-        ${workers.map((w) => {
-          const isLive = w.isActive;
-          const pillCls = w.status === 'active' && isLive ? 'pill-active' : (w.status === 'active' ? 'pill-expired' : 'pill-pending');
-          const pillTxt = w.status === 'active' ? (isLive ? 'פעיל' : 'פג תוקף') : 'ממתין לתשלום';
-          const health = w.health || { labelHe: isLive ? 'עובד תקין ✓' : 'מצב ניסיון', tone: isLive ? 'ok' : 'info' };
-          const healthCls = health.tone === 'ok' ? 'ok' : (health.tone === 'warn' ? 'warn' : 'info');
-          return `
-            <div class="card">
-              <div class="row">
-                <h3 style="flex:1">${escapeHtml(w.name)}</h3>
-                <span class="pill ${pillCls}"><span class="badge-dot ${pillCls}"></span>${pillTxt}</span>
-              </div>
-              <div class="health-card ${healthCls}">${icon(health.tone === 'ok' ? 'check' : 'alert', 14)} ${escapeHtml(health.labelHe)}</div>
-              <div class="template-meta"><span class="pill">${escapeHtml(w.template?.nameHe || w.template?.name || w.templateId)}</span></div>
-              <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
-              <div class="actions">
-                <button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/chat/${w.id}'">${icon('chat', 14)} צ'אט</button>
-                <button class="btn btn-sm btn-outline" onclick="location.hash='#/workers/insights/${w.id}'">${icon('activity', 14)} לוח</button>
-                <button class="btn btn-sm btn-outline" onclick="location.hash='#/workers/edit/${w.id}'">${icon('edit', 14)} עריכה</button>
-                <button class="btn btn-sm btn-danger" data-del="${w.id}">${icon('trash', 14)} מחק</button>
-              </div>
-            </div>
-          `;
-        }).join('')}
+      <div class="wl-page">
+        <div class="wl-head">
+          <h2>העובדים שלי</h2>
+          <span class="wl-count">${workers.length} עובדים</span>
+          <span class="wl-spacer"></span>
+          <a class="wl-add" href="#/marketplace">${icon('plus', 15)} הוסף עובד</a>
+        </div>
+        <div class="wl-grid">
+          ${workers.map((w) => {
+            const isLive = w.isActive;
+            const expired = w.status === 'active' && !isLive;
+            const cat = catOf(w);
+            const catLabel = CAT_LABELS[cat] || CATEGORIES[cat] || cat;
+            const outcome = OUTCOME_LABELS[cat] || '';
+            const tplName = w.template?.nameHe || w.template?.name || w.templateId;
+            const needsConfig = w.status === 'active' && isLive && (!w.template);
+            let pillCls = 'is-pending', pillTxt = 'ממתין לתשלום';
+            if (expired) { pillCls = 'is-expired'; pillTxt = 'פג תוקף'; }
+            else if (needsConfig) { pillCls = 'is-config'; pillTxt = 'צריך הגדרה'; }
+            else if (isLive) { pillCls = 'is-active'; pillTxt = 'פעיל'; }
+            const dl = daysLeft(w.paidUntil);
+            let metaCls = '';
+            if (expired || (dl !== null && dl < 0)) metaCls = 'is-expired';
+            else if (dl !== null && dl <= 7) metaCls = 'is-soon';
+            const pillIcon = pillCls === 'is-config' ? icon('alert', 12) : '';
+            return `
+              <article class="wl-card" data-cat="${escapeHtml(cat)}">
+                <span class="wl-stripe" aria-hidden="true"></span>
+                <div class="wl-row">
+                  <h3 class="wl-name">${escapeHtml(w.name)}</h3>
+                  <span class="wl-pill ${pillCls}"><span class="wl-dot"></span>${pillIcon}${pillTxt}</span>
+                </div>
+                <p class="wl-sub"><span class="wl-cat-ic">${catIcon(cat)}</span>${escapeHtml(catLabel)} · ${escapeHtml(tplName)}</p>
+                ${outcome ? `<p class="wl-outcome">${escapeHtml(outcome)}</p>` : ''}
+                <p class="wl-meta ${metaCls}">
+                  <span>${icon('calendar', 13)}</span>
+                  <span class="wl-meta-label">בתשלום עד:</span>
+                  <span class="wl-meta-val">${fmtDate(w.paidUntil)}</span>
+                </p>
+                <div class="wl-actions">
+                  ${isLive
+                    ? `<button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/live/${w.id}'">${icon('share', 14)} שלח ללקוחות</button>`
+                    : `<button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/activate/${w.id}'">${icon('shield', 14)} להפעיל</button>`}
+                  <button class="btn btn-outline btn-sm" onclick="location.hash='#/workers/chat/${w.id}'">${icon('chat', 14)} נסה</button>
+                  ${isLive ? `<button class="btn btn-outline btn-sm" onclick="location.hash='#/workers/connect/${w.id}'">${icon('plug', 14)} כלים</button>` : ''}
+                  <span class="wl-spacer2"></span>
+                  <button class="wl-ic" title="לוח תפעול" aria-label="לוח תפעול" onclick="location.hash='#/workers/insights/${w.id}'">${icon('activity', 17)}</button>
+                  <button class="wl-ic" title="עריכה" aria-label="עריכה" onclick="location.hash='#/workers/edit/${w.id}'">${icon('edit', 17)}</button>
+                  <button class="wl-ic wl-del" title="מחק עובד" aria-label="מחק עובד" data-del="${w.id}">${icon('trash', 17)}</button>
+                </div>
+              </article>
+            `;
+          }).join('')}
+        </div>
       </div>
     `;
     app.querySelectorAll('button[data-del]').forEach((b) => {
@@ -1644,7 +1303,7 @@ async function renderMarketplace(alive = () => true) {
     { label: 'תמונה/וידאו AI', tools: ['generate_image', 'generate_video', 'check_video_status'] },
   ];
 
-  const FEATURED_INTEGRATIONS = ['webhook', 'whatsapp', 'google_calendar', 'crm_hubspot', 'mcp'];
+  const FEATURED_INTEGRATIONS = ['webhook', 'whatsapp', 'google_calendar', 'crm_hubspot', 'shopify'];
 
   async function loadIntegrationsHub() {
     const grid = document.getElementById('integrations-grid');
@@ -2176,7 +1835,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       (async () => {
         const panel = document.getElementById('integrations-panel');
         if (!panel) return;
-        const FEATURED = ['whatsapp', 'google_calendar', 'crm_hubspot', 'webhook', 'mcp'];
+        const FEATURED = ['webhook', 'whatsapp', 'google_calendar', 'crm_hubspot', 'shopify'];
         const [catRes, connRes] = await Promise.all([
           api('/api/integrations/catalog'),
           api('/api/integrations'),
@@ -2397,6 +2056,204 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     return n ? `https://www.bitpay.co.il/app/me/${n}` : '';
   }
 
+  async function attachIntegrationToolsToWorker(workerId, toolNames) {
+    if (!workerId || !toolNames?.length) return;
+    const wr = await api('/api/workers/' + workerId);
+    if (!wr.ok) return;
+    const merged = [...new Set([...(wr.body.worker.tools ?? []), ...toolNames])];
+    await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify({ tools: merged }) });
+  }
+
+  const SIMPLE_CONNECT_TYPES = ['webhook', 'google_calendar', 'whatsapp', 'shopify', 'crm_hubspot'];
+  const SIMPLE_CONNECT_META = {
+    webhook: { emoji: '🔗', plain: 'כל ליד או פנייה יישלחו אוטומטית ל-Zapier, Make, Monday או כל מערכת שתבחרו.' },
+    google_calendar: { emoji: '📅', plain: 'העובד יציע שעות פנויות וישלח קישור לקביעת תור.' },
+    whatsapp: { emoji: '🔔', plain: 'כשמישהו כותב לעובד — תקבלו הודעה למספר הוואטסאפ שלכם.' },
+    shopify: { emoji: '🛒', plain: 'העובד יחפש הזמנות אמיתיות בחנות Shopify שלכם.' },
+    crm_hubspot: { emoji: '📊', plain: 'לידים יסתנכרנו אוטומטית ל-HubSpot CRM.' },
+  };
+
+  async function renderConnectTools(workerId, alive = () => true) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    const wr = await api('/api/workers/' + workerId);
+    if (!alive()) return;
+    if (!wr.ok) {
+      app.innerHTML = `<div class="empty err"><h2>לא מצאנו את העובד</h2><p>${escapeHtml(friendlyApiError(wr.body))}</p></div>`;
+      return;
+    }
+    const w = wr.body.worker;
+    app.innerHTML = `
+      <div class="connect-tools-wrap page-enter">
+        <div class="connect-tools-hero">
+          <p class="connect-tools-eyebrow">${icon('plug', 14)} חיבור לכלים</p>
+          <h1>חברו את ${escapeHtml(w.name)} למה שכבר עובד אצלכם</h1>
+          <p class="connect-tools-lead">בלי מפתחות API, בלי מונחים מוזרים. לחיצה אחת או הדבקת קישור — והעובד מתחיל לעבוד עם הכלים.</p>
+        </div>
+        <div id="connect-tools-grid" class="connect-tools-grid">
+          <div class="muted">${icon('loading', 16, 'icon-spin')} טוען אפשרויות חיבור...</div>
+        </div>
+        <div class="connect-tools-foot">
+          <a class="btn btn-outline" href="#/workers/live/${workerId}">${icon('share', 14)} חזרה — שליחה ללקוחות</a>
+          <a class="btn btn-outline" href="#/workers/edit/${workerId}">${icon('edit', 14)} הגדרות מתקדמות</a>
+        </div>
+      </div>`;
+
+    async function reloadConnectGrid() {
+      const grid = document.getElementById('connect-tools-grid');
+      if (!grid || !alive()) return;
+      const [catR, connR] = await Promise.all([
+        api('/api/integrations/catalog'),
+        api('/api/integrations'),
+      ]);
+      if (!catR.ok) {
+        grid.innerHTML = '<div class="empty err">לא הצלחנו לטעון את רשימת החיבורים</div>';
+        return;
+      }
+      const catalog = (catR.body.catalog ?? []).filter((c) => SIMPLE_CONNECT_TYPES.includes(c.type));
+      const connected = connR.ok ? (connR.body.integrations ?? []) : [];
+      const byType = Object.fromEntries(connected.map((i) => [i.type, i]));
+      grid.innerHTML = catalog.map((item) => {
+        const meta = SIMPLE_CONNECT_META[item.type] || { emoji: '🔧', plain: item.descriptionHe || '' };
+        const conn = byType[item.type];
+        const done = conn ? ' connect-card-done' : '';
+        return `<article class="connect-card${done}" data-int-type="${escapeHtml(item.type)}">
+          <span class="connect-card-emoji" aria-hidden="true">${meta.emoji}</span>
+          <div class="connect-card-body">
+            <h2>${escapeHtml(item.labelHe)}${conn ? ' <span class="connect-done-pill">' + icon('check', 12) + ' מחובר</span>' : ''}</h2>
+            <p>${escapeHtml(meta.plain)}</p>
+            <div class="connect-panel" id="cpanel-${escapeHtml(item.type)}"></div>
+            <div class="connect-card-actions">
+              ${conn
+                ? `<button type="button" class="btn btn-outline btn-sm ic-test" data-id="${escapeHtml(conn.id)}">${icon('zap', 12)} בדיקה</button>
+                   <button type="button" class="btn btn-outline btn-sm ic-disconnect" data-id="${escapeHtml(conn.id)}">${icon('x', 12)} נתק</button>`
+                : `<button type="button" class="btn btn-primary btn-sm ic-connect">${icon('link', 12)} ${escapeHtml(item.connectLabelHe || 'חברו')}</button>`}
+            </div>
+          </div>
+        </article>`;
+      }).join('');
+
+      catalog.forEach((item) => {
+        const card = grid.querySelector('[data-int-type="' + item.type + '"]');
+        if (!card) return;
+        const conn = byType[item.type];
+        const onSuccess = async () => {
+          await attachIntegrationToolsToWorker(workerId, item.workerTools ?? []);
+          toast('מחובר! העובד ישתמש בזה אוטומטית', 'success');
+          reloadConnectGrid();
+        };
+        renderIntegrationConnectActions(item, conn, card, onSuccess);
+        const connectBtn = card.querySelector('.ic-connect');
+        if (connectBtn) {
+          connectBtn.onclick = () => connectIntegrationItem(item, card.querySelector('.connect-panel'), onSuccess, { workerId });
+        }
+        const testBtn = card.querySelector('.ic-test');
+        if (testBtn) {
+          testBtn.onclick = async () => {
+            testBtn.disabled = true;
+            const r = await api('/api/integrations/' + testBtn.dataset.id + '/test', { method: 'POST' });
+            toast(r.ok ? (r.body.message || 'החיבור תקין') : 'הבדיקה נכשלה', r.ok ? 'success' : 'error');
+            testBtn.disabled = false;
+          };
+        }
+        const discBtn = card.querySelector('.ic-disconnect');
+        if (discBtn) {
+          discBtn.onclick = async () => {
+            if (!confirm('לנתק את החיבור?')) return;
+            const r = await api('/api/integrations/' + discBtn.dataset.id, { method: 'DELETE' });
+            if (r.ok) { toast('נותק', 'success'); reloadConnectGrid(); }
+            else toast('שגיאה בניתוק', 'error');
+          };
+        }
+        if (conn?.config?.hookUrl) {
+          const panel = card.querySelector('.connect-panel');
+          if (panel && !panel.querySelector('.hook-url-box')) {
+            panel.innerHTML = '<p class="connect-hint">העתיקו את הקישור ל-Zapier / Make / Monday:</p><div class="hook-url-box">' + escapeHtml(conn.config.hookUrl) + '</div><button type="button" class="btn btn-sm btn-outline" id="copy-hook-' + item.type + '">' + icon('copy', 12) + ' העתק</button>';
+            document.getElementById('copy-hook-' + item.type).onclick = async () => {
+              try { await navigator.clipboard.writeText(conn.config.hookUrl); toast('הועתק!', 'success'); }
+              catch { toast('העתיקו ידנית', 'info'); }
+            };
+          }
+        }
+      });
+    }
+
+    await reloadConnectGrid();
+  }
+
+  async function renderGoLive(workerId, alive = () => true) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    const wr = await api('/api/workers/' + workerId);
+    if (!alive()) return;
+    if (!wr.ok) {
+      app.innerHTML = `<div class="empty err"><h2>לא מצאנו את העובד</h2><p>${escapeHtml(friendlyApiError(wr.body))}</p></div>`;
+      return;
+    }
+    const w = wr.body.worker;
+    if (!w.isActive) {
+      location.hash = '#/workers/activate/' + workerId;
+      return;
+    }
+    const link = tryPageUrl(workerId);
+    const embed = embedSnippet(workerId);
+    const shareText = `שלום! אפשר לדבר עם ${w.name} כאן: ${link}`;
+    app.innerHTML = `
+      <div class="go-live-wrap page-enter">
+        <div class="go-live-hero">
+          <p class="go-live-eyebrow">${icon('check', 14)} העובד פעיל</p>
+          <h1>${escapeHtml(w.name)} על המשמרת</h1>
+          <p class="go-live-lead">עכשיו רק צריך לתת ללקוחות דרך להגיע אליו. הכי פשוט — שלחו להם קישור.</p>
+        </div>
+
+        <article class="go-live-card go-live-card-primary">
+          <span class="gl-step">1</span>
+          <h2>שלחו קישור בוואטסאפ</h2>
+          <p>הלקוח לוחץ, נפתח צ'אט, והעובד עונה. בלי התקנות, בלי מונחים מוזרים.</p>
+          <div class="gl-link-box" id="gl-link">${escapeHtml(link)}</div>
+          <div class="gl-actions">
+            <button type="button" class="btn btn-primary" id="gl-copy-link">${icon('copy', 14)} העתק קישור</button>
+            <a class="btn btn-outline" href="${escapeHtml(waShareUrl(shareText))}" target="_blank" rel="noopener">${icon('chat', 14)} שלח בוואטסאפ</a>
+          </div>
+        </article>
+
+        <article class="go-live-card">
+          <span class="gl-step">2</span>
+          <h2>יש לכם אתר? (אופציונלי)</h2>
+          <p>שלחו את השורה הבאה למי שבונה לכם את האתר — או הדביקו ב-Wix / WordPress. יופיע כפתור צ'אט בפינה.</p>
+          <textarea class="gl-embed" id="gl-embed" readonly rows="3" dir="ltr">${escapeHtml(embed)}</textarea>
+          <button type="button" class="btn btn-outline" id="gl-copy-embed">${icon('copy', 14)} העתק לשליחה</button>
+        </article>
+
+        <article class="go-live-card go-live-card-muted">
+          <span class="gl-step">3</span>
+          <h2>וואטסאפ של העסק עצמו</h2>
+          <p>רוצים שלקוחות יכתבו למספר הוואטסאפ הרגיל של העסק ויקבלו תשובה? ${typeof AGENT_OWNER_CONTACT !== 'undefined' && AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">כתבו לנו</a> ונעזור.` : 'פנו אלינו דרך יצירת הקשר באתר.'}</p>
+        </article>
+
+        <article class="go-live-card go-live-card-tools">
+          <span class="gl-step">+</span>
+          <h2>רוצים שהלידים יגיעו ל-CRM / Zapier?</h2>
+          <p>חברו בלחיצה ל-Zapier, Make, יומן תורים, או התראות וואטסאפ — בלי מפתחות API.</p>
+          <a class="btn btn-primary" href="#/workers/connect/${workerId}">${icon('plug', 14)} חברו לכלים</a>
+        </article>
+
+        <div class="go-live-foot">
+          <a class="btn btn-outline" href="#/workers/connect/${workerId}">${icon('plug', 14)} חיבור לכלים</a>
+          <a class="btn btn-outline" href="#/workers/chat/${workerId}">${icon('chat', 14)} נסו בעצמכם</a>
+          <a class="btn btn-outline" href="#/workers">${icon('arrow-right', 14)} חזרה לעובדים</a>
+        </div>
+      </div>`;
+    document.getElementById('gl-copy-link').onclick = async () => {
+      try { await navigator.clipboard.writeText(link); toast('הקישור הועתק — שלחו ללקוחות', 'success'); }
+      catch { toast('העתיקו ידנית מהתיבה', 'info'); }
+    };
+    document.getElementById('gl-copy-embed').onclick = async () => {
+      try { await navigator.clipboard.writeText(embed); toast('הועתק — שלחו למפתח האתר', 'success'); }
+      catch { document.getElementById('gl-embed').select(); toast('העתיקו ידנית', 'info'); }
+    };
+  }
+
   async function renderActivatePaywall(workerId, alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) return;
@@ -2407,7 +2264,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       return;
     }
     const w = wr.body.worker;
-    if (w.isActive) { location.hash = '#/workers/chat/' + workerId; return; }
+    if (w.isActive) { location.hash = '#/workers/live/' + workerId; return; }
     const tplRes = await api('/api/workers/templates');
     const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
     const price = template ? template.rentPriceIls : 99;
@@ -2416,8 +2273,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const hasBit = Boolean(BIT_PHONE);
     const hasPaypal = Boolean(PAYPAL_ME);
     const hasBank = Boolean(BANK_ACCOUNT && PAYEE_NAME);
-    const hasAnyPay = hasBit || hasPaypal || hasBank;
-  const payMethods = [
+    const hasManualPay = hasBit || hasPaypal || hasBank;
+    const hasPaddle = typeof PADDLE_ENABLED !== 'undefined' && PADDLE_ENABLED;
+    const sla = typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות בימי עסקים';
+    const payMethods = [
       hasBit ? `<a class="pw-method pw-method-link" href="${escapeHtml(bitUrl)}" target="_blank" rel="noopener" data-channel="bit">
         <div class="pm-info"><div class="pm-title">${icon('ils', 16)} Bit</div><div class="pm-desc">לחצו לתשלום · ${escapeHtml(bitDisplay)}</div></div>
         <span class="pm-go">פתחו Bit ←</span></a>` : '',
@@ -2430,43 +2289,108 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     ].filter(Boolean).join('');
     app.innerHTML = `
       <div class="toolbar">
-        <h2>${icon('shield', 20)} להפעיל ללקוחות</h2>
+        <h2>${icon('shield', 20)} הפעלה ללקוחות</h2>
         <a href="#/workers/chat/${workerId}" style="margin-right:auto">${icon('arrow-right', 16)} חזרה לניסיון</a>
       </div>
       <div class="paywall">
-        <div class="pw-icon">${icon('shield', 40)}</div>
-        <h2>${escapeHtml(w.name)} מוכן לעבודה מול לקוחות!</h2>
-        <p class="muted">אחרי תשלום ואישור — העובד יהיה זמין גם באתר שלך וללקוחות אמיתיים.</p>
+        <div class="pw-hire-label">הפעלה ללקוחות אמיתיים</div>
+        <h2>${escapeHtml(w.name)} מוכן לעבודה מול לקוחות</h2>
+        <p class="muted">אחרי הפעלה — העובד זמין ללקוחות, לא רק לניסיון.</p>
         <div class="pw-price">₪${price} <small>לחודש</small></div>
-        ${hasAnyPay ? `<p class="pw-individual-note">${icon('shield', 14)} תשלום ישיר למפעיל — Bit / PayPal / בנק. ללא כרטיס אשראי באתר. קבלה פשוטה לפי בקשה (לא חשבונית מס).</p>` : `<p class="pw-individual-note err">ערוצי תשלום בדרך להגדרה — פנו לתמיכה.</p>`}
-        <div class="pw-methods">${payMethods || '<p class="muted">אין ערוצי תשלום מוגדרים</p>'}</div>
-        <div class="card" style="margin-top:18px;text-align:right;padding:16px">
-          <h3 style="font-size:15px;margin-bottom:10px">אחרי התשלום — שלחו אסמכתא</h3>
-          <div class="fld"><label>איך שילמתם?</label>
-            <select id="pay-channel" class="magic-input">
-              ${hasBit ? '<option value="bit">Bit</option>' : ''}
-              ${hasPaypal ? '<option value="paypal">PayPal</option>' : ''}
-              ${hasBank ? '<option value="bank-transfer">העברה בנקאית</option>' : ''}
-            </select>
+        ${hasPaddle ? `<div class="pw-instant-block">
+          <p class="pw-speed-label">${icon('zap', 14)} מיידי — כרטיס אשראי</p>
+          <button type="button" class="btn btn-primary btn-hero" id="paddle-checkout">${icon('check', 16)} שלמו בכרטיס — הפעלה מיידית</button>
+          <p class="pw-instant-note">תשלום מאובטח בכרטיס · העובד יופעל מיד אחרי התשלום</p>
+        </div>` : ''}
+        ${hasPaddle && hasManualPay ? `<div class="pw-divider"><span>או תשלום מקומי — אישור ${escapeHtml(sla.replace(/^אישור\s*/i, ''))}</span></div>` : ''}
+        ${hasManualPay ? `<div class="pw-manual-block">
+          ${!hasPaddle ? `<p class="pw-speed-label pw-speed-manual">${icon('clock', 14)} תשלום מקומי — ${escapeHtml(sla)}</p>` : ''}
+          <div class="pw-methods">${payMethods}</div>
+          <div class="card pw-proof-card">
+            <h3>אחרי התשלום — שלחו אסמכתא</h3>
+            <div class="fld"><label>איך שילמתם?</label>
+              <select id="pay-channel" class="magic-input">
+                ${hasBit ? '<option value="bit">Bit</option>' : ''}
+                ${hasPaypal ? '<option value="paypal">PayPal</option>' : ''}
+                ${hasBank ? '<option value="bank-transfer">העברה בנקאית</option>' : ''}
+              </select>
+            </div>
+            <div class="fld"><label>אימייל או טלפון ליצירת קשר</label><input id="pay-contact" placeholder="you@example.com" /></div>
+            <div class="fld"><label>אסמכתא / מספר אישור</label><input id="pay-reference" placeholder="מספר העברה או אישור PayPal" /></div>
+            <button class="btn btn-outline" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
+            <div id="pay-submit-status" class="muted pw-submit-status"></div>
           </div>
-          <div class="fld"><label>אימייל או טלפון ליצירת קשר</label><input id="pay-contact" placeholder="you@example.com" /></div>
-          <div class="fld"><label>אסמכתא / מספר אישור</label><input id="pay-reference" placeholder="מספר העברה או אישור PayPal" /></div>
-          <button class="btn btn-primary" id="pay-submit" ${hasAnyPay ? '' : 'disabled'}>${icon('check', 14)} שלח לאישור</button>
-          <div id="pay-submit-status" class="muted" style="margin-top:8px"></div>
-        </div>
-        <div class="pw-note">${icon('clock', 14)} ${typeof ACTIVATION_SLA_HE !== 'undefined' ? escapeHtml(ACTIVATION_SLA_HE) : 'אישור תוך 24 שעות בימי עסקים'}</div>
+          <p class="pw-note">${icon('shield', 14)} בודקים כל הפעלה ידנית — כדי שתדעו שיש אדם מאחורי המוצר.</p>
+        </div>` : (!hasPaddle ? `<p class="pw-individual-note err">ערוצי תשלום בדרך להגדרה — פנו לתמיכה.</p>` : '')}
       </div>`;
-    document.getElementById('pay-submit').onclick = async () => {
-      const contact = document.getElementById('pay-contact').value.trim();
-      if (!contact) { toast('הכנס אימייל או טלפון', 'error'); return; }
-      const channelEl = document.getElementById('pay-channel');
-      const channel = channelEl ? channelEl.value : 'bit';
-      const r = await api('/api/workers/' + workerId + '/activation-request', {
-        method: 'POST',
-        body: JSON.stringify({ channel, reference: document.getElementById('pay-reference').value.trim(), contact }),
-      });
-      document.getElementById('pay-submit-status').textContent = r.ok ? 'הבקשה נשלחה!' : friendlyApiError(r.body, 'שליחת הבקשה נכשלה');
-    };
+
+    if (hasPaddle) {
+      const paddleBtn = document.getElementById('paddle-checkout');
+      if (paddleBtn) {
+        paddleBtn.onclick = async () => {
+          paddleBtn.disabled = true;
+          try {
+            const cfg = await api('/api/paddle/checkout', { method: 'POST', body: JSON.stringify({ workerId }) });
+            if (!cfg.ok) {
+              toast(friendlyApiError(cfg.body, 'לא הצלחנו לפתוח תשלום'), 'error');
+              return;
+            }
+            const body = cfg.body;
+            if (!window.Paddle) {
+              await new Promise((resolve, reject) => {
+                const src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
+                if (document.querySelector('script[src="' + src + '"]')) { resolve(); return; }
+                const s = document.createElement('script');
+                s.src = src;
+                s.onload = resolve;
+                s.onerror = reject;
+                document.head.appendChild(s);
+              });
+            }
+            if (body.environment === 'sandbox') Paddle.Environment.set('sandbox');
+            else Paddle.Environment.set('production');
+            Paddle.Initialize({
+              token: body.clientToken,
+              checkout: { settings: { displayMode: 'overlay', theme: 'dark', locale: 'he' } },
+              eventCallback: (data) => {
+                if (data?.name === 'checkout.completed') {
+                  toast('התשלום התקבל — העובד מופעל!', 'success');
+                  location.hash = '#/workers/live/' + workerId;
+                }
+              },
+            });
+            Paddle.Checkout.open({
+              items: [{ priceId: body.priceId, quantity: 1 }],
+              customData: body.customData,
+            });
+          } catch (e) {
+            toast('לא הצלחנו לפתוח תשלום — נסו שוב', 'error');
+          } finally {
+            paddleBtn.disabled = false;
+          }
+        };
+      }
+    }
+
+    const paySubmit = document.getElementById('pay-submit');
+    if (paySubmit) {
+      paySubmit.onclick = async () => {
+        const contact = document.getElementById('pay-contact').value.trim();
+        if (!contact) { toast('הכנס אימייל או טלפון', 'error'); return; }
+        const channelEl = document.getElementById('pay-channel');
+        const channel = channelEl ? channelEl.value : 'bit';
+        const r = await api('/api/workers/' + workerId + '/activation-request', {
+          method: 'POST',
+          body: JSON.stringify({ channel, reference: document.getElementById('pay-reference').value.trim(), contact }),
+        });
+        const statusEl = document.getElementById('pay-submit-status');
+        if (r.ok) {
+          statusEl.innerHTML = `קיבלנו. ${escapeHtml(sla)} — בינתיים <a href="#/workers/chat/${workerId}">המשיכו לערוך את העובד</a>`;
+        } else {
+          statusEl.textContent = friendlyApiError(r.body, 'שליחת הבקשה נכשלה');
+        }
+      };
+    }
   }
 
   // ---- Chat (demo first, paywall only for production) ----
@@ -2510,7 +2434,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   function shareWorkerChat(workerId, workerName, isActive) {
-    const link = location.origin + '/try/' + workerId;
+    const link = tryPageUrl(workerId);
     const text = isActive
       ? `שלום! אפשר לדבר עם ${workerName} כאן: ${link}`
       : `שלום! ${workerName} עדיין במצב ניסיון — בעל העסק יפעיל אותו בקרוב. בינתיים: ${location.origin}/marketplace`;
@@ -2540,18 +2464,27 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
+        <span class="chat-status"><span class="sb-dot"></span> ${isDemo ? 'בניסיון' : 'במשמרת'}</span>
         <a href="#/workers/insights/${workerId}" class="btn btn-outline btn-sm">${icon('activity', 14)} לוח</a>
         <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
       </div>
       <div class="share-row" id="success-cta" style="display:none">
-        <button type="button" class="btn btn-primary btn-hero" id="share-success">${icon('share', 16)} מעולה! שתף עם לקוחות</button>
+        <button type="button" class="btn btn-primary btn-hero" id="share-success">${icon('share', 16)} איך לקוחות מדברים איתו?</button>
       </div>
-      ${isDemo ? `<div class="demo-banner">
-        <span>${icon('zap', 14)} מצב ניסיון — דבר איתו חופשי!</span>
+      ${isDemo ? `<div class="demo-banner demo-banner-trial">
+        <div class="demo-banner-copy">
+          <strong>${icon('zap', 14)} מצב ניסיון</strong>
+          <span class="demo-banner-sub">התשובות לדוגמה — לא מחוברות לוואטסאפ שלך</span>
+        </div>
         <a class="btn btn-primary btn-sm" href="#/workers/activate/${workerId}">${icon('shield', 14)} להפעיל ללקוחות</a>
-      </div>` : `<div class="demo-banner" style="border-color:rgba(102,173,120,.4)"><span>${icon('check', 14)} פעיל ללקוחות</span></div>`}
+      </div>` : `<div class="live-bar">
+        <span>${icon('check', 14)} פעיל ללקוחות</span>
+        <a class="btn btn-primary btn-sm" href="#/workers/live/${workerId}">${icon('share', 14)} שלח ללקוחות</a>
+        <a class="btn btn-outline btn-sm" href="#/workers/connect/${workerId}">${icon('plug', 14)} חבר כלים</a>
+      </div>`}
+      <div class="chat-frame">
       <div id="chat-window" class="chat-window">
-        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתוב שלום — העובד מחכה</div>' : ''}
+        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתוב שלום — נראה איך העובד עונה (לדוגמה)</div>' : ''}
         ${messages.map((m) => `<div class="msg ${m.role}">${escapeHtml(m.content)}</div>`).join('')}
       </div>
       ${chips ? `<div class="chat-suggestions" id="chat-suggestions">${chips}</div>` : ''}
@@ -2559,6 +2492,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <button type="button" class="btn btn-outline btn-mic" id="c-mic" title="דבר">${icon('mic', 22)}<span style="font-size:11px;display:block">דבר</span></button>
         <textarea id="c-input" placeholder="כתוב הודעה..." rows="2"></textarea>
         <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
+      </div>
       </div>
       <details class="advanced-config" style="margin-top:16px" id="chat-settings">
         <summary>${icon('edit', 14)} הגדרות</summary>
@@ -2592,12 +2526,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     let listening = false;
 
     document.getElementById('share-success').onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(share.link);
-        toast('הקישור הועתק — שלחו ללקוחות!', 'success');
-      } catch {
-        window.open(share.wa, '_blank', 'noopener');
-      }
+      location.hash = '#/workers/live/' + workerId;
     };
 
     document.getElementById('advanced-toggle').onchange = (e) => {

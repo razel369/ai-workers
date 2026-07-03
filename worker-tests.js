@@ -1,5 +1,5 @@
 // E2E tests for the Workers feature (v0.5.0).
-// Covers: template listing, marketplace HTML, buy flow, builder CRUD,
+import crypto from 'node:crypto';
 // payment-gated chat (mock + LLM-free), admin mark-paid, admin listing,
 // per-tenant isolation, platform-provided AI (no BYOK).
 
@@ -37,7 +37,7 @@ console.log(`Workers tests against ${BASE}\n`);
 {
   const r = await req('/api/workers/templates');
   expect('GET /api/workers/templates -> 200', r.status === 200);
-  expect('  has 10 templates', r.body.templates?.length >= 10);
+  expect('  has 13 templates', r.body.templates?.length >= 13);
   expect('  all have id/name/buyPriceIls', r.body.templates?.every((t) => t.id && t.name && t.buyPriceIls >= 0));
   expect('  sales-leads-il present', !!r.body.templates?.find((t) => t.id === 'sales-leads-il'));
   expect('  support-he present', !!r.body.templates?.find((t) => t.id === 'support-he'));
@@ -49,6 +49,13 @@ console.log(`Workers tests against ${BASE}\n`);
   expect('  ecom-support-he present', !!r.body.templates?.find((t) => t.id === 'ecom-support-he'));
   expect('  property-manager-he present', !!r.body.templates?.find((t) => t.id === 'property-manager-he'));
   expect('  social-media-creator-he present', !!r.body.templates?.find((t) => t.id === 'social-media-creator-he'));
+  expect('  hr-recruiter-he present', !!r.body.templates?.find((t) => t.id === 'hr-recruiter-he'));
+  expect('  complaints-desk-he present', !!r.body.templates?.find((t) => t.id === 'complaints-desk-he'));
+  expect('  legal-receptionist-he present', !!r.body.templates?.find((t) => t.id === 'legal-receptionist-he'));
+  const hrTpl = r.body.templates?.find((t) => t.id === 'hr-recruiter-he');
+  expect('  hr template has agent tools', hrTpl?.defaultTools?.includes('save_lead') && hrTpl?.defaultTools?.includes('book_meeting_link'));
+  const complaintsTpl = r.body.templates?.find((t) => t.id === 'complaints-desk-he');
+  expect('  complaints template has escalate tool', complaintsTpl?.defaultTools?.includes('escalate_to_human'));
 }
 
 // 3. Need a tenant API key to test private endpoints
@@ -91,6 +98,7 @@ const auth = (extra = {}) => ({ authorization: 'Bearer ' + tenantKey, 'content-t
 
 // 5. Buy a template (creates worker in pending_payment state)
 let firstWorkerId = null;
+let paddleWorkerId = null;
 let activationRequestId = null;
 {
   const r = await req('/api/workers/buy', {
@@ -263,6 +271,42 @@ let mismatchedActivationRequestId = null;
   expect('admin audit includes failed mark-paid attempt', events.some((e) => e.action === 'admin_mark_worker_paid' && e.status === 'failed' && e.targetId === firstWorkerId));
   expect('admin audit includes successful mark-paid', events.some((e) => e.action === 'admin_mark_worker_paid' && e.status === 'ok' && e.targetId === firstWorkerId));
   expect('  mark-paid audit keeps activation id', events.some((e) => e.metadata?.activationRequestId === activationRequestId));
+}
+
+// 7b. Paddle checkout + webhook auto-activation
+{
+  const buy = await req('/api/workers/buy', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ templateId: 'data-entry' }),
+  });
+  paddleWorkerId = buy.body.workerId;
+  const cfg = await req('/api/paddle/checkout', {
+    method: 'POST',
+    headers: auth(),
+    body: JSON.stringify({ workerId: paddleWorkerId }),
+  });
+  expect('POST /api/paddle/checkout -> 200', cfg.status === 200 && cfg.body.ok === true);
+  expect('  returns client token + priceId', !!cfg.body.clientToken && !!cfg.body.priceId);
+  expect('  customData has worker + tenant', cfg.body.customData?.worker_id === paddleWorkerId && cfg.body.customData?.tenant_id === tenantId);
+  const secret = process.env.PADDLE_WEBHOOK_SECRET ?? '';
+  if (secret) {
+    const body = JSON.stringify({
+      event_id: 'evt_paddle_test',
+      event_type: 'subscription.created',
+      data: { id: 'sub_test_1', custom_data: { worker_id: paddleWorkerId, tenant_id: tenantId } },
+    });
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = crypto.createHmac('sha256', secret).update(`${ts}:${body}`).digest('hex');
+    const wh = await req('/api/webhooks/paddle', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${ts};h1=${sig}` },
+      body,
+    });
+    expect('paddle webhook -> 200', wh.status === 200 && wh.body.ok === true);
+    expect('  auto-activates worker', wh.body.autoActivated === true);
+    const w = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
+    expect('  worker active after paddle', w.body.worker?.isActive === true);
+  }
 }
 
 // 8b. Rotate API key without losing tenant data
@@ -438,10 +482,14 @@ let otherTenantKey = null;
   expect('  at least 1 worker visible', r.body.workers?.length >= 1);
 }
 
-// 17. Delete worker
+// 17. Delete workers
 {
   const r = await req(`/api/workers/${firstWorkerId}`, { method: 'DELETE', headers: auth() });
   expect('DELETE worker -> 200', r.status === 200 && r.body.ok === true);
+}
+if (paddleWorkerId) {
+  const r = await req(`/api/workers/${paddleWorkerId}`, { method: 'DELETE', headers: auth() });
+  expect('DELETE paddle worker -> 200', r.status === 200 && r.body.ok === true);
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}`, { headers: auth() });

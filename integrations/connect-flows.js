@@ -6,14 +6,14 @@ import { getIntegrationType } from './registry.js';
 /** Non-secret fields users may fill (links, shop name, phone) */
 export const USER_CONNECT_FIELDS = {
   google_calendar: [
-    { key: 'bookingLink', labelHe: 'קישור Cal.com / Google Calendar', type: 'url', required: false, placeholder: 'https://cal.com/your-business' },
+    { key: 'bookingLink', labelHe: 'קישור לקביעת תור (Cal.com / Google Calendar)', type: 'url', required: false, placeholder: 'https://cal.com/your-business' },
   ],
   shopify: [
     { key: 'shop', labelHe: 'דומיין חנות', type: 'text', required: true, placeholder: 'mystore.myshopify.com' },
   ],
   webhook: [],
   whatsapp: [
-    { key: 'ownerNotifyPhone', labelHe: 'מספר וואטסאפ להתראות', type: 'tel', required: false, placeholder: '05X-XXXXXXX' },
+    { key: 'ownerNotifyPhone', labelHe: 'המספר שלכם — לקבלת התראה כשלקוח כותב', type: 'tel', required: false, placeholder: '05X-XXXXXXX' },
   ],
   mcp: [],
 };
@@ -31,13 +31,13 @@ export function enrichCatalogItem(typeDef) {
 
   if (typeDef.id === 'webhook') {
     authMethod = 'generated';
-    connectLabelHe = 'קבל קישור Webhook אוטומטי';
+    connectLabelHe = 'לחצו — ניצור קישור להעתקה';
   } else if (typeDef.id === 'whatsapp' && userFields.some((f) => f.key === 'ownerNotifyPhone')) {
     authMethod = 'phone';
-    connectLabelHe = 'שמור מספר להתראות';
+    connectLabelHe = 'שמרו את המספר שלכם';
   } else if (typeDef.id === 'google_calendar') {
     authMethod = oauth.available ? 'oauth_or_link' : 'link';
-    connectLabelHe = oauth.available ? oauth.connectLabelHe : 'הדבק קישור Cal.com';
+    connectLabelHe = oauth.available ? oauth.connectLabelHe : 'הדביקו קישור ליומן';
   } else if (typeDef.id === 'mcp') {
     authMethod = 'platform';
     connectLabelHe = 'חבר שרת MCP';

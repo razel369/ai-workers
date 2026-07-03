@@ -59,6 +59,12 @@ import {
   tryAutoVerifyActivationProof,
   autoActivateWorker,
 } from './payment-webhooks.js';
+import {
+  paddleEnabled,
+  paddleConfigStatus,
+  buildPaddleCheckoutConfig,
+  handlePaddleWebhook,
+} from './paddle-billing.js';
 import { buildEmbedScript } from './embed-widget.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -684,6 +690,7 @@ async function readBody(req, max = 1024 * 64) {
 function buildAcquireChannels() {
   const list = [];
   if (PAYPAL_ME) list.push({ kind: 'paypal', url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
+  if (paddleEnabled()) list.push({ kind: 'paddle', url: `${PUBLIC_BASE_URL}/marketplace`, note: 'Credit card checkout via Paddle (auto-activation)' });
   if (BUY_ME_A_COFFEE) list.push({ kind: 'buymeacoffee', url: BUY_ME_A_COFFEE });
   if (KO_FI) list.push({ kind: 'kofi', url: KO_FI });
   if (BIT_PHONE) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
@@ -706,22 +713,22 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <title>עובדי AI — העסק שלך עובד 24/7</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/material3-theme.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Secular+One&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/material3-theme.css?v=nightdesk10">
   <style>
     :root {
       color-scheme: dark;
-      --font: 'Rubik', system-ui, sans-serif;
-      --bg: #0a0908;
-      --surface: #141210;
-      --surface2: #1e1a16;
-      --border: #3a332b;
-      --text: #f2ebe2;
-      --body: #c8bfb4;
-      --muted: #8f857a;
-      --accent: #d4a24a;
-      --accent2: #b8893a;
-      --green: #7da86a;
+      --font: 'Heebo', system-ui, sans-serif;
+      --bg: #080b10;
+      --surface: #12161e;
+      --surface2: #181e28;
+      --border: #2a3340;
+      --text: #e8e4dc;
+      --body: #b8bfc9;
+      --muted: #7a8494;
+      --accent: #d4844a;
+      --accent2: #a86438;
+      --green: #4a9b6e;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
@@ -739,21 +746,15 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       html { scroll-behavior: auto; }
     }
 
-    body::before {
-      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(212,162,74,.06), transparent 65%);
-    }
+    body::before { display: none; }
 
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .container { max-width: 1040px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
-
-    /* === Nav === */
     nav { display: flex; align-items: center; gap: 24px; padding: 14px 0; flex-wrap: wrap; position: relative; z-index: 2; }
     nav .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    nav .logo .logo-icon { font-size: 26px; line-height: 1; }
-    nav .logo .logo-text { display: flex; flex-direction: column; line-height: 1.2; }
-    nav .logo .logo-main { font-size: 19px; font-weight: 800; letter-spacing: -.02em; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    nav .logo .logo-icon { font-size: 14px; font-weight: 800; font-family: 'Sora', system-ui, sans-serif; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--accent); }
+    nav .logo .logo-main { font-family: 'Sora', system-ui, sans-serif; font-size: 19px; font-weight: 800; color: var(--text); background: none; -webkit-text-fill-color: unset; }
     nav .logo .logo-sub { font-size: 10px; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
     nav .links { display: flex; gap: 2px; margin-right: auto; flex-wrap: wrap; }
     nav .links a { color: var(--muted); padding: 6px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; transition: .15s; }
@@ -770,11 +771,11 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     @media (min-width: 768px) { .hero { padding: 72px 0 40px; } }
     .hero .badge { display: inline-block; background: rgba(125,168,106,.12); color: var(--green); font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid rgba(125,168,106,.2); }
     .hero h1 { font-size: clamp(32px, 5vw, 56px); font-weight: 800; line-height: 1.15; margin-bottom: 16px; color: var(--text); letter-spacing: -.02em; }
-    .hero h1 .highlight { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero h1 .highlight { color: var(--accent); background: none; -webkit-text-fill-color: unset; }
     .hero .subtitle { font-size: 17px; color: var(--body); max-width: 620px; margin: 0 auto 28px; line-height: 1.65; }
     .hero .cta-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
-    .hero .cta { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; padding: 14px 32px; border-radius: 12px; font-size: 17px; font-weight: 700; transition: .25s; box-shadow: 0 0 0 0 rgba(201,149,62,0); }
-    .hero .cta:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(212,162,74,.25); text-decoration: none; }
+    .hero .cta { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #1a1008; padding: 14px 32px; border-radius: 8px; font-size: 17px; font-weight: 700; transition: .2s; }
+    .hero .cta:hover { filter: brightness(1.05); text-decoration: none; transform: none; box-shadow: none; }
     .hero .cta-secondary { display: inline-flex; align-items: center; gap: 8px; background: rgba(22,19,16,.65); backdrop-filter: blur(8px); color: var(--text); padding: 14px 28px; border-radius: 12px; font-size: 17px; font-weight: 600; border: 1px solid var(--border); transition: .2s; }
     .hero .cta-secondary:hover { background: var(--surface2); border-color: rgba(201,149,62,.3); text-decoration: none; }
     .hero .trust { margin-top: 20px; font-size: 14px; color: var(--muted); display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
@@ -798,7 +799,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     @media (max-width: 700px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
     .stat-card { border-radius: 14px; padding: 22px 16px; text-align: center; transition: .25s; }
     .stat-card:hover { transform: translateY(-2px); }
-    .stat-card .v { font-size: 28px; font-weight: 800; letter-spacing: -.02em; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .stat-card .v { font-size: 28px; font-weight: 800; font-family: 'Sora', system-ui, sans-serif; color: var(--accent); }
     .stat-card .k { color: var(--muted); font-size: 13px; margin-top: 2px; font-weight: 500; }
 
     /* === Pillars (how it works) === */
@@ -847,8 +848,8 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     /* === Utilities === */
     code { background: var(--surface2); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
-    .btn-mkt { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; padding: 14px 32px; border-radius: 12px; font-size: 16px; font-weight: 700; transition: .25s; box-shadow: 0 0 0 0 rgba(201,149,62,0); }
-    .btn-mkt:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(201,149,62,.3); text-decoration: none; }
+    .btn-mkt { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #1a1008; padding: 14px 32px; border-radius: 8px; font-size: 16px; font-weight: 700; transition: .2s; }
+    .btn-mkt:hover { filter: brightness(1.05); text-decoration: none; transform: none; box-shadow: none; }
     .text-center { text-align: center; }
     .mt-8 { margin-top: 32px; }
 
@@ -886,11 +887,11 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     }
   </style>
 </head>
-<body class="landing-page">
+<body class="landing-page night-desk">
   <div class="container">
     <nav>
       <span class="logo">
-        <span class="logo-icon">AI</span>
+        <img src="/assets/logo-mark.png" alt="עובדי AI" class="logo-img">
         <span class="logo-text">
           <span class="logo-main">עובדי AI</span>
           <span class="logo-sub">שירות לעסקים בישראל</span>
@@ -900,14 +901,15 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <a href="/marketplace">שוק העובדים</a>
         <a href="/marketplace#/workers">העובדים שלי</a>
         <a href="#pricing">מחירים</a>
+        <a href="/marketplace#/magic" class="nav-cta">התחל ניסיון</a>
       </div>
     </nav>
 
     <div class="hero anim anim-1 section-order-hero-cta hero-split">
       <div class="hero-copy">
       <div class="badge">פתרון B2B · עברית · תשלום מקומי</div>
-      <h1>עובד וירטואלי שמטפל ב<strong class="highlight">לקוחות 24/7</strong></h1>
-      <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — בוחרים תבנית מוכנה, מתאימים ידע ושעות פעילות, ומקבלים עובד שמסנן פניות, אוסף לידים ומעביר רק מה שחשוב.</p>
+      <h1>העסק <strong class="highlight">לא ישן</strong> — גם כשאתה כן</h1>
+      <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — עובד AI שמקבל פניות ב-23:00, עונה ללקוחות, ומעביר רק מה שדחוף.</p>
       <div class="cta-group">
         <a href="/marketplace#/magic" class="cta">נסה עכשיו בחינם ←</a>
         <a href="/marketplace" class="cta-secondary">לשוק העובדים ←</a>
@@ -917,27 +919,31 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <span class="proof-item">✓ דוגמה חיה לפני תשלום</span>
         <span class="proof-item">✓ ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} ללא תשלום</span>
       </div>
-      <div class="trust-bar">
-        <span class="trust-pill">מוצר ישראלי · תמיכה בעברית</span>
-        <span class="trust-pill">הצפנה לחיבורים עסקיים</span>
-        <span class="trust-pill">WhatsApp · יומן · CRM</span>
-        <span class="trust-pill">ללא מונחים טכניים</span>
+      <div class="hero-stat-eyebrow">דוגמה · כך זה נראה בלילה</div>
+      <div class="hero-stat-row" aria-label="נתוני משמרת הלילה — דוגמה">
+        <span class="hs-live"><span class="hs-pip"></span>דוגמה</span>
+        <div class="hero-stat"><div class="hs-num">3</div><div class="hs-lbl">פניות טופלו הלילה</div></div>
+        <div class="hero-stat"><div class="hs-num sage">0</div><div class="hs-lbl">המתינו לתשובה</div></div>
+        <div class="hero-stat"><div class="hs-num">40<span class="hs-unit">ש'</span></div><div class="hs-lbl">תגובה ממוצעת</div></div>
       </div>
       </div>
-      <aside class="hero-showcase" aria-label="דוגמאות תוצאה">
-        <div class="showcase-card">
-          <div class="showcase-label">דוגמה מפיילוט</div>
-          <div class="showcase-metric"><span class="showcase-num">78%</span><span class="showcase-txt">מהפניות נענו בלי אדם</span></div>
+      <div class="monitor-wrap">
+      <aside class="shift-board" aria-label="דוח משמרת">
+        <div class="sb-header">
+          <div>
+            <div class="sb-title">דוח משמרת · הלילה</div>
+            <span class="sb-status"><span class="sb-dot"></span> נועה · קבלה</span>
+          </div>
+          <span class="sb-clock" id="landing-shift-feed-clock">23:14</span>
         </div>
-        <div class="showcase-card accent">
-          <div class="showcase-label">זמן תגובה</div>
-          <div class="showcase-metric"><span class="showcase-num">&lt;30 שנ׳</span><span class="showcase-txt">ממוצע ללקוח שכותב בערב</span></div>
+        <div class="sb-feed" id="landing-shift-feed">
+          <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בוואטסאפ — נענה</span></div>
+          <div class="sb-event"><time>23:12</time><span class="sb-check">✓</span><span>תור נקבע למחר ב-10:00</span></div>
+          <div class="sb-event"><time>23:14</time><span class="sb-check">✓</span><span>ליד חם הועבר לבעל העסק</span></div>
         </div>
-        <div class="showcase-card">
-          <div class="showcase-label">התחלה</div>
-          <div class="showcase-metric"><span class="showcase-num">3 צעדים</span><span class="showcase-txt">שם עסק → תפקיד → שיחה ראשונה</span></div>
-        </div>
+        <div class="sb-foot-note">דוגמה — עד עכשיו הכל שקט. 3 פניות טופלו, אפס המתינו.</div>
       </aside>
+      </div>
     </div>
 
     <div class="sections-flow">
@@ -982,51 +988,60 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     <section class="anim anim-3 section-order-case-studies" id="case-studies">
       <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
-      <p class="section-sub">תוצאות ראשונות מעסקים ישראליים — מספרים לדוגמה מפיילוטים מוקדמים</p>
-      <div class="verticals-grid">
-        <div class="vertical-card">
-          <div class="v-icon">🏥</div>
-          <h3>קליניקת שיניים — תל אביב</h3>
-          <p>מזכירה וירטואלית ענתה על 340 פניות בחודש הראשון. 78% קבעו תור ללא שיחה עם אדם. זמן המתנה ממוצע ירד מ-4 דקות ל-40 שניות.</p>
-          <div class="v-price"><b>−62%</b> עומס טלפוני בשעות שיא</div>
+      <p class="section-sub">תיקי עובדים מעסקים ישראליים — תוצאות ראשונות</p>
+      <div class="employee-files">
+        <div class="employee-file">
+          <div class="ef-tab">תיק עובד · קליניקה</div>
+          <div class="ef-body">
+            <h3>קליניקת שיניים — תל אביב</h3>
+            <p>מזכירה וירטואלית ענתה על 340 פניות בחודש הראשון. 78% קבעו תור ללא שיחה עם אדם.</p>
+            <div class="ef-result">−62% עומס טלפוני</div>
+          </div>
         </div>
-        <div class="vertical-card">
-          <div class="v-icon">🏠</div>
-          <h3>משרד תיווך — חיפה</h3>
-          <p>סוכן נדל״ן סינן 120 לידים בחודש. 31 לידים חמים הועברו לסוכן אנושי עם תקציב ואזור מוגדרים מראש.</p>
-          <div class="v-price"><b>3×</b> יותר פגישות מול אותו כוח אדם</div>
+        <div class="employee-file">
+          <div class="ef-tab">תיק עובד · נדל״ן</div>
+          <div class="ef-body">
+            <h3>משרד תיווך — חיפה</h3>
+            <p>סוכן נדל״ן סינן 120 לידים בחודש. 31 לידים חמים הועברו לסוכן עם תקציב ואזור מוגדרים.</p>
+            <div class="ef-result">3× יותר פגישות</div>
+          </div>
         </div>
-        <div class="vertical-card">
-          <div class="v-icon">🍽️</div>
-          <h3>מסעדת שף — ירושלים</h3>
-          <p>מנהל מסעדה טיפל בהזמנות, שאלות תפריט וטייק אווי בערב שישי. 94% מהשאלות נענו ללא הסלמה לאדם.</p>
-          <div class="v-price"><b>₪0</b> דמי הקמה · הפעלה תוך יום עסקים</div>
+        <div class="employee-file">
+          <div class="ef-tab">תיק עובד · מסעדה</div>
+          <div class="ef-body">
+            <h3>מסעדת שף — ירושלים</h3>
+            <p>מנהל מסעדה טיפל בהזמנות ושאלות תפריט בערב שישי. 94% מהשאלות נענו ללא הסלמה.</p>
+            <div class="ef-result">הפעלה תוך יום עסקים</div>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="anim anim-3 section-order-pricing" id="pricing">
+      <div class="pricing-eyebrow">// מחירון שקוף</div>
       <h2 class="section-title">מחירון שקוף</h2>
       <p class="section-sub">ללא דמי הקמה · ללא חוזה ארוך · ביטול בכל עת</p>
       <div class="pricing-grid">
         <div class="price-card">
           <div class="amount">₪199<span>/חודש</span></div>
-          <p class="muted" style="margin-top:8px;font-size:14px">תפעול ונתונים</p>
+          <div class="price-cat">תפעול ונתונים</div>
           <ul>
-            <li>הזנת נתונים, מבנה JSON/CSV</li>
-            <li>זיכרון לקוח ו-webhook</li>
-            <li>צ'אט 24/7 לאחר אישור</li>
+            <li><span class="price-check">✓</span> הזנת נתונים, מבנה JSON/CSV</li>
+            <li><span class="price-check">✓</span> זיכרון לקוח ו-webhook</li>
+            <li><span class="price-check">✓</span> צ'אט 24/7 לאחר אישור</li>
           </ul>
+          <a href="/marketplace#/magic" class="price-cta">התחל ניסיון ←</a>
         </div>
         <div class="price-card featured">
+          <div class="price-ribbon">הכי נבחר</div>
           <div class="amount">₪249–299<span>/חודש</span></div>
-          <p class="muted" style="margin-top:8px;font-size:14px">מכירות · שירות · נדל״ן · מסעדות</p>
+          <div class="price-cat">מכירות · שירות · נדל״ן · מסעדות</div>
           <ul>
-            <li>תבנית מותאמת לתחום</li>
-            <li>לידים, תורים, escalation</li>
-            <li>תמיכה בעברית מלאה</li>
+            <li><span class="price-check">✓</span> תבנית מותאמת לתחום</li>
+            <li><span class="price-check">✓</span> לידים, תורים, escalation</li>
+            <li><span class="price-check">✓</span> תמיכה בעברית מלאה</li>
           </ul>
-          <div class="text-center mt-8"><a href="/marketplace" class="cta-sm">התחל עכשיו ←</a></div>
+          <a href="/marketplace#/magic" class="price-cta">התחל עכשיו ←</a>
         </div>
       </div>
       <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">חשבונית</a>.</p>
@@ -1035,21 +1050,21 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     <section class="anim anim-3 section-order-how">
       <h2 class="section-title">איך מתחילים</h2>
       <p class="section-sub">שלושה צעדים — בלי מפתחות API ובלי מפתח</p>
-      <div class="steps-grid">
-        <div class="step-card">
-          <div class="num">1</div>
-          <h3>בוחרים תבנית</h3>
-          <p>נכנסים לשוק, יוצרים מפתח עסק, ובוחרים תבנית לפי תפקיד.</p>
+      <div class="timeline-steps">
+        <div class="timeline-step">
+          <div class="ts-marker">🏢</div>
+          <h3>שם העסק</h3>
+          <p>כותבים איך קוראים לעסק — 30 שניות.</p>
         </div>
-        <div class="step-card">
-          <div class="num">2</div>
-          <h3>מתאימים ידע</h3>
-          <p>שעות, מחירים, שאלות נפוצות — או מייבאים מאתר עם כתובת URL.</p>
+        <div class="timeline-step">
+          <div class="ts-marker">👤</div>
+          <h3>בוחרים תפקיד</h3>
+          <p>מכירות, מזכירות, נדל״ן — תבנית מוכנה בעברית.</p>
         </div>
-        <div class="step-card">
-          <div class="num">3</div>
-          <h3>מדברים ומחברים</h3>
-          <p>שיחה ראשונה תוך דקה, חיבור WhatsApp ויומן — ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} בלי כרטיס אשראי.</p>
+        <div class="timeline-step">
+          <div class="ts-marker">💬</div>
+          <h3>שיחה ראשונה</h3>
+          <p>דוגמה חיה לפני תשלום — ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'}.</p>
         </div>
       </div>
     </section>
@@ -1101,7 +1116,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       ${AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">צור קשר</a>` : ''}
     </div>
     <p>${escapeHtml(AGENT_NAME)} · ${escapeHtml(AGENT_DESCRIPTION)}</p>
-    <p class="footer-legal-note">תשלום ב-Bit, PayPal או העברה בנקאית — ללא סליקת כרטיסי אשראי באתר</p>
+    <p class="footer-legal-note">תשלום בכרטיס אשראי (Paddle), Bit, PayPal או העברה בנקאית</p>
   </div>
 
   <script>
@@ -1150,6 +1165,34 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     }
     loadStats(); setInterval(loadStats, ${STATS_POLL_MS});
     loadTemplates();
+    (function initLandingShift() {
+      const feed = document.getElementById('landing-shift-feed');
+      const clock = document.getElementById('landing-shift-feed-clock');
+      if (clock) {
+        const tick = function() {
+          var d = new Date();
+          clock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        };
+        tick(); setInterval(tick, 15000);
+      }
+      if (!feed || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const events = [
+        { t: '23:11', m: 'לקוח כתב בוואטסאפ — נענה' },
+        { t: '23:12', m: 'תור נקבע למחר ב-10:00' },
+        { t: '23:14', m: 'ליד חם הועבר לבעל העסק' },
+        { t: '23:16', m: 'אישור הזמנה נשלח ב-SMS' },
+        { t: '23:19', m: 'שאלה חוזרת — נענתה מהידע' },
+      ];
+      let i = 3;
+      setInterval(function() {
+        i = (i + 1) % events.length;
+        var el = document.createElement('div');
+        el.className = 'sb-event sb-event-new';
+        el.innerHTML = '<time>' + events[i].t + '</time><span class="sb-check">✓</span><span>' + events[i].m + '</span>';
+        feed.insertBefore(el, feed.firstChild);
+        while (feed.children.length > 4) feed.lastChild.remove();
+      }, 4600);
+    })();
   </script>
   ${vercelAnalyticsScripts()}
 </body>
@@ -1324,11 +1367,13 @@ const server = http.createServer(async (req, res) => {
       persistentStorage: !DB_PATH.includes('/tmp'),
       whatsapp: whatsappConfigStatus(),
       integrationsCatalog: integrations.listCatalog().length,
-      payment: paymentConfigStatus(),
+      payment: { ...paymentConfigStatus(), paddle: paddleConfigStatus() },
       trialDays: TRIAL_DAYS,
     });
   }
   if (handleLegalRoutes(req, res, url, send)) return;
+
+  if (await handlePaddleWebhook(req, res, url, { send, readBody, recordAdminAudit })) return;
 
   if (await handlePaymentWebhooks(req, res, url, {
     send,
@@ -1557,8 +1602,10 @@ const server = http.createServer(async (req, res) => {
       payeeName: PAYEE_NAME || '',
       activationSlaHe: activationSlaTextHe(),
       trialDays: TRIAL_DAYS,
+      paddleEnabled: paddleEnabled(),
+      ownerContact: AGENT_OWNER_CONTACT || '',
     });
-    html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;</script></body>`);
+    html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;const PADDLE_ENABLED=PAYMENT_CONFIG.paddleEnabled;const AGENT_OWNER_CONTACT=PAYMENT_CONFIG.ownerContact;</script></body>`);
     return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
   }
 
@@ -1799,6 +1846,20 @@ const server = http.createServer(async (req, res) => {
     });
     if (!res2.ok) return send(res, res2.error === 'not_found' ? 404 : 400, res2);
     return send(res, 200, res2);
+  }
+
+  // API: Paddle checkout config (client opens Paddle.js overlay)
+  if (req.method === 'POST' && url.pathname === '/api/paddle/checkout') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const workerId = String(body.workerId ?? '').trim();
+    if (!workerId) return send(res, 400, { error: 'workerId_required' });
+    const worker = workers.getWorker(tenantId, workerId);
+    if (!worker) return send(res, 404, { error: 'not_found' });
+    const cfg = buildPaddleCheckoutConfig({ workerId, tenantId, templateId: worker.templateId });
+    return send(res, cfg.ok ? 200 : 400, cfg);
   }
 
   // API: request activation after payment/proof submission

@@ -1,0 +1,308 @@
+/* ============================================================
+   Night Desk — "העובדים שלי" roster
+   Employee-file cards for the CSR view. Self-contained: only
+   .wl-* selectors so it never collides with marketplace styles.
+   Loaded after material3-theme.css; uses its design tokens.
+   ============================================================ */
+
+.wl-page { padding: 8px 4px 40px; }
+
+/* ---- Page header ---- */
+.wl-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 6px 0 22px;
+}
+.wl-head h2 {
+  font-family: var(--font-serif);
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--paper);
+  margin: 0;
+  letter-spacing: -0.01em;
+  text-shadow: 0 0 40px rgba(242,182,107,0.10);
+}
+.wl-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--lamp-deep);
+  background: var(--lamp-pool);
+  border: 1px solid rgba(242,182,107,0.22);
+  padding: 4px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.wl-spacer { flex: 1 1 auto; }
+.wl-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-sans, inherit);
+  font-size: 13px;
+  font-weight: 600;
+  color: #2a1a08;
+  background: linear-gradient(180deg, var(--lamp), var(--lamp-deep));
+  border: 1px solid rgba(242,182,107,0.5);
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 18px var(--lamp-glow);
+  text-decoration: none;
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.wl-add:hover { box-shadow: 0 8px 30px rgba(242,182,107,0.5); transform: translateY(-1px); color: #2a1a08; text-decoration: none; }
+
+/* ---- Grid ---- */
+.wl-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  gap: 18px;
+}
+@media (max-width: 820px) {
+  .wl-grid { grid-template-columns: 1fr; }
+}
+
+/* ---- Card ---- */
+.wl-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px 18px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
+    var(--desk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 26px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.04);
+  overflow: hidden;
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+}
+/* colored key-strip — RTL: right edge */
+.wl-stripe {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 4px;
+  background: var(--cat-sales);
+  opacity: 0.9;
+}
+.wl-card[data-cat="support"] .wl-stripe { background: var(--cat-support); }
+.wl-card[data-cat="admin"]    .wl-stripe { background: var(--cat-admin); }
+.wl-card[data-cat="content"]  .wl-stripe { background: var(--cat-content); }
+.wl-card[data-cat="ops"]      .wl-stripe { background: var(--cat-admin); }
+.wl-card[data-cat="realestate"] .wl-stripe { background: var(--cat-sales); }
+.wl-card[data-cat="healthcare"] .wl-stripe { background: var(--cat-support); }
+.wl-card[data-cat="hospitality"] .wl-stripe { background: var(--cat-sales); }
+.wl-card[data-cat="ecommerce"] .wl-stripe { background: var(--cat-content); }
+.wl-card[data-cat="property"]  .wl-stripe { background: var(--cat-admin); }
+
+.wl-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(242,182,107,0.35);
+  box-shadow: 0 18px 44px rgba(0,0,0,0.38), 0 0 30px var(--lamp-glow), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+@media (prefers-reduced-motion: reduce) {
+  .wl-card { transition: none; }
+  .wl-card:hover { transform: none; }
+}
+
+/* ---- Header row: status pill + name ---- */
+.wl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.wl-name {
+  flex: 1 1 180px;
+  font-family: var(--font-serif);
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: var(--paper);
+  margin: 0;
+  line-height: 1.25;
+}
+.wl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.wl-pill .wl-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+}
+.wl-pill.is-active {
+  color: var(--sage);
+  background: rgba(111,174,138,0.12);
+  border-color: rgba(111,174,138,0.3);
+}
+.wl-pill.is-active .wl-dot {
+  box-shadow: 0 0 0 0 rgba(111,174,138,0.6);
+  animation: wl-pulse 2s ease-out infinite;
+}
+@keyframes wl-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(111,174,138,0.5); }
+  70%  { box-shadow: 0 0 0 6px rgba(111,174,138,0); }
+  100% { box-shadow: 0 0 0 0 rgba(111,174,138,0); }
+}
+@media (prefers-reduced-motion: reduce) { .wl-pill.is-active .wl-dot { animation: none; } }
+.wl-pill.is-pending {
+  color: var(--lamp);
+  background: var(--lamp-pool);
+  border-color: rgba(242,182,107,0.3);
+}
+.wl-pill.is-config {
+  color: var(--lamp-deep);
+  background: rgba(217,154,74,0.10);
+  border-color: rgba(217,154,74,0.32);
+}
+.wl-pill.is-expired {
+  color: var(--red);
+  background: rgba(232,138,138,0.10);
+  border-color: rgba(232,138,138,0.30);
+}
+
+/* ---- Sub line: category role (mono, like marketplace .sb-role) ---- */
+.wl-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--lamp-deep);
+  margin: -4px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.wl-sub .wl-cat-ic { color: inherit; opacity: 0.85; display: inline-flex; }
+
+/* ---- Outcome one-liner ---- */
+.wl-outcome {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--body);
+  margin: 0;
+}
+
+/* ---- Meta: payment due ---- */
+.wl-meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line-soft);
+  margin-top: 2px;
+}
+.wl-meta .wl-meta-label { color: var(--muted); }
+.wl-meta .wl-meta-val { color: var(--body); }
+.wl-meta.is-soon { color: var(--lamp); }
+.wl-meta.is-soon .wl-meta-val { color: var(--lamp); }
+.wl-meta.is-expired { color: var(--red); }
+.wl-meta.is-expired .wl-meta-val { color: var(--red); }
+
+/* ---- Action row ---- */
+.wl-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.wl-actions .btn-primary.btn-sm { min-height: 36px; padding: 7px 15px; }
+.wl-spacer2 { flex: 1 1 auto; }
+.wl-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .18s ease, border-color .18s ease, background .18s ease, transform .18s ease;
+}
+.wl-ic:hover {
+  color: var(--lamp);
+  border-color: rgba(242,182,107,0.4);
+  background: var(--lamp-pool);
+  transform: translateY(-1px);
+}
+.wl-ic.wl-del { color: var(--red); border-color: rgba(232,138,138,0.22); }
+.wl-ic.wl-del:hover {
+  color: #fff;
+  background: rgba(232,138,138,0.18);
+  border-color: rgba(232,138,138,0.45);
+}
+@media (prefers-reduced-motion: reduce) { .wl-ic:hover { transform: none; } }
+
+/* ---- Empty state ---- */
+.wl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 70px 24px 90px;
+  gap: 14px;
+}
+.wl-empty-lamp {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, var(--lamp-glow), rgba(242,182,107,0.05) 60%, transparent 72%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+.wl-empty-lamp .wl-empty-ic { color: var(--lamp); filter: drop-shadow(0 0 14px var(--lamp-glow)); }
+.wl-empty h3 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--paper);
+  margin: 0;
+}
+.wl-empty p {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+  max-width: 420px;
+}
+.wl-empty-cta {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans, inherit);
+  font-size: 14px;
+  font-weight: 600;
+  color: #2a1a08;
+  background: linear-gradient(180deg, var(--lamp), var(--lamp-deep));
+  border: 1px solid rgba(242,182,107,0.5);
+  padding: 11px 22px;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 26px var(--lamp-glow);
+  text-decoration: none;
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.wl-empty-cta:hover { box-shadow: 0 10px 36px rgba(242,182,107,0.5); transform: translateY(-1px); color: #2a1a08; text-decoration: none; }

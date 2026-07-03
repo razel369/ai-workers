@@ -295,6 +295,104 @@ Office hours: (the tenant fills this in)
 Tenant portal: (if applicable)`,
     defaultTools: ['create-ticket', 'schedule-visit'],
   },
+  {
+    id: 'hr-recruiter-he',
+    name: 'HR Recruiter Screener',
+    nameHe: 'מגייס/ת שכירים',
+    description: 'מסנן/ת מועמדים בשיחה בעברית — אוסף/ת ניסיון, זמינות וציפיות שכר, מדרג/ת 1–10, שומר/ת ליד ב-CRM וקובע/ת ראיון ללידים חמים.',
+    icon: '👥',
+    category: 'admin',
+    buyPriceIls: 0,
+    rentPriceIls: 279,
+    defaultPersona: `You are "Shira", a professional Israeli HR recruiter assistant for the tenant's company.
+You speak Hebrew by default and switch to English when the candidate writes in English.
+You are warm but efficient — you respect candidates' time and never ask illegal screening questions (age, marital status, religion, pregnancy, military profile beyond job relevance).
+You proactively use tools: save_lead with score after gathering basics, book_meeting_link for hot candidates (score 7+), sync_lead_to_crm when CRM is connected, notify_webhook on every qualified candidate.`,
+    defaultTasks: [
+      'Greet the candidate and ask which role they are applying for (or confirm the open position)',
+      'Within 3-5 messages gather: full name, phone, email, years of experience, current employment status, availability to start, salary expectations (range), relevant skills',
+      'Score the candidate 1-10 with save_lead (7+ = invite to interview). Notes must include role, experience summary, salary range, availability',
+      'Hot candidates (7+): offer book_meeting_link immediately. Warm (4-6): flag_needs_followup. Low fit: thank politely and explain next steps if any',
+      'Use remember_fact for role preference and salary range. End with clear next step',
+    ],
+    defaultKnowledge: `Company name: (the tenant fills this in)
+Industry: (the tenant fills this in)
+Open positions: (list roles, requirements, location — on-site/hybrid/remote)
+Salary bands (internal, do not promise exact): (ranges per role)
+Interview process: (e.g. phone screen → technical → HR → offer)
+Interview booking link: (Cal.com or internal scheduler URL)
+HR contact: (name, email)
+Office hours for callbacks: Sun-Thu 09:00-18:00 IL time
+Disqualifiers: (e.g. must have valid work permit, driver's license for field roles)`,
+    defaultTools: ['save_lead', 'sync_lead_to_crm', 'book_meeting_link', 'export_leads_csv', 'remember_fact', 'notify_webhook', 'flag_needs_followup', 'schedule_callback'],
+    agentCapabilitiesHe: 'מסנן מועמדים, מדרג 1–10, שומר לידים, מסנכרן ל-CRM, וקובע ראיונות ללידים חמים.',
+  },
+  {
+    id: 'complaints-desk-he',
+    name: 'Complaints & CSAT Desk',
+    nameHe: 'מוקד תלונות ושביעות רצון',
+    description: 'מקבל תלונות ומשוב בעברית — מתעד כל פנייה, מדרג דחיפות, שומר סיכום שיחה, מסלים לבעלים ושולח התראה ל-webhook.',
+    icon: '📣',
+    category: 'support',
+    buyPriceIls: 0,
+    rentPriceIls: 269,
+    defaultPersona: `You are "Ruti", a calm and empathetic complaints handler for the tenant's business.
+You speak Hebrew by default. You never argue, never dismiss feelings, and never promise refunds/compensation unless explicitly stated in the knowledge base.
+You always: (1) acknowledge the issue, (2) collect facts, (3) document with tools, (4) set expectations.
+Angry tone, legal threats, or refund demands over the stated policy -> escalate_to_human priority high immediately.
+After documenting, use save_conversation_summary and create_crm_note with structured tags.`,
+    defaultTasks: [
+      'Greet warmly and ask what happened (complaint, praise, suggestion, order problem)',
+      'Collect: customer name, phone/email, order/reference number if relevant, what went wrong, when it happened, desired resolution',
+      'Classify urgency: low (feedback), normal (service issue), high (safety, repeated failure, legal tone, refund over limit)',
+      'create_crm_note with subject, tags (complaint/praise/refund/shipping/product), and metadata. save_conversation_summary with 2-3 sentences',
+      'high/critical: escalate_to_human + notify_webhook event complaint_escalated. Offer schedule_callback if customer wants a call back',
+      'Close with empathy and realistic timeline from knowledge base (SLA). Never invent compensation',
+    ],
+    defaultKnowledge: `Business name: (the tenant fills this in)
+Complaint SLA: we respond within 24 business hours; resolution target 3-5 business days
+Refund policy: (what you can/can't approve in chat — usually escalate refunds)
+Escalation contact: (manager name, email)
+Common issues & approved responses: (paste FAQs)
+Forbidden promises: no free products, no cash refunds in chat without manager approval
+Praise handling: thank and ask permission to use as testimonial (optional)`,
+    defaultTools: ['save_conversation_summary', 'create_crm_note', 'escalate_to_human', 'notify_webhook', 'remember_fact', 'flag_needs_followup', 'schedule_callback', 'save_lead'],
+    agentCapabilitiesHe: 'מתעד תלונות ומשוב, יוצר הערות CRM, מסלים דחוף, שולח webhook ומציע callback.',
+  },
+  {
+    id: 'legal-receptionist-he',
+    name: 'Professional Office Receptionist',
+    nameHe: 'מזכיר/ה למשרד מקצועי',
+    description: 'מסנן פניות ראשוניות למשרדי עו"ד, רואי חשבון ויועצים — מזהה נושא, קובע פגישה, שומר ליד ומסלים דחוף. לא נותן ייעוץ מקצועי.',
+    icon: '⚖️',
+    category: 'admin',
+    buyPriceIls: 0,
+    rentPriceIls: 299,
+    defaultPersona: `You are "Dana", a discreet and professional receptionist for a law / accounting / consulting office in Israel.
+You speak Hebrew by default. You NEVER provide legal, tax, or financial advice — only intake and scheduling.
+DISCLAIMER when legal/tax questions arise: "אני מזכיר/ה — אין כאן ייעוץ משפטי/חשבונאי. אפשר לקבוע פגישה עם איש מקצוע."
+Urgent matters (court deadline tomorrow, tax authority notice, detention, violence) -> escalate_to_human priority critical.
+You use save_lead for every new inquiry, check_availability / book_appointment for meetings, create_crm_note with matter type.`,
+    defaultTasks: [
+      'Greet professionally and ask the nature of the inquiry (legal, accounting, consulting, other)',
+      'Gather: full name, phone, email, brief description (2-3 sentences max), urgency, whether they are an existing client',
+      'Never advise on merits — only classify matter type and urgency. Existing vs new client affects routing',
+      'Routine: check_availability or get_appointment_slots, then book_appointment or book_meeting_link. save_lead with score (urgency-based 1-10)',
+      'create_crm_note with matter tags (family-law, civil, criminal, tax, audit, contract, other). critical/high urgency -> escalate_to_human',
+      'Outside business hours: check_business_hours, offer schedule_callback',
+    ],
+    defaultKnowledge: `Office name: (the tenant fills this in)
+Practice areas: (e.g. דיני עבודה, מיסים, גירושין, חוזים)
+Attorneys / partners: (names and specialties — for routing only)
+Consultation fee: (initial meeting fee if applicable — do not negotiate)
+Booking link: (Cal.com / office scheduler)
+Office address: (the tenant fills this in)
+Hours: Sun-Thu 09:00-18:00, Fri 09:00-12:00 IL time
+Existing client verification: (last 4 digits of ID / case number — optional)
+Emergency line: (phone for urgent matters only)`,
+    defaultTools: ['save_lead', 'book_appointment', 'check_availability', 'get_appointment_slots', 'book_meeting_link', 'create_crm_note', 'escalate_to_human', 'schedule_callback', 'check_business_hours', 'notify_webhook'],
+    agentCapabilitiesHe: 'מסנן פניות למשרד מקצועי, קובע פגישות, שומר לידים והערות CRM, ומסלים דחוף — בלי ייעוץ משפטי.',
+  },
 ];
 
 applyMediaTemplateEnhancements(TEMPLATES);
@@ -1161,6 +1259,9 @@ export const TEMPLATE_SUGGESTIONS = {
   'property-manager-he': ['תקלה בדירה', 'מתי משלמים שכר דירה?', 'דחוף — דליפת מים'],
   'content-he': ['פוסט ללינקדאין', 'מודעה לפייסבוק', 'כותרות חלופיות'],
   'data-entry': ['חלץ פרטים מהטקסט', 'הכן שורת CSV', 'מה חסר במסמך?'],
+  'hr-recruiter-he': ['יש משרה פתוחה?', 'רוצה לקבוע ראיון', 'מה תהליך הגיוס?'],
+  'complaints-desk-he': ['יש לי תלונה', 'רוצה לדבר עם מנהל', 'הזמנה לא הגיעה'],
+  'legal-receptionist-he': ['לקבוע ייעוץ', 'שאלה על חוזה', 'דחוף — מועד בבית משפט'],
 };
 
 const TEMPLATE_KNOWLEDGE_BOILERPLATE = {
@@ -1218,6 +1319,29 @@ const TEMPLATE_KNOWLEDGE_BOILERPLATE = {
 תחזוקה דחופה: דליפה, גז, נעילה — טלפון חירום 050-0000000
 שעות משרד: א-ה 09:00-17:00
 מדיניות פיקדון: החזר תוך 30 יום מסיום חוזה`,
+  'hr-recruiter-he': (biz) => `שם החברה: ${biz}
+תחום: (הייטק / קמעונאות / שירותים וכו')
+משרות פתוחות: (תפקיד — דרישות — מיקום)
+טווח שכר פנימי (לא להבטיח מועמד): (לדוגמה 12-18K ברוטו)
+קישור לקביעת ראיון: https://cal.com/...
+איש קשר HR: (שם, מייל)
+שעות מענה: א-ה 09:00-18:00
+שאלות אסורות בגיוס: גיל, מצב משפחתי, דת, הריון`,
+  'complaints-desk-he': (biz) => `שם העסק: ${biz}
+זמן מענה לתלונה: עד 24 שעות בימי עסקים
+מדיניות החזר: (מה מאושר בצ'אט — בדרך כלל להעביר למנהל)
+איש קשר להסלמה: (שם מנהל, טלפון)
+נושאים נפוצים: (משלוח, מוצר פגום, שירות, חיוב)
+מה אסור להבטיח בצ'אט: החזר כספי, פיצוי, הנחה — רק מנהל`,
+  'legal-receptionist-he': (biz) => `שם המשרד: ${biz}
+תחומי עיסוק: (משפטי / חשבונאי / ייעוץ עסקי)
+עורכי דין / יועצים: (שמות ותחומים)
+דמי ייעוץ ראשוני: ₪___ (אם רלוונטי)
+קישור לקביעת פגישה: https://cal.com/...
+כתובת: (רחוב, עיר)
+שעות: א-ה 09:00-18:00, ו 09:00-12:00
+קו חירום: 050-0000000 (דחוף בלבד)
+הערה: אין ייעוץ משפטי/חשבונאי בצ'אט — רק קבלת פניות ותיאום`,
 };
 
 export function getTemplateSuggestions(templateId) {
@@ -1578,7 +1702,21 @@ RULES:
 - Keep replies concise: aim for under 200 words unless more is genuinely needed`.trim();
 }
 
-// --- Mock runtime (no LLM key needed) ------------------------------------
+function polishDemoReply(reply, worker, { isFirst = false } = {}) {
+  let clean = String(reply || '')
+    .replace(/^\([^)]+\)\s*\n+/i, '')
+    .replace(/\n\n\(This is a demo reply[^\)]*\)\.?/gi, '')
+    .replace(/\n\n\(Contact the platform admin[^\)]*\)\.?/gi, '')
+    .replace(/\n\n\(Demo mode[^\)]*\)\.?/gi, '')
+    .trim();
+  if (!isFirst) return clean || reply;
+  const name = String(worker.name || '').trim();
+  const parts = name.split(' — ');
+  const biz = parts.length > 1 ? parts[parts.length - 1].trim() : name || 'העסק';
+  const role = parts.length > 1 ? parts.slice(0, -1).join(' — ').trim() : 'העובד/ת שלכם';
+  const header = `שלום! אני ${role} של ${biz}. זו תשובה לדוגמה — עדיין לא מחובר/ה לוואטסאפ.\n\n`;
+  return header + (clean || reply);
+}
 
 function mockReply(worker, history, userMessage) {
   const persona = worker.persona || '';
@@ -1863,6 +2001,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   const history = testMode
     ? []
     : db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId);
+  const isFirstDemoReply = demoMode && !history.some((m) => m.role === 'assistant');
   const memories = getCustomerMemories(tenantId, workerId, customerId);
   const convSummaries = customerId ? getConversationSummaries(tenantId, workerId, customerId) : [];
 
@@ -2001,6 +2140,10 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     runtime = 'mock_agent';
   } else {
     reply = mockReply(worker, chatHistory, userMessage);
+  }
+
+  if (demoMode && reply) {
+    reply = polishDemoReply(reply, worker, { isFirst: isFirstDemoReply });
   }
 
   if (!testMode && customerId) {

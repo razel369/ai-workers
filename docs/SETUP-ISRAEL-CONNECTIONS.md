@@ -6,9 +6,20 @@
 
 ---
 
-## 1. תשלומים (בלי עוסק מורשה / חברה)
+## 1. תשלומים
 
-### מה עובד לפרטי בישראל
+### Paddle (כרטיס אשראי — מומלץ) — ראה `docs/PADDLE.md`
+
+| משתנה | הערה |
+|--------|------|
+| `PADDLE_CLIENT_TOKEN` | מ-Paddle Dashboard |
+| `PADDLE_PRICE_ID` | מחיר מנוי חודשי |
+| `PADDLE_WEBHOOK_SECRET` | מ-Notifications |
+| `PADDLE_ENVIRONMENT` | `sandbox` עד שמוכנים |
+
+Webhook: `https://paid-agent-demo-production.up.railway.app/api/webhooks/paddle`
+
+### Bit / PayPal (גיבוי ידני — כבר מוגדר)
 
 | ערוץ | רישום נדרש | איך זה עובד אצלנו |
 |------|------------|-------------------|

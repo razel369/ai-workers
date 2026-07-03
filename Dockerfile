@@ -23,6 +23,7 @@ COPY docs/legal ./docs/legal
 COPY url-security.js ./
 COPY integrations/ ./integrations/
 COPY payment-webhooks.js ./
+COPY paddle-billing.js ./
 COPY embed-widget.js ./
 COPY whatsapp-webhook.js ./
 COPY whatsapp-router.js ./

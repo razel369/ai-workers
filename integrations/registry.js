@@ -16,8 +16,8 @@ export const INTEGRATION_TYPES = {
   webhook: {
     id: 'webhook',
     category: 'webhook',
-    labelHe: 'Webhook יוצא',
-    descriptionHe: 'שליחת אירועים (לידים, הסלמות, הזמנות) לכתובת URL של העסק — Zapier, Make, n8n וכו׳',
+    labelHe: 'שליחה ל-Zapier / Make / Monday',
+    descriptionHe: 'כל ליד, תלונה או אירוע יישלח אוטומטית למערכת שאתם בוחרים. לחיצה אחת — מקבלים קישור להדבקה.',
     scaffold: false,
     fields: [
       { key: 'url', labelHe: 'כתובת Webhook', type: 'url', required: true, placeholder: 'https://hooks.zapier.com/...' },
@@ -43,8 +43,8 @@ export const INTEGRATION_TYPES = {
   google_calendar: {
     id: 'google_calendar',
     category: 'calendar',
-    labelHe: 'Google Calendar / Cal.com',
-    descriptionHe: 'בדיקת זמינות וקביעת תורים — קישור Cal.com או מפתח API',
+    labelHe: 'יומן תורים',
+    descriptionHe: 'העובד יציע שעות פנויות וישלח קישור לקביעת תור — הדביקו קישור Cal.com או Google Calendar',
     scaffold: 'partial',
     fields: [
       { key: 'mode', labelHe: 'מצב', type: 'select', required: false, options: [
@@ -61,8 +61,8 @@ export const INTEGRATION_TYPES = {
   whatsapp: {
     id: 'whatsapp',
     category: 'messaging',
-    labelHe: 'WhatsApp Business',
-    descriptionHe: 'שליחת הודעות WhatsApp דרך Meta Cloud API או Twilio',
+    labelHe: 'התראות וואטסאפ אליכם',
+    descriptionHe: 'כשלקוח כותב לעובד — תקבלו הודעה למספר הוואטסאפ שלכם (לא חיבור וואטסאפ עסקי מלא)',
     scaffold: 'partial',
     fields: [
       { key: 'provider', labelHe: 'ספק', type: 'select', required: true, options: [

@@ -71,10 +71,11 @@
 
 ## Phase 0 — Still missing for real launch
 
-- [ ] **Payment channel** — set `BIT_PHONE` or `PAYPAL_ME` in Railway (health shows `channels: []`)
+- [x] **Payment channel** — Bit `972546406061` on Railway
+- [ ] **PayPal.me** — waiting for username from operator
 - [ ] **Custom domain** (optional) — e.g. `ai-workers.co.il` → Railway
 - [ ] **WhatsApp** — Meta/Twilio env + webhook at `/api/webhooks/whatsapp`
-- [ ] **Legal pages live** — privacy + terms linked from landing (files exist in `docs/legal/`)
+- [x] **Legal pages live** — `/privacy` + `/terms` linked from landing + marketplace footer
 - [ ] **LLM budget** — free OpenRouter tier is ~50 req/day; upgrade before marketing push
 - [ ] **Backup** — Railway volume snapshot or export plan for `/app/data`
 

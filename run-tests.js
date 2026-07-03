@@ -13,43 +13,69 @@ runDockerContextSmoke();
 await runLegacyMigrationSmoke();
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-test-'));
-const port = await getFreePort();
-const baseUrl = `http://localhost:${port}`;
-const env = {
-  ...process.env,
-  PORT: String(port),
-  PUBLIC_BASE_URL: baseUrl,
-  ADMIN_TOKEN,
-  DB_PATH: path.join(tmpRoot, 'earnings.db'),
-  TENANTS_DIR: path.join(tmpRoot, 'tenants'),
-  TRUST_PROXY_HEADERS: '',
-};
-
-const server = spawn(process.execPath, ['--experimental-sqlite', '--no-warnings', 'server.js'], {
-  env,
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-
-server.stdout.on('data', (buf) => process.stdout.write(`[server] ${buf}`));
-server.stderr.on('data', (buf) => process.stderr.write(`[server] ${buf}`));
-
+let port = await getFreePort();
+let baseUrl = `http://localhost:${port}`;
+let env = buildEnv(tmpRoot, port, baseUrl);
+let server = null;
 let serverExited = false;
-server.on('exit', (code) => {
-  serverExited = true;
-  if (code !== 0 && code !== null) console.error(`Server exited with code ${code}`);
-});
 
-try {
-  await waitForHealth(baseUrl);
-  await runSuite('test.js');
-  await runSuite('worker-tests.js');
-  await runSuite('browser-flow-test.js');
-  console.log('\nALL SUITES PASSED');
-} finally {
-  if (!serverExited) {
+function buildEnv(root, listenPort, publicUrl) {
+  return {
+    ...process.env,
+    PORT: String(listenPort),
+    PUBLIC_BASE_URL: publicUrl,
+    ADMIN_TOKEN,
+    DB_PATH: path.join(root, 'earnings.db'),
+    TENANTS_DIR: path.join(root, 'tenants'),
+    TRUST_PROXY_HEADERS: '',
+    PADDLE_CLIENT_TOKEN: process.env.PADDLE_CLIENT_TOKEN ?? 'test_client_token',
+    PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID ?? 'pri_test_monthly',
+    PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET ?? 'test-paddle-webhook-secret',
+    PADDLE_ENVIRONMENT: 'sandbox',
+  };
+}
+
+function startServer() {
+  serverExited = false;
+  server = spawn(process.execPath, ['--experimental-sqlite', '--no-warnings', 'server.js'], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  server.stdout.on('data', (buf) => process.stdout.write(`[server] ${buf}`));
+  server.stderr.on('data', (buf) => process.stderr.write(`[server] ${buf}`));
+  server.on('exit', (code) => {
+    serverExited = true;
+    if (code !== 0 && code !== null) console.error(`Server exited with code ${code}`);
+  });
+}
+
+async function stopServer() {
+  if (server && !serverExited) {
     server.kill('SIGINT');
     await new Promise((resolve) => server.once('exit', resolve));
+    serverExited = true;
   }
+}
+
+startServer();
+
+try {
+    await waitForHealth(baseUrl);
+    await runSuite('test.js');
+    await runSuite('worker-tests.js');
+    await stopServer();
+    const browserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-browser-'));
+    port = await getFreePort();
+    baseUrl = `http://localhost:${port}`;
+    env = buildEnv(browserRoot, port, baseUrl);
+    startServer();
+    await waitForHealth(baseUrl);
+    await runSuite('browser-flow-test.js');
+    await stopServer();
+    fs.rmSync(browserRoot, { recursive: true, force: true });
+  console.log('\nALL SUITES PASSED');
+} finally {
+  await stopServer();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }
 

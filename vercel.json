@@ -20,6 +20,7 @@
           "whatsapp-router.js",
           "whatsapp-webhook.js",
           "payment-webhooks.js",
+          "paddle-billing.js",
           "embed-widget.js",
           "integrations/**"
         ]
