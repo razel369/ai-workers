@@ -78,6 +78,7 @@ const AGENT_OWNER_CONTACT = process.env.AGENT_OWNER_CONTACT ?? '';
 const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 120);
 const SIGNUP_LIMIT_PER_HOUR = Number(process.env.SIGNUP_LIMIT_PER_HOUR ?? 12);
 const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, 'data', 'earnings.db');
+const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, 'data');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 const CORS_ALLOW_ORIGIN = process.env.CORS_ALLOW_ORIGIN ?? '';
 const ALLOW_PRIVATE_NETWORK_URLS = process.env.ALLOW_PRIVATE_NETWORK_URLS === '1';
@@ -597,11 +598,26 @@ function getPublicMarketplaceStats() {
   let tenantCount = 0;
   let workerCount = 0;
   let messageCount = 0;
+  let leadCount = 0;
+  let escCount = 0;
   try {
-    const db = getMainDb();
-    tenantCount = db.prepare(`SELECT COUNT(*) AS c FROM tenants`).get()?.c ?? 0;
-    workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
-    messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+    const dataDir = path.join(DATA_DIR, 'tenants');
+    if (fs.existsSync(dataDir)) {
+      const dirs = fs.readdirSync(dataDir, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name.startsWith('ten_'));
+      tenantCount = dirs.length;
+      for (const d of dirs) {
+        try {
+          const dbPath = path.join(dataDir, d.name, 'workers.db');
+          if (!fs.existsSync(dbPath)) continue;
+          const tdb = new DatabaseSync(dbPath, { readOnly: true });
+          workerCount += tdb.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+          messageCount += tdb.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+          leadCount += tdb.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+          escCount += tdb.prepare(`SELECT COUNT(*) AS c FROM escalations`).get()?.c ?? 0;
+          tdb.close();
+        } catch {}
+      }
+    }
   } catch {}
   return {
     templateCount: workers.TEMPLATES.length,
@@ -611,6 +627,8 @@ function getPublicMarketplaceStats() {
     tenantCount,
     workerCount,
     messageCount,
+    leadCount,
+    escCount,
   };
 }
 
