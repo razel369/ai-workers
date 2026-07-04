@@ -746,7 +746,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   <meta name="description" content="עובד דיגיטלי שעונה ללקוחות 24/7, שומר לידים ומעביר דחופים — בלי משכורת, בלי חופשות. ₪199 לחודש, פחות מ-₪7 ליום." />
   <meta property="og:title" content="Nightdesk — עובדי AI שלא ישנים" />
   <meta property="og:description" content="עובד דיגיטלי 24/7 לעסק שלך. ₪199 לחודש, פחות מ-₪7 ליום." />
-  <meta property="og:image" content="/brand/logo-nightdesk-horizontal.svg" />
+  <meta property="og:image" content="/brand/og-nightdesk.png" />
   <meta name="theme-color" content="#080b10" />
   <link rel="icon" type="image/svg+xml" href="/brand/logo-nightdesk-icon.svg" />
   <link rel="apple-touch-icon" href="/brand/logo-nightdesk-icon.svg" />
@@ -888,6 +888,28 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     .footer-brand img { display: block; }
     .footer-brand-name { font-family: 'Frank Ruhl Libre', 'Heebo', serif; font-size: 22px; font-weight: 900; color: var(--text); line-height: 1; }
     .footer-brand-tag { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.roi-eyebrow { text-align: center; color: var(--accent); font-size: 12px; letter-spacing: .15em; font-weight: 600; margin-bottom: 8px; }
+.roi-card { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; max-width: 980px; margin: 28px auto 0; background: linear-gradient(135deg, var(--surface), var(--surface2)); border: 1px solid var(--border); border-radius: 22px; padding: 32px 28px; box-shadow: 0 30px 60px -30px rgba(0,0,0,.5); }
+.roi-controls { display: flex; flex-direction: column; gap: 18px; }
+.roi-row label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; font-size: 13.5px; color: var(--text); font-weight: 500; }
+.roi-val { font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-weight: 600; font-size: 14px; }
+.roi-row input[type="range"] { width: 100%; -webkit-appearance: none; appearance: none; height: 6px; background: var(--border); border-radius: 3px; outline: none; }
+.roi-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #b88a5a); cursor: pointer; box-shadow: 0 0 0 3px rgba(212,165,116,.18); }
+.roi-row input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #b88a5a); cursor: pointer; border: none; }
+.roi-result { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 8px 4px; }
+.roi-loss-amount { font-family: 'Frank Ruhl Libre', serif; font-size: 56px; font-weight: 900; color: #ff7766; line-height: 1; }
+.roi-loss-label { font-size: 13.5px; color: var(--muted); margin-top: 8px; }
+.roi-vs { display: flex; align-items: center; gap: 16px; margin: 24px 0; padding: 14px 18px; background: rgba(212,165,116,.08); border: 1px solid rgba(212,165,116,.2); border-radius: 14px; width: 100%; }
+.roi-cost { display: flex; flex-direction: column; }
+.roi-cost-n { font-size: 24px; font-weight: 800; color: var(--text); }
+.roi-cost-l { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.roi-arrow { color: var(--accent); font-size: 22px; }
+.roi-saved { display: flex; flex-direction: column; align-items: flex-start; }
+.roi-saved-n { font-size: 26px; font-weight: 800; color: #6ad28b; font-family: 'IBM Plex Mono', monospace; }
+.roi-saved-l { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.roi-cta { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--accent), #b88a5a); color: #1a0f08; padding: 14px 22px; border-radius: 12px; font-weight: 700; text-decoration: none; box-shadow: 0 12px 28px -10px rgba(212,165,116,.5); transition: transform .2s ease; }
+.roi-cta:hover { transform: translateY(-2px); }
+@media (max-width: 720px) { .roi-card { grid-template-columns: 1fr; padding: 24px 20px; } .roi-loss-amount { font-size: 44px; } }
 
     /* === Utilities === */
     code { background: var(--surface2); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
@@ -1152,6 +1174,42 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       </div>
     </section>
 
+    <section class="anim anim-4" id="roi-calculator">
+      <div class="roi-eyebrow">// מחשבון ROI</div>
+      <h2 class="section-title">כמה אתה מפסיד בלי עובד AI?</h2>
+      <p class="section-sub">הזז את הסליידרים ותראה כמה שווה הזמן שלך</p>
+      <div class="roi-card">
+        <div class="roi-controls">
+          <div class="roi-row">
+            <label>פניות ביום <span class="roi-val" id="roi-leads-val">12</span></label>
+            <input type="range" min="2" max="80" value="12" id="roi-leads" />
+          </div>
+          <div class="roi-row">
+            <label>אחוז שנענים אחרי 3 שעות <span class="roi-val" id="roi-response-val">40%</span></label>
+            <input type="range" min="10" max="90" value="40" id="roi-response" />
+          </div>
+          <div class="roi-row">
+            <label>לקוח שמחכה יותר מדי — הולך למתחרה <span class="roi-val" id="roi-loss-val">25%</span></label>
+            <input type="range" min="10" max="70" value="25" id="roi-loss" />
+          </div>
+          <div class="roi-row">
+            <label>ערך ממוצע ללקוח <span class="roi-val" id="roi-value-val">₪450</span></label>
+            <input type="range" min="100" max="2000" step="50" value="450" id="roi-value" />
+          </div>
+        </div>
+        <div class="roi-result">
+          <div class="roi-loss-amount" id="roi-monthly">₪—</div>
+          <div class="roi-loss-label">מפסיד בחודש מלקוחות שבורחים</div>
+          <div class="roi-vs">
+            <div class="roi-cost"><span class="roi-cost-n">₪199</span><span class="roi-cost-l">עלות עובד AI</span></div>
+            <div class="roi-arrow">→</div>
+            <div class="roi-saved" id="roi-saved"><span class="roi-saved-n">—</span><span class="roi-saved-l">החזר על כל שקל</span></div>
+          </div>
+          <a href="/marketplace#/magic" class="cta roi-cta">להפסיק לאבד לקוחות ←</a>
+        </div>
+      </div>
+    </section>
+
     <section class="anim anim-4">
       <h2 class="section-title">שאלות נפוצות</h2>
       <p class="section-sub">כל מה שרצית לדעת על עובדי AI</p>
@@ -1272,6 +1330,45 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         feed.insertBefore(el, feed.firstChild);
         while (feed.children.length > 4) feed.lastChild.remove();
       }, 4600);
+    })();
+
+    // ---- ROI Calculator ----
+    (function() {
+      const fmt = (n) => '₪' + Math.round(n).toLocaleString('he-IL');
+      const els = {
+        leads: document.getElementById('roi-leads'),
+        response: document.getElementById('roi-response'),
+        loss: document.getElementById('roi-loss'),
+        value: document.getElementById('roi-value'),
+        leadsV: document.getElementById('roi-leads-val'),
+        responseV: document.getElementById('roi-response-val'),
+        lossV: document.getElementById('roi-loss-val'),
+        valueV: document.getElementById('roi-value-val'),
+        monthly: document.getElementById('roi-monthly'),
+        saved: document.getElementById('roi-saved').querySelector('.roi-saved-n'),
+      };
+      if (!els.leads) return;
+      function compute() {
+        const leads = +els.leads.value;
+        const slowResp = +els.response.value; // % that get answered late
+        const lossRate = +els.loss.value;     // % of late ones that leave
+        const avgValue = +els.value.value;
+        els.leadsV.textContent = leads;
+        els.responseV.textContent = slowResp + '%';
+        els.lossV.textContent = lossRate + '%';
+        els.valueV.textContent = fmt(avgValue);
+        // leads/day that get answered late
+        const latePerDay = leads * (slowResp / 100);
+        const lostPerDay = latePerDay * (lossRate / 100);
+        const monthlyLoss = lostPerDay * avgValue * 30;
+        els.monthly.textContent = fmt(monthlyLoss);
+        const roi = monthlyLoss > 0 ? (monthlyLoss / 199).toFixed(1) : '∞';
+        els.saved.textContent = roi + '×';
+      }
+      ['leads','response','loss','value'].forEach((k) => {
+        els[k].addEventListener('input', compute);
+      });
+      compute();
     })();
   </script>
   ${vercelAnalyticsScripts()}

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Nightdesk">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1219"/>
+      <stop offset="50%" stop-color="#080b10"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.3" r="0.6">
+      <stop offset="0%" stop-color="#d4a574" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#d4a574" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e8c79a"/>
+      <stop offset="55%" stop-color="#d4a574"/>
+      <stop offset="100%" stop-color="#b88a5a"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f141c"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <linearGradient id="text" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d4a574"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#2a3340" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <rect x="0" y="0" width="1200" height="3" fill="url(#gold)"/>
+
+  <g transform="translate(80, 165)">
+    <rect x="0" y="0" width="300" height="300" rx="68" ry="68" fill="url(#bubble)" stroke="#2a3340" stroke-width="2"/>
+
+    <g transform="translate(60, 70)">
+      <path d="M 0 30 Q 0 0 30 0 H 150 Q 180 0 180 30 V 130 Q 180 160 150 160 H 80 L 50 195 L 58 160 H 30 Q 0 160 0 130 Z"
+            fill="url(#bubble)" stroke="#2a3340" stroke-width="2.5" stroke-linejoin="round"/>
+      <circle cx="90" cy="78" r="38" fill="url(#gold)"/>
+      <circle cx="105" cy="68" r="32" fill="#0a0e14"/>
+      <circle cx="30" cy="50" r="2.5" fill="#d4a574" opacity="0.9"/>
+      <circle cx="155" cy="60" r="2" fill="#d4a574" opacity="0.7"/>
+      <circle cx="148" cy="120" r="1.6" fill="#d4a574" opacity="0.5"/>
+    </g>
+  </g>
+
+  <g transform="translate(440, 215)">
+    <text x="0" y="0" font-family="'IBM Plex Mono', monospace" font-size="18" fill="#d4a574" font-weight="600" letter-spacing="2">
+      NIGHTDESK
+    </text>
+
+    <text x="0" y="60" font-family="'Heebo', sans-serif" font-size="64" font-weight="800" fill="url(#text)">????? AI</text>
+    <text x="0" y="130" font-family="'Frank Ruhl Libre', 'Heebo', serif" font-size="58" font-weight="900" fill="#e6e6e6">??? ?????</text>
+
+    <text x="0" y="180" font-family="'Heebo', sans-serif" font-size="22" fill="#9aa0ab">???? ??????? 24/7 ??????, ????? ?????, ????? ??????</text>
+
+    <g transform="translate(0, 220)">
+      <rect x="0" y="0" width="280" height="60" rx="30" fill="#d4a574"/>
+      <text x="140" y="40" font-family="'Heebo', sans-serif" font-size="22" font-weight="800" fill="#1a0f08" text-anchor="middle">?199 ????? ? ???? ?-?7 ????</text>
+    </g>
+  </g>
+
+  <text x="80" y="585" font-family="'IBM Plex Mono', monospace" font-size="16" fill="#6c7280">nightdesk.co</text>
+</svg>
