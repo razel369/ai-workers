@@ -594,11 +594,23 @@ function gatherWorkerStats() {
 
 function getPublicMarketplaceStats() {
   const prices = workers.TEMPLATES.map((t) => t.buyPriceIls).filter((n) => Number.isFinite(n));
+  let tenantCount = 0;
+  let workerCount = 0;
+  let messageCount = 0;
+  try {
+    const db = getMainDb();
+    tenantCount = db.prepare(`SELECT COUNT(*) AS c FROM tenants`).get()?.c ?? 0;
+    workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+    messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+  } catch {}
   return {
     templateCount: workers.TEMPLATES.length,
     categoryCount: new Set(workers.TEMPLATES.map((t) => t.category).filter(Boolean)).size,
     startingPriceIls: prices.length ? Math.min(...prices) : 0,
     paymentChannelCount: buildAcquireChannels().length,
+    tenantCount,
+    workerCount,
+    messageCount,
   };
 }
 
@@ -706,6 +718,7 @@ function buildAcquireChannels() {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
 function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
+  const stats = getPublicMarketplaceStats();
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
@@ -875,6 +888,10 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     .proof-strip { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; padding: 20px 0 8px; }
     .proof-item { font-size: 13px; color: var(--body); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; }
+    .proof-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; max-width: 760px; margin: 0 auto 28px; }
+    .proof-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 16px; text-align: center; }
+    .proof-stat-n { font-size: 32px; font-weight: 800; color: var(--text); line-height: 1.1; letter-spacing: -.02em; background: linear-gradient(135deg, var(--text), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .proof-stat-l { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-weight: 500; }
     .trust-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 24px 0 8px; }
     .trust-pill { font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; background: var(--surface); }
 
@@ -990,6 +1007,12 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     <section class="anim anim-3 section-order-case-studies" id="case-studies">
       <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
       <p class="section-sub">תיקי עובדים מעסקים ישראליים — תוצאות ראשונות</p>
+      <div class="proof-stats">
+        <div class="proof-stat"><div class="proof-stat-n">${stats.tenantCount}+</div><div class="proof-stat-l">עסקים פעילים</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.workerCount}</div><div class="proof-stat-l">עובדי AI פעילים</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${(stats.messageCount || 0).toLocaleString('he-IL')}</div><div class="proof-stat-l">שיחות עם לקוחות</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.templateCount}</div><div class="proof-stat-l">תבניות מוכנות</div></div>
+      </div>
       <div class="employee-files">
         <div class="employee-file">
           <div class="ef-tab">תיק עובד · קליניקה</div>
