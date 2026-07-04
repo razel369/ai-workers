@@ -147,6 +147,15 @@
     <symbol id="icon-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.6A4 4 0 0 0 6 13v1a4 4 0 0 0 4 4 2.5 2.5 0 0 1 2 1.2"/><path d="M4.5 2A2.5 2.5 0 0 1 7 4.5v.6A4 4 0 0 1 8 13"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v.6A4 4 0 0 1 18 13v1a4 4 0 0 1-4 4 2.5 2.5 0 0 0-2 1.2"/><path d="M19.5 2A2.5 2.5 0 0 0 17 4.5v.6A4 4 0 0 0 16 13"/>
     </symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+    </symbol>
+    <symbol id="icon-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="15" r="4"/><line x1="10.85" y1="12.15" x2="19" y2="4"/><line x1="18" y1="5" x2="20" y2="7"/><line x1="15" y1="8" x2="17" y2="10"/>
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </symbol>
     <symbol id="icon-loading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
       <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
@@ -240,6 +249,7 @@ const APP = (() => {
     if (body.error === 'agent_timeout' || body.error === 'timeout') return 'העובד לא הספיק לענות — נסו שוב או שאלה קצרה יותר';
     if (body.error === 'llm_unavailable' || body.error === 'no_api_key') return 'שירות ה-AI עומד בעומס — נסו שוב בעוד רגע';
     if (body.error === 'forbidden' || body.error === 'not_authorized') return 'אין לכם הרשאה לפעולה הזו';
+    if (body.error === 'quota_exceeded') return 'נגמר מכסת השיחות החודשית. שדרגו תוכנית או חכו לחידוש.';
     return fallback;
   }
 
@@ -795,11 +805,17 @@ const APP = (() => {
         <div class="insight-card"><div class="n">${counts.agentActions}</div><div class="l">פעולות agent</div></div>
       </div>
       <div class="card" style="margin-bottom:16px">
-        <h3 style="margin-bottom:12px">${icon('users', 16)} לידים אחרונים</h3>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <h3 style="margin:0;flex:1">${icon('users', 16)} לידים אחרונים</h3>
+          <a class="btn btn-outline btn-sm" href="/api/workers/${encodeURIComponent(workerId)}/leads.csv" download>${icon('download', 14)} ייצוא CSV</a>
+        </div>
         <table class="insights-table"><thead><tr><th>שם</th><th>טלפון</th><th>ציון</th><th>תאריך</th></tr></thead><tbody>${leadRows}</tbody></table>
       </div>
       <div class="card" style="margin-bottom:16px">
-        <h3 style="margin-bottom:12px">${icon('alert', 16)} Escalations</h3>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <h3 style="margin:0;flex:1">${icon('alert', 16)} Escalations</h3>
+          <a class="btn btn-outline btn-sm" href="/api/workers/${encodeURIComponent(workerId)}/escalations.csv" download>${icon('download', 14)} ייצוא CSV</a>
+        </div>
         <table class="insights-table"><thead><tr><th>סיבה</th><th>סטטוס</th><th>תאריך</th></tr></thead><tbody>${escRows}</tbody></table>
       </div>
       <div class="card">

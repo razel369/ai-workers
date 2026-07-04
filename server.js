@@ -1958,6 +1958,20 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { escalations });
   }
 
+  const escCsvMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/escalations\.csv$/);
+  if (req.method === 'GET' && escCsvMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const escCsv = (v) => {
+      const s = String(v ?? '');
+      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const escalations = workers.getEscalations(tenantId, escCsvMatch[1]);
+    const header = 'id,urgency,reason,status,created_at\n';
+    const body = escalations.map((r) => [r.id, r.urgency, r.reason, r.status, r.created_at].map(escCsv).join(',')).join('\n');
+    return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
+  }
+
   const insightsMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/insights$/);
   if (req.method === 'GET' && insightsMatch) {
     const tenantId = requireAuth(req);
