@@ -734,5 +734,36 @@ let integrationId = null;
   const r2 = await req(`/api/workers/${mediaWorkerId}/weekly-digest`, { headers: auth() });
   expect('  digest lastSentAt is set', !!r2.body.lastSentAt);
 }
+{
+  // Sanitize customer-facing reply — meta-commentary from weak LLM must be replaced
+  // with a polite Hebrew fallback so the customer never sees the model's internal
+  // monologue ("User Safety: safe", English reasoning traces, etc.).
+  const sanitize = (text, worker) => {
+    const META = [
+      /^user safety[:\s]/i, /^safety[:\s]/i,
+      /^okay[, ]+the user is/i, /^sure[, ]+here'?s/i,
+      /^based on the (conversation|message|context)/i,
+      /^i'?d be happy to help/i, /^as an? (ai|assistant|language model)/i,
+    ];
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+    if (trimmed.length < 220 && META.some((re) => re.test(trimmed))) return true;
+    const hebrew = (trimmed.match(/[\u0590-\u05FF]/g) || []).length;
+    const total = trimmed.replace(/\s/g, '').length;
+    return total > 40 && hebrew / total < 0.15;
+  };
+  const fallback = (worker) => {
+    const name = String(worker?.name || '').trim();
+    const biz = name.split(' — ').pop()?.trim() || 'העסק';
+    return `תודה שפנית אלינו ל${biz}. קיבלנו את ההודעה שלך ונחזור אליך בהקדם.`;
+  };
+  const worker = { name: 'מזכיר/ה רפואי/ת — מרפאת שיניים' };
+  expect('sanitize flags "User Safety: safe"', sanitize('User Safety: safe', worker) === true);
+  expect('sanitize flags "Okay, the user is..."', sanitize('Okay, the user is saying something.', worker) === true);
+  expect('sanitize flags English-only reply', sanitize('Hello, how can I help you today with your inquiry about our services?', worker) === true);
+  expect('sanitize keeps good Hebrew reply', sanitize('שלום! איך אוכל לעזור לך היום?', worker) === false);
+  expect('sanitize keeps Hebrew with safety note', sanitize('חשוב! פנו לרופא באופן מיידי.', worker) === false);
+  expect('fallback contains biz name', fallback(worker).includes('מרפאת שיניים'));
+}
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);

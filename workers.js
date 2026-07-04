@@ -2077,6 +2077,36 @@ function polishDemoReply(reply, worker, { isFirst = false, runtime = 'mock' } = 
   return header + (clean || reply);
 }
 
+// Detect LLM replies that aren't actually meant for the customer — meta-commentary,
+// safety-classifier leaks, reasoning traces that got returned as text, etc. When we
+// see these, replace with a polite fallback so the customer doesn't see the model's
+// internal monologue.
+const META_REPLY_PATTERNS = [
+  /^user safety[:\s]/i,
+  /^safety[:\s]/i,
+  /^okay[, ]+the user is/i,
+  /^sure[, ]+here'?s/i,
+  /^based on the (conversation|message|context)/i,
+  /^i'?d be happy to help/i,
+  /^as an? (ai|assistant|language model)/i,
+];
+function isMetaReply(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  if (trimmed.length < 220 && META_REPLY_PATTERNS.some((re) => re.test(trimmed))) return true;
+  // Pure-English reply when worker is Hebrew-default (most templates are).
+  const hebrewChars = (trimmed.match(/[\u0590-\u05FF]/g) || []).length;
+  const totalChars = trimmed.replace(/\s/g, '').length;
+  if (totalChars > 40 && hebrewChars / totalChars < 0.15) return true;
+  return false;
+}
+function sanitizeCustomerFacingReply(text, worker) {
+  if (!isMetaReply(text)) return text;
+  const name = String(worker?.name || '').trim();
+  const biz = name.split(' — ').pop()?.trim() || 'העסק';
+  return `תודה שפנית אלינו ל${biz}. קיבלנו את ההודעה שלך ונחזור אליך בהקדם. אם זה דחוף — השאר/י שם וטלפון וניצור איתך קשר בהקדם.`;
+}
+
 function mockReply(worker, history, userMessage) {
   const persona = worker.persona || '';
   const tasks = worker.tasks ?? [];
@@ -2472,6 +2502,11 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
 
       if (!llmRes.toolCalls || llmRes.toolCalls.length === 0) {
         agentSteps.push({ step: agentSteps.length + 1, phase: 'respond', thought: 'Final reply ready' });
+        // Some weak models return meta-commentary instead of a real reply (e.g.
+        // "User Safety: safe", "Okay, the user is saying..."). When that happens
+        // we want to give the customer something useful instead of showing them
+        // the model's internal monologue.
+        finalReply = sanitizeCustomerFacingReply(llmRes.text, worker);
         break;
       }
 
@@ -2509,7 +2544,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       runtime = 'mock_fallback';
     } else {
       runtime = worker.llm.provider;
-      reply = llmRes.text;
+      reply = sanitizeCustomerFacingReply(llmRes.text, worker);
     }
   } else if (agentMode && enabledToolNames.length > 0) {
     const mockRun = await runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames, allToolDefs, agentSteps });
