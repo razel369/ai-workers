@@ -2024,6 +2024,15 @@ function buildSystemPrompt(worker, memories = [], extraToolDefs = [], convSummar
       }).filter(Boolean).join('\n') +
       '\n\nAGENT LOOP: You may call multiple tools across up to 5 steps. After each tool result, decide if another action is needed before your final reply.'
     : '\n\nMODE: Chat-only — respond conversationally without invoking tools.';
+
+  const toolReminder = agentMode && allToolNames.length
+    ? `\n\nCRITICAL TOOL USAGE RULES:
+- When the user describes urgent symptoms (chest pain, breathing difficulty, severe bleeding, stroke signs, suicidal ideation) — call escalate_to_human immediately AND respond with a clear escalation in Hebrew including "פנו למיון".
+- When the user is hostile, threatening lawsuit, or demanding refund beyond stated policy — call escalate_to_human and apologize briefly.
+- When the user describes their business/role/budget/needs as a new lead — call save_lead with what you gathered so far (use score 1-10 where 7+ is hot).
+- When the user asks for a meeting / appointment / callback — call the relevant booking/scheduling tool AND collect name + phone.
+- Tools you MUST consider for the persona above: ${allToolNames.join(', ')}.`
+    : '';
   const memStr = memories.length
     ? '\n\nCUSTOMER FACTS (remembered about this customer):\n' + memories.map((m) => `- ${m.key}: ${m.value}`).join('\n')
     : '';
@@ -2040,7 +2049,7 @@ YOUR TASKS (follow these in order):
 ${tasks || '(no specific tasks set; respond helpfully based on your persona)'}
 
 KNOWLEDGE BASE (treat as ground truth):
-${worker.knowledge || '(none provided)'}${memStr}${profStr}${sumStr}${toolDesc}${tplHint}
+${worker.knowledge || '(none provided)'}${memStr}${profStr}${sumStr}${toolDesc}${tplHint}${toolReminder}
 
 RULES:
 - Stay in character at all times
