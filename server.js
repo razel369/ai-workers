@@ -2015,6 +2015,19 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { workers: rows });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/admin/summary') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { summary: workers.adminSummary() });
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/admin/worker-health/')) {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const workerId = decodeURIComponent(url.pathname.slice('/api/admin/worker-health/'.length));
+    const row = workers.adminWorkerHealth(workerId);
+    if (!row) return send(res, 404, { error: 'not_found' });
+    return send(res, 200, { health: row });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/tenant-stats') {
     if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
     return send(res, 200, { tenants: workers.adminTenantUsageStats() });

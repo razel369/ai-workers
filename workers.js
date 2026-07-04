@@ -1696,6 +1696,55 @@ export function adminListAllWorkers() {
   return all;
 }
 
+export function adminWorkerHealth(workerId) {
+  if (!workerId) return null;
+  for (const tid of fs.readdirSync(TENANTS_DIR).filter(() => fs.existsSync(TENANTS_DIR))) {
+    const dir = path.join(TENANTS_DIR, tid);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    const dbPath = path.join(dir, 'workers.db');
+    if (!fs.existsSync(dbPath)) continue;
+    const db = new DatabaseSync(dbPath);
+    const row = db.prepare(`SELECT id, name, tenant_id AS tenantId, status, paid_until AS paidUntil FROM workers WHERE id = ?`).get(workerId);
+    if (!row) { db.close(); continue; }
+    const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+    const last24 = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
+    const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+    const openEsc = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
+    const pendingOut = db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE status='pending'`).get()?.c ?? 0;
+    const lastErr = db.prepare(`SELECT COUNT(*) AS c FROM agent_actions WHERE tool_name='error' AND created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
+    const lastMsgAt = db.prepare(`SELECT MAX(created_at) AS m FROM messages`).get()?.m ?? null;
+    db.close();
+    return { ...row, messageCount, messagesLast24h: last24, leadCount, openEscalations: openEsc, pendingOutbox: pendingOut, agentErrorsLast24h: lastErr, lastMessageAt: lastMsgAt };
+  }
+  return null;
+}
+
+export function adminSummary() {
+  if (!fs.existsSync(TENANTS_DIR)) return emptyAdminSummary();
+  const tenants = fs.readdirSync(TENANTS_DIR).filter((t) => {
+    const dir = path.join(TENANTS_DIR, t);
+    try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+  });
+  let totalWorkers = 0, activeWorkers = 0, pendingWorkers = 0, totalMessages = 0, totalLeads = 0;
+  for (const tid of tenants) {
+    const dbPath = path.join(TENANTS_DIR, tid, 'workers.db');
+    if (!fs.existsSync(dbPath)) continue;
+    const db = new DatabaseSync(dbPath);
+    const wcount = db.prepare(`SELECT COUNT(*) AS c, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status='pending_payment' THEN 1 ELSE 0 END) AS pending FROM workers`).get() ?? {};
+    totalWorkers += Number(wcount.c ?? 0);
+    activeWorkers += Number(wcount.active ?? 0);
+    pendingWorkers += Number(wcount.pending ?? 0);
+    totalMessages += Number(db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0);
+    totalLeads += Number(db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0);
+    db.close();
+  }
+  return { tenantCount: tenants.length, totalWorkers, activeWorkers, pendingWorkers, totalMessages, totalLeads };
+}
+
+function emptyAdminSummary() {
+  return { tenantCount: 0, totalWorkers: 0, activeWorkers: 0, pendingWorkers: 0, totalMessages: 0, totalLeads: 0 };
+}
+
 export function adminFindWorker(workerId) {
   if (!workerId) return null;
   for (const row of adminListAllWorkers()) {

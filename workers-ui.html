@@ -415,16 +415,43 @@ const APP = (() => {
       panelEl.innerHTML = fields.map((f) => {
         const inputType = f.type === 'url' ? 'url' : (f.type === 'tel' ? 'tel' : 'text');
         const dir = f.type === 'url' || f.type === 'tel' ? 'direction:ltr;text-align:left' : '';
-        return '<div class="fld"><label style="font-size:12px">' + escapeHtml(f.labelHe) + '</label><input class="connect-field" data-key="' + escapeHtml(f.key) + '" type="' + inputType + '" placeholder="' + escapeHtml(f.placeholder || '') + '" style="' + dir + '" /></div>';
-      }).join('') + '<button type="button" class="btn btn-sm btn-primary connect-save">' + icon('check', 12) + ' ' + escapeHtml(item.connectLabelHe || 'שמור') + '</button>';
+        const hint = f.helpHe ? '<div class="connect-hint" style="margin:0 0 8px 0">' + escapeHtml(f.helpHe) + '</div>' : '';
+        return hint + '<div class="fld"><label style="font-size:12px">' + escapeHtml(f.labelHe) + (f.required ? ' *' : '') + '</label><input class="connect-field" data-key="' + escapeHtml(f.key) + '" type="' + inputType + '" placeholder="' + escapeHtml(f.placeholder || '') + '" style="' + dir + '" /></div>';
+      }).join('') + '<div class="row" style="gap:8px;margin-top:10px"><button type="button" class="btn btn-sm btn-primary connect-save">' + icon('check', 12) + ' ' + escapeHtml(item.connectLabelHe || 'שמור וחבר') + '</button><button type="button" class="btn btn-sm btn-outline connect-cancel">' + icon('x', 12) + ' בטל</button></div>';
       return new Promise((resolve) => {
-        panelEl.querySelector('.connect-save').onclick = async () => {
+        const saveBtn = panelEl.querySelector('.connect-save');
+        const cancelBtn = panelEl.querySelector('.connect-cancel');
+        const inputs = panelEl.querySelectorAll('.connect-field');
+        const firstInput = inputs[0];
+        if (firstInput) setTimeout(() => firstInput.focus(), 50);
+        const submit = async () => {
           const config = {};
-          panelEl.querySelectorAll('.connect-field').forEach((el) => { if (el.value.trim()) config[el.dataset.key] = el.value.trim(); });
-          const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify(connectBody({ config })) });
-          if (r.ok) { toast('חובר בהצלחה', 'success'); if (onSuccess) onSuccess(r.body); resolve(r); }
-          else { toast(r.body.messageHe || r.body.error || 'שגיאה', 'error'); resolve(r); }
+          const missing = [];
+          inputs.forEach((el) => {
+            if (el.value.trim()) config[el.dataset.key] = el.value.trim();
+            else if (el.required) missing.push(el.dataset.key);
+          });
+          if (missing.length) {
+            toast('חסרים שדות: ' + missing.join(', '), 'error');
+            return;
+          }
+          saveBtn.disabled = true;
+          const originalLabel = saveBtn.innerHTML;
+          saveBtn.innerHTML = icon('loading', 12, 'icon-spin') + ' שומר...';
+          try {
+            const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify(connectBody({ config })) });
+            if (r.ok) { toast('חובר בהצלחה', 'success'); if (onSuccess) onSuccess(r.body); resolve(r); }
+            else { toast(r.body.messageHe || r.body.error || 'שגיאה', 'error'); resolve(r); saveBtn.disabled = false; saveBtn.innerHTML = originalLabel; }
+          } catch (e) {
+            toast('שגיאת רשת — נסו שוב', 'error');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalLabel;
+            resolve({ ok: false });
+          }
         };
+        saveBtn.onclick = submit;
+        inputs.forEach((el) => { el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }; });
+        if (cancelBtn) cancelBtn.onclick = () => { panelEl.innerHTML = ''; resolve({ ok: false, cancelled: true }); };
       });
     }
 
@@ -443,9 +470,18 @@ const APP = (() => {
 
     if (conn) {
       if (conn.config?.hookUrl) {
-        panel.innerHTML = '<p class="connect-hint">קישור Webhook שלך:</p><div class="hook-url-box">' + escapeHtml(conn.config.hookUrl) + '</div>';
+        panel.innerHTML = '<p class="connect-hint">קישור Webhook שלך:</p><div class="hook-url-box">' + escapeHtml(conn.config.hookUrl) + '</div><button type="button" class="btn btn-sm btn-outline" style="margin-top:6px" id="copy-hook-existing">' + icon('copy', 12) + ' העתק</button>';
+        const copyBtn = panel.querySelector('#copy-hook-existing');
+        if (copyBtn) copyBtn.onclick = async () => {
+          try { await navigator.clipboard.writeText(conn.config.hookUrl); toast('הועתק!', 'success'); }
+          catch { toast('העתיקו ידנית', 'info'); }
+        };
       } else if (conn.config?.bookingLink) {
-        panel.innerHTML = '<p class="connect-hint">קישור תורים: ' + escapeHtml(conn.config.bookingLink) + '</p>';
+        panel.innerHTML = '<p class="connect-hint">קישור תורים: <a href="' + escapeHtml(conn.config.bookingLink) + '" target="_blank" rel="noopener">' + escapeHtml(conn.config.bookingLink) + '</a></p>';
+      } else if (conn.config?.ownerNotifyPhone) {
+        panel.innerHTML = '<p class="connect-hint">מספר ההתראות שלך: <strong style="direction:ltr;unicode-bidi:embed">' + escapeHtml(conn.config.ownerNotifyPhone) + '</strong></p>';
+      } else if (conn.config?.shop) {
+        panel.innerHTML = '<p class="connect-hint">חנות מחוברת: <strong>' + escapeHtml(conn.config.shop) + '</strong></p>';
       }
       return;
     }
@@ -462,9 +498,11 @@ const APP = (() => {
     const oauthEl = panel.querySelector('.ic-oauth');
     if (oauthEl) {
       oauthEl.onclick = () => connectIntegrationItem(item, panel, reloadFn);
-    } else if (item.authMethod === 'generated' || item.authMethod === 'link' || item.authMethod === 'phone' || item.authMethod === 'platform') {
-      panel.innerHTML += '<button type="button" class="btn btn-sm btn-primary connect-oauth-btn ic-connect">' + icon('plus', 12) + ' ' + escapeHtml(item.connectLabelHe || 'חבר') + '</button>';
-      panel.querySelector('.ic-connect').onclick = () => connectIntegrationItem(item, panel, reloadFn);
+    } else if (item.authMethod === 'generated' || item.authMethod === 'link' || item.authMethod === 'phone' || item.authMethod === 'platform' || item.userFields?.length) {
+      const fallbackLabel = (item.authMethod === 'phone') ? 'הזינו את המספר שלכם' : (item.connectLabelHe || 'חבר');
+      panel.innerHTML += '<button type="button" class="btn btn-sm btn-primary connect-oauth-btn ic-connect">' + icon('plus', 12) + ' ' + escapeHtml(fallbackLabel) + '</button>';
+      const btn = panel.querySelector('.ic-connect');
+      if (btn) btn.onclick = () => connectIntegrationItem(item, panel, reloadFn);
     }
   }
 
@@ -2082,6 +2120,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify({ tools: merged }) });
   }
 
+  async function detachIntegrationToolsFromWorker(workerId, toolNames) {
+    if (!workerId || !toolNames?.length) return;
+    const wr = await api('/api/workers/' + workerId);
+    if (!wr.ok) return;
+    const current = new Set(wr.body.worker.tools ?? []);
+    for (const t of toolNames) current.delete(t);
+    await api('/api/workers/' + workerId, { method: 'PATCH', body: JSON.stringify({ tools: [...current] }) });
+  }
+
   const SIMPLE_CONNECT_TYPES = ['webhook', 'google_calendar', 'whatsapp', 'shopify', 'crm_hubspot'];
   const SIMPLE_CONNECT_META = {
     webhook: { emoji: '🔗', plain: 'כל ליד או פנייה יישלחו אוטומטית ל-Zapier, Make, Monday או כל מערכת שתבחרו.' },
@@ -2111,6 +2158,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <div id="connect-tools-grid" class="connect-tools-grid">
           <div class="muted">${icon('loading', 16, 'icon-spin')} טוען אפשרויות חיבור...</div>
         </div>
+        <div id="connect-tools-status" class="connect-tools-status" hidden></div>
         <div class="connect-tools-foot">
           <a class="btn btn-outline" href="#/workers/live/${workerId}">${icon('share', 14)} חזרה — שליחה ללקוחות</a>
           <a class="btn btn-outline" href="#/workers/edit/${workerId}">${icon('edit', 14)} הגדרות מתקדמות</a>
@@ -2119,11 +2167,15 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
     async function reloadConnectGrid() {
       const grid = document.getElementById('connect-tools-grid');
+      const status = document.getElementById('connect-tools-status');
       if (!grid || !alive()) return;
-      const [catR, connR] = await Promise.all([
+      grid.innerHTML = '<div class="muted">' + icon('loading', 16, 'icon-spin') + ' טוען אפשרויות חיבור...</div>';
+      const [catR, connR, workR] = await Promise.all([
         api('/api/integrations/catalog'),
         api('/api/integrations'),
+        api('/api/workers/' + workerId),
       ]);
+      if (!alive()) return;
       if (!catR.ok) {
         grid.innerHTML = '<div class="empty err">לא הצלחנו לטעון את רשימת החיבורים</div>';
         return;
@@ -2131,20 +2183,46 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       const catalog = (catR.body.catalog ?? []).filter((c) => SIMPLE_CONNECT_TYPES.includes(c.type));
       const connected = connR.ok ? (connR.body.integrations ?? []) : [];
       const byType = Object.fromEntries(connected.map((i) => [i.type, i]));
+      const workerTools = new Set(workR.ok ? (workR.body.worker?.tools ?? []) : []);
+      const addedByType = catalog.map((item) => ({
+        item,
+        added: (item.workerTools ?? []).filter((t) => workerTools.has(t)),
+      })).filter((row) => row.added.length);
+      if (status) {
+        if (addedByType.length) {
+          const chips = addedByType.map((row) =>
+            `<span class="conn-tools-chip">${escapeHtml(row.item.labelHe)}: ${row.added.map((t) => '<code>' + escapeHtml(t) + '</code>').join(', ')}</span>`
+          ).join('');
+          status.innerHTML = `<div class="conn-tools-summary"><strong>${icon('zap', 14)} ${addedByType.length} חיבורים פעילים</strong><div class="conn-tools-chips">${chips}</div><p class="muted" style="margin-top:8px">העובד משתמש בכלים האלה אוטומטית. ניתוק יסיר אותם רק מהעובד הזה.</p></div>`;
+          status.hidden = false;
+        } else {
+          status.hidden = true;
+          status.innerHTML = '';
+        }
+      }
       grid.innerHTML = catalog.map((item) => {
         const meta = SIMPLE_CONNECT_META[item.type] || { emoji: '🔧', plain: item.descriptionHe || '' };
         const conn = byType[item.type];
         const done = conn ? ' connect-card-done' : '';
+        const statusChip = conn
+          ? (conn.lastTestOk === true
+              ? '<span class="conn-status-pill conn-status-ok" title="בדיקה אחרונה: ' + escapeHtml(fmtDate(conn.lastTestAt)) + '">' + icon('check', 12) + ' תקין</span>'
+              : (conn.lastTestOk === false
+                  ? '<span class="conn-status-pill conn-status-fail" title="בדיקה אחרונה: ' + escapeHtml(fmtDate(conn.lastTestAt)) + '">' + icon('alert', 12) + ' נכשל</span>'
+                  : '<span class="conn-status-pill conn-status-untested">' + icon('help', 12) + ' לא נבדק</span>'))
+          : '';
         return `<article class="connect-card${done}" data-int-type="${escapeHtml(item.type)}">
           <span class="connect-card-emoji" aria-hidden="true">${meta.emoji}</span>
           <div class="connect-card-body">
-            <h2>${escapeHtml(item.labelHe)}${conn ? ' <span class="connect-done-pill">' + icon('check', 12) + ' מחובר</span>' : ''}</h2>
+            <div class="connect-card-head">
+              <h2>${escapeHtml(item.labelHe)}${conn ? ' <span class="connect-done-pill">' + icon('check', 12) + ' מחובר</span>' : ''} ${statusChip}</h2>
+            </div>
             <p>${escapeHtml(meta.plain)}</p>
             <div class="connect-panel" id="cpanel-${escapeHtml(item.type)}"></div>
             <div class="connect-card-actions">
               ${conn
                 ? `<button type="button" class="btn btn-outline btn-sm ic-test" data-id="${escapeHtml(conn.id)}">${icon('zap', 12)} בדיקה</button>
-                   <button type="button" class="btn btn-outline btn-sm ic-disconnect" data-id="${escapeHtml(conn.id)}">${icon('x', 12)} נתק</button>`
+                   <button type="button" class="btn btn-outline btn-sm ic-disconnect" data-id="${escapeHtml(conn.id)}" data-type="${escapeHtml(item.type)}">${icon('x', 12)} נתק</button>`
                 : `<button type="button" class="btn btn-primary btn-sm ic-connect">${icon('link', 12)} ${escapeHtml(item.connectLabelHe || 'חברו')}</button>`}
             </div>
           </div>
@@ -2157,7 +2235,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         const conn = byType[item.type];
         const onSuccess = async () => {
           await attachIntegrationToolsToWorker(workerId, item.workerTools ?? []);
-          toast('מחובר! העובד ישתמש בזה אוטומטית', 'success');
+          toast('מחובר! ' + (item.workerTools?.length ? 'נוספו ' + item.workerTools.length + ' כלים לעובד' : ''), 'success');
           reloadConnectGrid();
         };
         renderIntegrationConnectActions(item, conn, card, onSuccess);
@@ -2168,19 +2246,31 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         const testBtn = card.querySelector('.ic-test');
         if (testBtn) {
           testBtn.onclick = async () => {
+            const originalLabel = testBtn.innerHTML;
             testBtn.disabled = true;
-            const r = await api('/api/integrations/' + testBtn.dataset.id + '/test', { method: 'POST' });
-            toast(r.ok ? (r.body.message || 'החיבור תקין') : 'הבדיקה נכשלה', r.ok ? 'success' : 'error');
-            testBtn.disabled = false;
+            testBtn.innerHTML = icon('loading', 12, 'icon-spin') + ' בודק...';
+            try {
+              const r = await api('/api/integrations/' + testBtn.dataset.id + '/test', { method: 'POST' });
+              if (r.ok) toast(r.body.message || 'החיבור תקין', 'success');
+              else toast(r.body.message || r.body.error || 'הבדיקה נכשלה', 'error');
+              await new Promise((res) => setTimeout(res, 600));
+              if (alive()) reloadConnectGrid();
+            } finally {
+              testBtn.disabled = false;
+              testBtn.innerHTML = originalLabel;
+            }
           };
         }
         const discBtn = card.querySelector('.ic-disconnect');
         if (discBtn) {
           discBtn.onclick = async () => {
-            if (!confirm('לנתק את החיבור?')) return;
+            if (!confirm('לנתק את החיבור?\nהעובד יפסיק להשתמש בכלי הזה אוטומטית.')) return;
             const r = await api('/api/integrations/' + discBtn.dataset.id, { method: 'DELETE' });
-            if (r.ok) { toast('נותק', 'success'); reloadConnectGrid(); }
-            else toast('שגיאה בניתוק', 'error');
+            if (r.ok) {
+              await detachIntegrationToolsFromWorker(workerId, item.workerTools ?? []);
+              toast('נותק — הכלים הוסרו מהעובד', 'success');
+              reloadConnectGrid();
+            } else toast('שגיאה בניתוק', 'error');
           };
         }
         if (conn?.config?.hookUrl) {
@@ -2701,39 +2791,108 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       };
       return;
     }
-    app.innerHTML = '<div class="empty">טוען...</div>';
     const adminHeaders = { authorization: 'Bearer ' + adminTok };
-    const adminResp = await fetch('/api/admin/workers', { headers: adminHeaders });
-    if (adminResp.status === 401) {
+    app.innerHTML = '<div class="empty">' + icon('loading', 20, 'icon-spin') + ' טוען...</div>';
+    const [workersResp, summaryResp, reqResp, auditResp, statsResp] = await Promise.all([
+      fetch('/api/admin/workers', { headers: adminHeaders }).then(async (r) => ({ ok: r.ok, status: r.status, body: r.ok ? await r.json() : null })),
+      fetch('/api/admin/summary', { headers: adminHeaders }).then(async (r) => ({ ok: r.ok, body: r.ok ? await r.json() : null })),
+      fetch('/api/admin/activation-requests?status=pending', { headers: adminHeaders }).then(async (r) => ({ ok: r.ok, body: r.ok ? await r.json() : null })),
+      fetch('/api/admin/audit-events?limit=12', { headers: adminHeaders }).then(async (r) => ({ ok: r.ok, body: r.ok ? await r.json() : null })),
+      fetch('/api/admin/tenant-stats', { headers: adminHeaders }).then(async (r) => ({ ok: r.ok, body: r.ok ? await r.json() : null })),
+    ]);
+    if (!alive()) return;
+    if (workersResp.status === 401) {
       localStorage.removeItem(ADMIN_LS);
       app.innerHTML = '<div class="empty err"><h2>' + icon('alert', 20) + ' טוקן אדמין לא תקין</h2><p>נסה שוב עם טוקן מעודכן.</p></div>';
       setTimeout(renderAdmin, 1200);
       return;
     }
-    if (!adminResp.ok) {
-      app.innerHTML = '<div class="empty err"><h2>שגיאה בטעינת ניהול</h2><p>נסו שוב בעוד רגע (קוד ' + adminResp.status + ')</p></div>';
+    if (!workersResp.ok) {
+      app.innerHTML = '<div class="empty err"><h2>שגיאה בטעינת ניהול</h2><p>נסו שוב בעוד רגע (קוד ' + workersResp.status + ')</p></div>';
       return;
     }
-    let r;
-    try { r = await adminResp.json(); } catch {
-      app.innerHTML = '<div class="empty err"><h2>שגיאה בטעינת ניהול</h2><p>תשובה לא תקינה מהשרת</p></div>';
-      return;
-    }
-    if (!alive()) return;
-    const reqResp = await fetch('/api/admin/activation-requests?status=pending', { headers: adminHeaders });
-    const activationRequests = reqResp.ok ? (await reqResp.json()).requests ?? [] : [];
-    const auditResp = await fetch('/api/admin/audit-events?limit=12', { headers: adminHeaders });
-    const auditEvents = auditResp.ok ? (await auditResp.json()).events ?? [] : [];
-    const statsResp = await fetch('/api/admin/tenant-stats', { headers: adminHeaders });
-    const tenantStats = statsResp.ok ? (await statsResp.json()).tenants ?? [] : [];
-    const workers = r.workers ?? [];
+    const workers = workersResp.body?.workers ?? [];
+    const summary = summaryResp.ok ? (summaryResp.body?.summary ?? {}) : {};
+    const activationRequests = reqResp.ok ? (reqResp.body?.requests ?? []) : [];
+    const auditEvents = auditResp.ok ? (auditResp.body?.events ?? []) : [];
+    const tenantStats = statsResp.ok ? (statsResp.body?.tenants ?? []) : [];
+    const counts = {
+      active: workers.filter((w) => w.status === 'active').length,
+      pending: workers.filter((w) => w.status === 'pending_payment').length,
+      expired: workers.filter((w) => w.status === 'active' && w.paidUntil && new Date(w.paidUntil) <= new Date()).length,
+    };
+
     app.innerHTML = `
       <div class="toolbar">
-        <h2>ניהול עובדים</h2>
-        <span class="muted">${workers.length} ${icon('users', 14)} עובדים · ${tenantStats.length} דיירים</span>
-        <button class="btn btn-outline btn-sm" id="admin-token-clear" style="margin-right:auto">${icon('x', 14)} נקה טוקן</button>
+        <h2>${icon('shield', 20)} ניהול עובדים</h2>
+        <span class="muted">${workers.length} ${icon('users', 14)} עובדים · ${summary.tenantCount ?? tenantStats.length} דיירים</span>
+        <button class="btn btn-outline btn-sm" id="admin-refresh" style="margin-right:auto" title="רענן נתונים">${icon('zap', 14)} רענן</button>
+        <button class="btn btn-outline btn-sm" id="admin-token-clear">${icon('x', 14)} נקה טוקן</button>
       </div>
-      <p class="muted" style="margin-bottom:16px">אשר בקשות תשלום ואז העובד ייפתח לצ'אט.</p>
+
+      <div class="admin-kpi-grid">
+        <div class="admin-kpi"><div class="kpi-n">${summary.activeWorkers ?? counts.active}</div><div class="kpi-l">${icon('check', 16)} פעילים</div></div>
+        <div class="admin-kpi"><div class="kpi-n">${counts.pending}</div><div class="kpi-l">${icon('clock', 16)} בהמתנה לתשלום</div></div>
+        <div class="admin-kpi"><div class="kpi-n">${counts.expired}</div><div class="kpi-l">${icon('alert', 16)} פג תוקף</div></div>
+        <div class="admin-kpi"><div class="kpi-n">${summary.totalMessages ?? 0}</div><div class="kpi-l">${icon('chat', 16)} הודעות</div></div>
+        <div class="admin-kpi"><div class="kpi-n">${summary.totalLeads ?? 0}</div><div class="kpi-l">${icon('users', 16)} לידים</div></div>
+        <div class="admin-kpi"><div class="kpi-n">${activationRequests.length}</div><div class="kpi-l">${icon('shield', 16)} בקשות ממתינות</div></div>
+      </div>
+
+      <p class="muted" style="margin:18px 0 14px">אשר בקשות תשלום — העובד ייפתח לצ'אט מיד.</p>
+
+      <div class="b-sec">
+        <div class="toolbar" style="margin-bottom:10px">
+          <h3>${icon('shield', 16)} בקשות הפעלה</h3>
+          <span class="muted">${activationRequests.length} בהמתנה</span>
+        </div>
+        ${activationRequests.length === 0 ? '<div class="muted">אין בקשות הפעלה בהמתנה.</div>' : `
+          <div class="stack">
+            ${activationRequests.map((req) => `
+              <div class="card" style="padding:16px 18px" data-activation-id="${escapeHtml(req.id)}">
+                <div class="row">
+                  <h3 style="margin:0;font-size:15px">${escapeHtml(req.workerName)}</h3>
+                  <span class="pill pending">${escapeHtml(req.channel)}</span>
+                  <span class="muted" style="margin-right:auto">${fmtDate(req.at)}</span>
+                </div>
+                <div class="muted" style="margin-top:6px;font-size:12px">
+                  tenant: <code class="adm-tid">${escapeHtml(req.tenantId)}</code> · worker: <code>${escapeHtml(req.workerId)}</code> · ${escapeHtml(req.templateId)}
+                </div>
+                <div class="row" style="margin-top:10px;flex-wrap:wrap">
+                  <span class="pill">₪${Number(req.amountIls || 0)}</span>
+                  <span class="muted">אסמכתא: ${escapeHtml(req.reference || '—')}</span>
+                  <span class="muted">קשר: ${escapeHtml(req.contact)}</span>
+                </div>
+                ${req.note ? `<div class="muted" style="margin-top:8px">${escapeHtml(req.note)}</div>` : ''}
+                <div class="row" style="margin-top:12px">
+                  <input id="req-days-${req.id}" type="number" value="30" min="1" max="365" style="width:80px" />
+                  <span class="muted">ימים</span>
+                  <button class="btn btn-primary btn-sm" data-approve-request="${escapeHtml(req.id)}">${icon('check', 14)} אשר והפעל</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="b-sec">
+        <div class="toolbar" style="margin-bottom:10px;gap:8px">
+          <h3>${icon('users', 16)} עובדים</h3>
+          <input id="admin-q" placeholder="חיפוש לפי שם עובד או tenantId…" style="flex:1;max-width:300px;padding:6px 10px;font-size:13px" />
+          <select id="admin-status" style="padding:6px 10px;font-size:13px">
+            <option value="all">כל הסטטוסים</option>
+            <option value="active">פעילים בלבד</option>
+            <option value="pending_payment">בהמתנה לתשלום</option>
+            <option value="expired">פג תוקף</option>
+          </select>
+          <span class="muted" id="admin-workers-count">${workers.length} תוצאות</span>
+        </div>
+        ${workers.length === 0 ? '<div class="empty">אין עדיין עובדים.</div>' : ''}
+        <div class="stack" id="admin-workers-list">
+          ${workers.map((w) => adminWorkerCard(w)).join('')}
+        </div>
+        <div id="admin-workers-empty" class="muted" style="display:none;margin-top:18px">אין עובדים תואמים לחיפוש.</div>
+      </div>
 
       <div class="b-sec">
         <div class="toolbar" style="margin-bottom:10px">
@@ -2775,103 +2934,174 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           </div>
         `}
       </div>
-
-      <div class="b-sec">
-        <div class="toolbar" style="margin-bottom:10px">
-          <h3>${icon('shield', 16)} בקשות הפעלה</h3>
-          <span class="muted">${activationRequests.length} בהמתנה</span>
-        </div>
-        ${activationRequests.length === 0 ? '<div class="muted">אין בקשות הפעלה בהמתנה.</div>' : `
-          <div class="stack">
-            ${activationRequests.map((req) => `
-              <div class="card" style="padding:16px 18px">
-                <div class="row">
-                  <h3 style="margin:0;font-size:15px">${escapeHtml(req.workerName)}</h3>
-                  <span class="pill pending">${escapeHtml(req.channel)}</span>
-                  <span class="muted" style="margin-right:auto">${fmtDate(req.at)}</span>
-                </div>
-                <div class="muted" style="margin-top:6px">
-                  tenant: <code>${escapeHtml(req.tenantId)}</code> · worker: <code>${escapeHtml(req.workerId)}</code> · ${escapeHtml(req.templateId)}
-                </div>
-                <div class="row" style="margin-top:10px">
-                  <span class="pill">₪${Number(req.amountIls || 0)}</span>
-                  <span class="muted">אסמכתא: ${escapeHtml(req.reference || '—')}</span>
-                  <span class="muted">קשר: ${escapeHtml(req.contact)}</span>
-                </div>
-                ${req.note ? `<div class="muted" style="margin-top:8px">${escapeHtml(req.note)}</div>` : ''}
-                <div class="row" style="margin-top:12px">
-                  <input id="req-days-${req.id}" type="number" value="30" min="1" max="365" style="width:80px" />
-                  <span class="muted">ימים</span>
-                  <button class="btn btn-primary btn-sm" data-approve-request="${escapeHtml(req.id)}">${icon('check', 14)} אשר והפעל</button>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        `}
-      </div>
-
-      ${workers.length === 0 ? '<div class="empty">אין עדיין עובדים.</div>' : ''}
-      <div class="stack">
-        ${workers.map((w) => `
-          <div class="card" style="flex-direction:row;flex-wrap:wrap;padding:18px 20px">
-            <div style="flex:1;min-width:200px">
-              <div class="row">
-                <h3 style="margin:0;font-size:15px">${escapeHtml(w.name)}</h3>
-                <span class="pill ${w.status === 'active' ? 'active' : 'pending'}">${escapeHtml(w.status)}</span>
-              </div>
-              <div class="muted" style="margin-top:4px">tenant: <code>${escapeHtml(w.tenantId)}</code> · ${escapeHtml(w.templateId)}</div>
-              <div class="muted">בתשלום עד: ${fmtDate(w.paidUntil)}</div>
-            </div>
-            <div class="row" style="gap:8px">
-              <input id="days-${w.id}" type="number" value="30" min="1" max="365" style="width:70px" />
-              <span class="muted">ימים</span>
-              <input id="chan-${w.id}" placeholder="אמצעי תשלום" style="width:130px" />
-              <input id="ref-${w.id}" placeholder="אסמכתא" style="width:120px" />
-              <button class="btn btn-primary" data-mark="${w.id}" style="white-space:nowrap">${icon('check', 14)} סמן כשולם</button>
-              <button class="btn btn-outline" data-recover-tenant="${escapeHtml(w.tenantId)}" data-worker-name="${escapeHtml(w.name)}" style="white-space:nowrap">${icon('shield', 14)} שחזר מפתח</button>
-            </div>
-          </div>
-        `).join('')}
-      </div>
     `;
+
+    function adminWorkerCard(w) {
+      const isExpired = w.status === 'active' && w.paidUntil && new Date(w.paidUntil) <= new Date();
+      const statusKey = isExpired ? 'expired' : w.status;
+      const statusLabel = isExpired ? 'expired' : w.status;
+      const expiringSoon = w.status === 'active' && w.paidUntil && (new Date(w.paidUntil).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 7);
+      const expiryBadge = expiringSoon ? '<span class="conn-status-pill conn-status-fail" title="פג תוקף בקרוב">' + icon('clock', 12) + ' פג בקרוב</span>' : '';
+      return `<div class="card admin-worker-card" data-worker-id="${escapeHtml(w.id)}" data-status="${statusKey}" data-search="${(w.name + ' ' + w.tenantId + ' ' + w.templateId + ' ' + w.id).toLowerCase()}">
+          <div style="flex:1;min-width:240px">
+            <div class="row">
+              <h3 style="margin:0;font-size:15px">${escapeHtml(w.name)}</h3>
+              <span class="pill ${w.status === 'active' ? (isExpired ? 'pending' : 'active') : 'pending'}">${escapeHtml(statusLabel)}</span>
+              ${expiryBadge}
+            </div>
+            <div class="muted admin-worker-meta" style="margin-top:6px;font-size:12px">
+              <span>${escapeHtml(w.templateId)}</span>
+              <span>· נוצר ${fmtDate(w.createdAt)}</span>
+              <span class="admin-paid-until">· בתשלום עד <strong>${fmtDate(w.paidUntil)}</strong></span>
+            </div>
+            <div class="row admin-worker-health" data-worker-card="${escapeHtml(w.id)}" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+              <span class="conn-status-pill conn-status-untested">${icon('loading', 12, 'icon-spin')} טוען בריאות…</span>
+            </div>
+            <div class="muted admin-worker-health-detail" data-worker-detail="${escapeHtml(w.id)}" style="margin-top:6px;font-size:12px"></div>
+          </div>
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <input id="days-${w.id}" type="number" value="30" min="1" max="365" style="width:70px" />
+            <span class="muted">ימים</span>
+            <input id="chan-${w.id}" placeholder="אמצעי" style="width:120px" />
+            <input id="ref-${w.id}" placeholder="אסמכתא" style="width:130px" />
+            <button class="btn btn-primary" data-mark="${w.id}" data-tenant="${escapeHtml(w.tenantId)}" style="white-space:nowrap">${icon('check', 14)} סמן כשולם</button>
+            <button class="btn btn-outline" data-recover-tenant="${escapeHtml(w.tenantId)}" data-worker-name="${escapeHtml(w.name)}" style="white-space:nowrap">${icon('shield', 14)} שחזר מפתח</button>
+            <details class="admin-tid-details">
+              <summary class="muted adm-tid-toggle" style="cursor:pointer;font-size:12px;padding:4px 0">tenantId</summary>
+              <code class="adm-tid" style="display:block;margin-top:4px;font-size:11px">${escapeHtml(w.tenantId)}</code>
+            </details>
+          </div>
+        </div>`;
+    }
+
+    function filterWorkers() {
+      const q = (document.getElementById('admin-q')?.value || '').toLowerCase().trim();
+      const status = document.getElementById('admin-status')?.value || 'all';
+      const list = document.getElementById('admin-workers-list');
+      const empty = document.getElementById('admin-workers-empty');
+      if (!list) return;
+      let visible = 0;
+      list.querySelectorAll('.admin-worker-card').forEach((card) => {
+        const txt = card.dataset.search || '';
+        const st = card.dataset.status || '';
+        const match = (!q || txt.includes(q)) && (status === 'all' || st === status);
+        card.style.display = match ? '' : 'none';
+        if (match) visible++;
+      });
+      const count = document.getElementById('admin-workers-count');
+      if (count) count.textContent = visible + ' תוצאות';
+      if (empty) empty.style.display = (visible === 0 && workers.length > 0) ? '' : 'none';
+    }
+
     document.getElementById('admin-token-clear').onclick = () => {
       localStorage.removeItem(ADMIN_LS);
       renderAdmin();
     };
+    document.getElementById('admin-refresh').onclick = () => renderAdmin();
+    document.getElementById('admin-q')?.addEventListener('input', filterWorkers);
+    document.getElementById('admin-status')?.addEventListener('change', filterWorkers);
+    filterWorkers();
+
+    // Async load per-worker health (best-effort, doesn't block the page)
+    workers.forEach((w) => {
+      fetch('/api/admin/worker-health/' + encodeURIComponent(w.id), { headers: adminHeaders })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!alive() || !data?.health) return;
+          const h = data.health;
+          const pillHost = document.querySelector(`.admin-worker-health[data-worker-card="${CSS.escape(w.id)}"]`);
+          const detailHost = document.querySelector(`.admin-worker-health-detail[data-worker-detail="${CSS.escape(w.id)}"]`);
+          if (!pillHost) return;
+          const idle = h.lastMessageAt && (Date.now() - new Date(h.lastMessageAt).getTime()) > 1000 * 60 * 60 * 24;
+          const healthy = (h.openEscalations || 0) === 0 && (h.pendingOutbox || 0) === 0 && (h.agentErrorsLast24h || 0) === 0 && !idle;
+          const tone = healthy ? 'conn-status-ok' : (idle ? 'conn-status-untested' : 'conn-status-fail');
+          const iconName = healthy ? 'check' : (idle ? 'clock' : 'alert');
+          const label = healthy ? 'תקין' : (idle ? 'לא פעיל 24h+' : 'דורש הסתכלות');
+          pillHost.innerHTML = `<span class="conn-status-pill ${tone}">${icon(iconName, 12)} ${label}</span>`;
+          if (detailHost) {
+            detailHost.innerHTML = `<span>${h.messagesLast24h ?? 0} הודעות 24h</span> · <span>${h.leadCount} לידים</span> · <span>${h.openEscalations} escalations פתוחים</span> · <span>${h.pendingOutbox} הודעות ממתינות</span>${h.lastMessageAt ? ' · <span>שיחה אחרונה ' + escapeHtml(fmtDate(h.lastMessageAt)) + '</span>' : ''}`;
+          }
+        })
+        .catch(() => {});
+    });
+
     app.querySelectorAll('button[data-approve-request]').forEach((b) => {
       b.onclick = async () => {
         const req = activationRequests.find((x) => x.id === b.dataset.approveRequest);
         if (!req) return;
+        const card = b.closest('[data-activation-id]');
         const days = +document.getElementById('req-days-' + req.id).value || 30;
-        const r = await fetch('/api/admin/mark-worker-paid', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', ...adminHeaders },
-          body: JSON.stringify({
-            workerId: req.workerId,
-            tenantId: req.tenantId,
-            days,
-            paymentChannel: req.channel,
-            paymentReference: req.reference,
-            amountIls: req.amountIls,
-            activationRequestId: req.id,
-          }),
-        }).then((x) => x.json());
-        if (r.ok) { toast(icon('check', 14) + ' הבקשה אושרה', 'success'); renderAdmin(); }
-        else toast('נכשל: ' + JSON.stringify(r), 'error');
+        b.disabled = true;
+        const originalLabel = b.innerHTML;
+        b.innerHTML = icon('loading', 14, 'icon-spin') + ' מאשר...';
+        try {
+          const r = await fetch('/api/admin/mark-worker-paid', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...adminHeaders },
+            body: JSON.stringify({
+              workerId: req.workerId, tenantId: req.tenantId, days,
+              paymentChannel: req.channel, paymentReference: req.reference,
+              amountIls: req.amountIls, activationRequestId: req.id,
+            }),
+          }).then((x) => x.json());
+          if (r.ok) {
+            toast(icon('check', 14) + ' הבקשה אושרה — ' + req.workerName, 'success');
+            if (card) card.style.transition = 'opacity 200ms', card.style.opacity = '0.4';
+            setTimeout(() => renderAdmin(), 400);
+          }
+          else {
+            toast('נכשל: ' + (r.messageHe || r.error || JSON.stringify(r)), 'error');
+            b.disabled = false; b.innerHTML = originalLabel;
+          }
+        } catch (e) {
+          toast('שגיאת רשת — נסו שוב', 'error');
+          b.disabled = false; b.innerHTML = originalLabel;
+        }
       };
     });
     app.querySelectorAll('button[data-mark]').forEach((b) => {
       b.onclick = async () => {
         const id = b.dataset.mark;
+        const tenant = b.dataset.tenant;
         const days = +document.getElementById('days-' + id).value || 30;
         const channel = document.getElementById('chan-' + id).value || 'manual';
         const reference = document.getElementById('ref-' + id).value || null;
-        const r = await fetch('/api/admin/mark-worker-paid', {
-          method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders },
-          body: JSON.stringify({ workerId: id, tenantId: b.closest('.card').querySelector('code').textContent, days, paymentChannel: channel, paymentReference: reference }),
-        }).then((x) => x.json());
-        if (r.ok) { toast(icon('check', 14) + ' סומן כשולם עד ' + r.paidUntil, 'success'); renderAdmin(); }
-        else toast('נכשל: ' + JSON.stringify(r), 'error');
+        const card = b.closest('.admin-worker-card');
+        b.disabled = true;
+        const originalLabel = b.innerHTML;
+        b.innerHTML = icon('loading', 14, 'icon-spin') + ' שומר...';
+        try {
+          const r = await fetch('/api/admin/mark-worker-paid', {
+            method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders },
+            body: JSON.stringify({ workerId: id, tenantId: tenant, days, paymentChannel: channel, paymentReference: reference }),
+          }).then((x) => x.json());
+          if (r.ok) {
+            toast(icon('check', 14) + ' סומן כשולם עד ' + fmtDate(r.paidUntil), 'success');
+            if (card) {
+              const statusEl = card.querySelector('.pill');
+              if (statusEl) { statusEl.className = 'pill active'; statusEl.textContent = 'active'; }
+              const expiringSoon = r.paidUntil && (new Date(r.paidUntil).getTime() - Date.now() < 1000 * 60 * 60 * 24 * 7);
+              card.dataset.status = expiringSoon ? 'expired' : 'active';
+              const meta = card.querySelector('.admin-worker-meta');
+              if (meta) {
+                const newPaid = document.createElement('span');
+                newPaid.innerHTML = `בתשלום עד <strong>${escapeHtml(fmtDate(r.paidUntil))}</strong>`;
+                const oldPaid = meta.querySelector('.admin-paid-until');
+                if (oldPaid) oldPaid.replaceWith(newPaid);
+              }
+              card.classList.add('admin-worker-paid-flash');
+              setTimeout(() => card.classList.remove('admin-worker-paid-flash'), 1400);
+              filterWorkers();
+            }
+          }
+          else {
+            toast('נכשל: ' + (r.messageHe || r.error || JSON.stringify(r)), 'error');
+            b.disabled = false; b.innerHTML = originalLabel;
+          }
+        } catch (e) {
+          toast('שגיאת רשת — נסו שוב', 'error');
+          b.disabled = false; b.innerHTML = originalLabel;
+        }
       };
     });
     app.querySelectorAll('button[data-recover-tenant]').forEach((b) => {
@@ -2888,6 +3118,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           toast('שחזור נכשל: ' + JSON.stringify(r.body), 'error');
           return;
         }
+        try { await navigator.clipboard.writeText(r.body.key); } catch {}
         openModal(`
           <div class="modal-hdr">
             <span class="icon-big">${icon('shield', 24)}</span>
@@ -2898,11 +3129,16 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             <p class="muted">שלח את המפתח רק בערוץ תמיכה מאומת. המפתחות הישנים בוטלו.</p>
             <label>Tenant</label>
             <input value="${escapeHtml(r.body.tenantId)}" readonly style="direction:ltr;text-align:left;font-family:monospace;margin-bottom:10px" />
-            <label>API key</label>
-            <textarea readonly style="direction:ltr;text-align:left;font-family:monospace;min-height:72px">${escapeHtml(r.body.key)}</textarea>
+            <label>API key ${icon('check', 14)}</label>
+            <textarea id="new-key-box" readonly style="direction:ltr;text-align:left;font-family:monospace;min-height:72px">${escapeHtml(r.body.key)}</textarea>
+            <button class="btn btn-primary" id="modal-copy-key">${icon('copy', 14)} העתק מפתח</button>
           </div>
         `);
-        renderAdmin();
+        const copyBtn = document.getElementById('modal-copy-key');
+        if (copyBtn) copyBtn.onclick = async () => {
+          try { await navigator.clipboard.writeText(r.body.key); toast('הועתק', 'success'); }
+          catch { document.getElementById('new-key-box').select(); toast('העתיקו ידנית', 'info'); }
+        };
       };
     });
   }
