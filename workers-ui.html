@@ -1293,7 +1293,34 @@ async function renderMarketplace(alive = () => true) {
   }
 
   // ---- My Workers ----
-  async function renderWorkersList(alive = () => true) {
+  function renderWorkerStats(stats) {
+  if (!stats) return '';
+  const m = stats.messages ?? 0;
+  const l = stats.leads ?? 0;
+  const hl = stats.hotLeads ?? 0;
+  const e = stats.openEscalations ?? 0;
+  const last = stats.lastMessageAt ? fmtRelative(stats.lastMessageAt) : '';
+  if (m === 0 && l === 0 && e === 0) return '';
+  const parts = [];
+  parts.push(`<span class="wl-stat">${icon('chat', 12)} <strong>${m}</strong> שיחות</span>`);
+  if (l > 0) parts.push(`<span class="wl-stat">${icon('users', 12)} <strong>${l}</strong> לידים${hl ? ` <em class="hot">${hl} חמים</em>` : ''}</span>`);
+  if (e > 0) parts.push(`<span class="wl-stat wl-stat-warn">${icon('alert', 12)} <strong>${e}</strong> דחופים</span>`);
+  if (last) parts.push(`<span class="wl-stat wl-stat-mute">${icon('clock', 12)} ${escapeHtml(last)}</span>`);
+  return `<div class="wl-stats">${parts.join('')}</div>`;
+}
+
+function fmtRelative(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'עכשיו';
+  if (ms < 3_600_000) return `לפני ${Math.floor(ms / 60_000)} דק׳`;
+  if (ms < 86_400_000) return `לפני ${Math.floor(ms / 3_600_000)} שעות`;
+  const d = Math.floor(ms / 86_400_000);
+  if (d === 1) return 'אתמול';
+  if (d < 30) return `לפני ${d} ימים`;
+  return fmtDate(iso);
+}
+
+async function renderWorkersList(alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) {
       if (!alive()) return;
@@ -1310,9 +1337,14 @@ async function renderMarketplace(alive = () => true) {
         <div class="wl-page">
           <div class="wl-empty">
             <div class="wl-empty-lamp"><span class="wl-empty-ic">${icon('robot', 40)}</span></div>
-            <h3>אין עובדים עדיין</h3>
-            <p>בחר עובד מהשוק והתחל ניסיון בלי כרטיס אשראי. תוך דקה יש לך עובד AI פעיל שעונה ללקוחות.</p>
-            <a class="wl-empty-cta" href="#/marketplace">${icon('arrow-right', 16)} לשוק העובדים</a>
+            <h3>בואו נגייס לכם עובד AI ראשון</h3>
+            <p>תוך פחות מדקה יהיה לכם עובד שעונה ללקוחות בוואטסאפ, שומר לידים ומעביר דחופים לנציג. בלי כרטיס אשראי, בלי התחייבות.</p>
+            <a class="wl-empty-cta" href="#/magic">${icon('arrow-right', 16)} התחל עכשיו — 3 צעדים</a>
+            <div class="wl-empty-steps">
+              <div class="wl-step"><span class="wl-step-num">1</span><div><strong>בחר תפקיד</strong><span>מכירות, תמיכה, קליניקה, מסעדה…</span></div></div>
+              <div class="wl-step"><span class="wl-step-num">2</span><div><strong>נסה בצ׳אט</strong><span>ראה איך העובד עונה בעברית טבעית</span></div></div>
+              <div class="wl-step"><span class="wl-step-num">3</span><div><strong>חבר לכלים</strong><span>וואטסאפ, גוגל קלנדר, טפסים — או העתק embed</span></div></div>
+            </div>
           </div>
         </div>
       `;
@@ -1359,6 +1391,7 @@ async function renderMarketplace(alive = () => true) {
                 </div>
                 <p class="wl-sub"><span class="wl-cat-ic">${catIcon(cat)}</span>${escapeHtml(catLabel)} · ${escapeHtml(tplName)}</p>
                 ${outcome ? `<p class="wl-outcome">${escapeHtml(outcome)}</p>` : ''}
+                ${renderWorkerStats(w.health?.stats)}
                 <p class="wl-meta ${metaCls}">
                   <span>${icon('calendar', 13)}</span>
                   <span class="wl-meta-label">בתשלום עד:</span>

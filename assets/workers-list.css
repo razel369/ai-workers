@@ -216,6 +216,77 @@
 .wl-meta.is-expired { color: var(--red); }
 .wl-meta.is-expired .wl-meta-val { color: var(--red); }
 
+.wl-empty-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-top: 26px;
+  max-width: 720px;
+  text-align: right;
+}
+.wl-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(40, 38, 32, 0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.wl-step-num {
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #d4a574, #b8875a);
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+.wl-step strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.wl-step span:not(.wl-step-num) {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+@media (max-width: 720px) {
+  .wl-empty-steps { grid-template-columns: 1fr; }
+}
+
+/* ---- Live stats (chips above paid-until) ---- */
+.wl-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 8px 0 6px;
+  font-size: 12.5px;
+}
+.wl-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--body);
+}
+.wl-stat strong {
+  font-weight: 700;
+  color: var(--text);
+}
+.wl-stat em.hot {
+  font-style: normal;
+  color: #c97539;
+  font-weight: 600;
+}
+.wl-stat-warn { color: #c0543c; }
+.wl-stat-warn strong { color: #c0543c; }
+.wl-stat-mute { color: var(--muted); }
+
 /* ---- Action row ---- */
 .wl-actions {
   display: flex;

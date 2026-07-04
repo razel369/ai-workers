@@ -1670,15 +1670,28 @@ export function getWorkerHealth(worker) {
   const srv = getServerLlmConfig();
   const hasLlm = !!(srv.apiKey || worker.llm?.hasApiKey);
   if (!hasLlm) return { status: 'needs_llm', labelHe: 'צריך הגדרה', tone: 'warn' };
+  // Pull live stats so the worker card / list can show "24 שיחות, 3 לידים, 1 דחוף"
+  let stats = null;
+  if (worker.tenantId && worker.id) {
+    try {
+      const db = getTenantDb(worker.tenantId);
+      const messages = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE worker_id=?`).get(worker.id)?.c ?? 0;
+      const leads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=?`).get(worker.id)?.c ?? 0;
+      const hotLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=? AND score>=7`).get(worker.id)?.c ?? 0;
+      const openEsc = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND status='open'`).get(worker.id)?.c ?? 0;
+      const lastMsg = db.prepare(`SELECT MAX(created_at) AS m FROM messages WHERE worker_id=?`).get(worker.id)?.m;
+      stats = { messages, leads, hotLeads, openEscalations: openEsc, lastMessageAt: lastMsg };
+    } catch {}
+  }
   if (worker.isActive) {
     if (worker.paidUntil && new Date(worker.paidUntil) > new Date()) {
       const d = new Date(worker.paidUntil).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' });
-      return { status: 'active_until', labelHe: `פעיל עד ${d}`, tone: 'ok' };
+      return { status: 'active_until', labelHe: `פעיל עד ${d}`, tone: 'ok', stats };
     }
-    return { status: 'healthy', labelHe: 'עובד תקין ✓', tone: 'ok' };
+    return { status: 'healthy', labelHe: 'עובד תקין ✓', tone: 'ok', stats };
   }
-  if (worker.status === 'pending_payment') return { status: 'trial', labelHe: 'מצב ניסיון — דמו', tone: 'info' };
-  return { status: 'expired', labelHe: 'פג תוקף — צריך חידוש', tone: 'warn' };
+  if (worker.status === 'pending_payment') return { status: 'trial', labelHe: 'מצב ניסיון — דמו', tone: 'info', stats };
+  return { status: 'expired', labelHe: 'פג תוקף — צריך חידוש', tone: 'warn', stats };
 }
 
 function llmErrorMessageHe(error, detail = '') {
@@ -1780,6 +1793,7 @@ export function listWorkers(tenantId) {
   return rows.map((r) => {
     const worker = {
       ...r,
+      tenantId,
       template: getTemplate(r.templateId),
       isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()),
       llm: { hasApiKey: !!getServerLlmConfig().apiKey },
