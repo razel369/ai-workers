@@ -1465,11 +1465,21 @@ async function renderWorkersList(alive = () => true) {
         ${accountBanner}
         <div class="wl-head">
           <h2>העובדים שלי</h2>
-          <span class="wl-count">${workers.length} עובדים</span>
+          <span class="wl-count" id="wl-count">${workers.length} עובדים</span>
           <span class="wl-spacer"></span>
+          ${workers.length > 1 ? `
+            <input type="search" id="wl-search" class="wl-search" placeholder="חפש עובד..." autocomplete="off" />
+            <select id="wl-filter" class="wl-filter">
+              <option value="all">הכל</option>
+              <option value="active">פעילים</option>
+              <option value="paused">מושהים</option>
+              <option value="trial">בניסיון</option>
+              <option value="expired">פג תוקף</option>
+            </select>
+          ` : ''}
           <a class="wl-add" href="#/marketplace">${icon('plus', 15)} הוסף עובד</a>
         </div>
-        <div class="wl-grid">
+        <div class="wl-grid" id="wl-grid">
           ${workers.map((w) => {
             const isLive = w.isActive;
             const expired = w.status === 'active' && !isLive;
@@ -1478,6 +1488,7 @@ async function renderWorkersList(alive = () => true) {
             const outcome = OUTCOME_LABELS[cat] || '';
             const tplName = w.template?.nameHe || w.template?.name || w.templateId;
             const needsConfig = w.status === 'active' && isLive && (!w.template);
+            const filterStatus = w.paused ? 'paused' : (isLive ? 'active' : (w.status === 'pending_payment' ? 'trial' : 'expired'));
             let pillCls = 'is-pending', pillTxt = 'ממתין לתשלום';
             if (w.paused && w.status === 'active') { pillCls = 'is-paused'; pillTxt = 'מושהה'; }
             else if (expired) { pillCls = 'is-expired'; pillTxt = 'פג תוקף'; }
@@ -1489,7 +1500,7 @@ async function renderWorkersList(alive = () => true) {
             else if (dl !== null && dl <= 7) metaCls = 'is-soon';
             const pillIcon = pillCls === 'is-config' ? icon('alert', 12) : '';
             return `
-              <article class="wl-card" data-cat="${escapeHtml(cat)}">
+              <article class="wl-card${w.paused ? ' is-paused' : ''}" data-cat="${escapeHtml(cat)}" data-wl-name="${escapeHtml(w.name.toLowerCase())}" data-wl-status="${filterStatus}">
                 <span class="wl-stripe" aria-hidden="true"></span>
                 <div class="wl-row">
                   <h3 class="wl-name">${escapeHtml(w.name)}</h3>
@@ -1521,6 +1532,26 @@ async function renderWorkersList(alive = () => true) {
         </div>
       </div>
     `;
+    const wlSearch = document.getElementById('wl-search');
+    const wlFilter = document.getElementById('wl-filter');
+    const wlCount = document.getElementById('wl-count');
+    function applyWlFilter() {
+      const q = (wlSearch?.value || '').trim().toLowerCase();
+      const f = wlFilter?.value || 'all';
+      let visible = 0;
+      app.querySelectorAll('.wl-card').forEach((card) => {
+        const name = card.dataset.wlName || '';
+        const status = card.dataset.wlStatus || '';
+        const matchQ = !q || name.includes(q);
+        const matchF = f === 'all' || status === f;
+        const show = matchQ && matchF;
+        card.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      if (wlCount) wlCount.textContent = `${visible} / ${workers.length} עובדים`;
+    }
+    if (wlSearch) wlSearch.oninput = applyWlFilter;
+    if (wlFilter) wlFilter.onchange = applyWlFilter;
     app.querySelectorAll('button[data-del]').forEach((b) => {
       b.onclick = async () => {
         if (!confirm('למחוק את העובד ואת השיחות שלו?')) return;
@@ -1529,6 +1560,26 @@ async function renderWorkersList(alive = () => true) {
         else toast('המחיקה נכשלה: ' + friendlyApiError(r.body), 'error');
       };
     });
+    const searchEl = document.getElementById('wl-search');
+    const filterEl = document.getElementById('wl-filter');
+    const gridEl = document.getElementById('wl-grid');
+    const countEl = document.getElementById('wl-count');
+    function applyWlFilter() {
+      if (!gridEl) return;
+      const q = (searchEl?.value || '').trim().toLowerCase();
+      const f = filterEl?.value || 'all';
+      let shown = 0;
+      gridEl.querySelectorAll('.wl-card').forEach((card) => {
+        const matchesSearch = !q || (card.getAttribute('data-wl-name') || '').includes(q);
+        const matchesFilter = f === 'all' || card.getAttribute('data-wl-status') === f;
+        const show = matchesSearch && matchesFilter;
+        card.style.display = show ? '' : 'none';
+        if (show) shown++;
+      });
+      if (countEl) countEl.textContent = `${shown} / ${workers.length} עובדים`;
+    }
+    if (searchEl) searchEl.addEventListener('input', applyWlFilter);
+    if (filterEl) filterEl.addEventListener('change', applyWlFilter);
     app.querySelectorAll('button[data-pause-toggle]').forEach((b) => {
       b.onclick = async () => {
         const wasPaused = b.dataset.paused === '1';

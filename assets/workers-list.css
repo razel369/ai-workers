@@ -404,3 +404,7 @@
 .wl-card.is-paused { opacity: 0.7; }
 .wl-card.is-paused .wl-stripe { background: linear-gradient(180deg, #c0543c, #8a3a2a) !important; }
 .wl-pill.is-paused { background: rgba(192, 84, 60, .12); color: #c0543c; }
+.wl-search { background: rgba(40,38,32,.04); border: 1px solid rgba(40,38,32,.1); border-radius: 10px; padding: 7px 12px; font-size: 13.5px; color: var(--text); direction: rtl; min-width: 160px; }
+.wl-search:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.wl-filter { background: rgba(40,38,32,.04); border: 1px solid rgba(40,38,32,.1); border-radius: 10px; padding: 7px 10px; font-size: 13.5px; color: var(--text); cursor: pointer; }
+.wl-filter:focus { outline: none; border-color: var(--accent); }
