@@ -2530,6 +2530,7 @@ const server = http.createServer(async (req, res) => {
     const rawPath = path.join(__dirname, url.pathname);
     const filePath = path.resolve(rawPath);
     const brandDir = path.resolve(path.join(__dirname, 'brand'));
+    console.log(`[brand-debug] pathname=${url.pathname} filePath=${filePath} brandDir=${brandDir} __dirname=${__dirname}`);
     if (!filePath.startsWith(brandDir)) return send(res, 403, { error: 'forbidden' });
     try {
       const content = fs.readFileSync(filePath);
