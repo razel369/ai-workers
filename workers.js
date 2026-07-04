@@ -1323,6 +1323,7 @@ function getTenantDb(tenantId) {
       paid_until TEXT,
       mcp_servers_json TEXT NOT NULL DEFAULT '[]',
       skills_json TEXT NOT NULL DEFAULT '[]',
+      paused INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1789,13 +1790,14 @@ export function buyTemplate({ tenantId, templateId, paymentChannel, paymentRefer
 
 export function listWorkers(tenantId) {
   const db = getTenantDb(tenantId);
-  const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, created_at AS createdAt, updated_at AS updatedAt FROM workers ORDER BY created_at DESC`).all();
+  const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, paused, created_at AS createdAt, updated_at AS updatedAt FROM workers ORDER BY created_at DESC`).all();
   return rows.map((r) => {
     const worker = {
       ...r,
+      paused: !!r.paused,
       tenantId,
       template: getTemplate(r.templateId),
-      isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()),
+      isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()) && !r.paused,
       llm: { hasApiKey: !!getServerLlmConfig().apiKey },
     };
     return { ...worker, health: getWorkerHealth(worker) };
@@ -1817,7 +1819,7 @@ function parseWorkerRow(r) {
   try { skills = JSON.parse(r.skills_json || '[]'); } catch {}
   const srv = getServerLlmConfig();
   const serverHasLlm = !!srv.apiKey;
-  const isActive = r.status === 'active' && (!r.paid_until || new Date(r.paid_until) > new Date());
+  const isActive = r.status === 'active' && (!r.paid_until || new Date(r.paid_until) > new Date()) && !r.paused;
   return {
     id: r.id, name: r.name, templateId: r.template_id,
     persona: r.persona, tasks, knowledge: r.knowledge, tools,
@@ -1833,6 +1835,7 @@ function parseWorkerRow(r) {
     status: r.status,
     paidUntil: r.paid_until,
     isActive,
+    paused: !!r.paused,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -1852,6 +1855,7 @@ export function updateWorker(tenantId, workerId, patch) {
   if (patch.agentMode !== undefined) { fields.push('agent_mode = ?'); values.push(patch.agentMode === 'chat' ? 'chat' : 'agent'); }
   if (patch.mcpServers !== undefined) { fields.push('mcp_servers_json = ?'); values.push(JSON.stringify(patch.mcpServers)); }
   if (patch.skills !== undefined) { fields.push('skills_json = ?'); values.push(JSON.stringify(patch.skills)); }
+  if (patch.paused !== undefined) { fields.push('paused = ?'); values.push(patch.paused ? 1 : 0); }
   if (patch.llm) {
     if (patch.llm.provider !== undefined) { fields.push('llm_provider = ?'); values.push(String(patch.llm.provider).slice(0, 30)); }
     if (patch.llm.model !== undefined) { fields.push('llm_model = ?'); values.push(String(patch.llm.model).slice(0, 60)); }
@@ -2418,8 +2422,15 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
 
   // Active + paid check (demoMode lets owner try before paying for production)
   const isPaid = worker.paidUntil && new Date(worker.paidUntil) > new Date();
-  const isProductionReady = worker.status === 'active' && isPaid;
+  const isProductionReady = worker.status === 'active' && isPaid && !worker.paused;
   if (!testMode && !demoMode && !isProductionReady) {
+    if (worker.paused) {
+      return {
+        ok: false, status: 503,
+        error: 'worker_paused',
+        message: 'העובד מושהה כרגע על ידי בעל העסק. אפשר להפעיל אותו שוב מדף העובדים.',
+      };
+    }
     return {
       ok: false, status: 402,
       error: 'payment_required',

@@ -160,6 +160,12 @@
       <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
       <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
     </symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+    </symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3"/>
+    </symbol>
     <symbol id="icon-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10"/>
     </symbol>
@@ -250,6 +256,7 @@ const APP = (() => {
     if (body.error === 'llm_unavailable' || body.error === 'no_api_key') return 'שירות ה-AI עומד בעומס — נסו שוב בעוד רגע';
     if (body.error === 'forbidden' || body.error === 'not_authorized') return 'אין לכם הרשאה לפעולה הזו';
     if (body.error === 'quota_exceeded') return 'נגמר מכסת השיחות החודשית. שדרגו תוכנית או חכו לחידוש.';
+    if (body.error === 'worker_paused') return 'העובד מושהה — בעל העסק יכול להפעיל אותו מדף העובדים.';
     return fallback;
   }
 
@@ -1461,7 +1468,8 @@ async function renderWorkersList(alive = () => true) {
             const tplName = w.template?.nameHe || w.template?.name || w.templateId;
             const needsConfig = w.status === 'active' && isLive && (!w.template);
             let pillCls = 'is-pending', pillTxt = 'ממתין לתשלום';
-            if (expired) { pillCls = 'is-expired'; pillTxt = 'פג תוקף'; }
+            if (w.paused && w.status === 'active') { pillCls = 'is-paused'; pillTxt = 'מושהה'; }
+            else if (expired) { pillCls = 'is-expired'; pillTxt = 'פג תוקף'; }
             else if (needsConfig) { pillCls = 'is-config'; pillTxt = 'צריך הגדרה'; }
             else if (isLive) { pillCls = 'is-active'; pillTxt = 'פעיל'; }
             const dl = daysLeft(w.paidUntil);
@@ -1487,10 +1495,11 @@ async function renderWorkersList(alive = () => true) {
                 <div class="wl-actions">
                   ${isLive
                     ? `<button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/live/${w.id}'">${icon('share', 14)} שלח ללקוחות</button>`
-                    : `<button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/activate/${w.id}'">${icon('shield', 14)} להפעיל</button>`}
+                    : (w.paused ? `<button class="btn btn-primary btn-sm" data-pause="${w.id}">${icon('check', 14)} הפעל מחדש</button>` : `<button class="btn btn-primary btn-sm" onclick="location.hash='#/workers/activate/${w.id}'">${icon('shield', 14)} להפעיל</button>`)}
                   <button class="btn btn-outline btn-sm" onclick="location.hash='#/workers/chat/${w.id}'">${icon('chat', 14)} נסה</button>
                   ${isLive ? `<button class="btn btn-outline btn-sm" onclick="location.hash='#/workers/connect/${w.id}'">${icon('plug', 14)} כלים</button>` : ''}
                   <span class="wl-spacer2"></span>
+                  ${isLive ? `<button class="wl-ic" title="${w.paused ? 'המשך לקבל לקוחות' : 'השהה (לא יענה ללקוחות)'}" aria-label="השהיה" data-pause-toggle="${w.id}" data-paused="${w.paused ? '1' : '0'}">${w.paused ? icon('play', 17) : icon('pause', 17)}</button>` : ''}
                   <button class="wl-ic" title="לוח תפעול" aria-label="לוח תפעול" onclick="location.hash='#/workers/insights/${w.id}'">${icon('activity', 17)}</button>
                   <button class="wl-ic" title="עריכה" aria-label="עריכה" onclick="location.hash='#/workers/edit/${w.id}'">${icon('edit', 17)}</button>
                   <button class="wl-ic wl-del" title="מחק עובד" aria-label="מחק עובד" data-del="${w.id}">${icon('trash', 17)}</button>
@@ -1507,6 +1516,34 @@ async function renderWorkersList(alive = () => true) {
         const r = await api('/api/workers/' + b.dataset.del, { method: 'DELETE' });
         if (r.ok) renderWorkersList();
         else toast('המחיקה נכשלה: ' + friendlyApiError(r.body), 'error');
+      };
+    });
+    app.querySelectorAll('button[data-pause-toggle]').forEach((b) => {
+      b.onclick = async () => {
+        const wasPaused = b.dataset.paused === '1';
+        b.disabled = true;
+        const r = await api('/api/workers/' + b.dataset.pauseToggle, {
+          method: 'PATCH',
+          body: JSON.stringify({ paused: !wasPaused }),
+        });
+        if (r.ok) {
+          toast(wasPaused ? 'העובד חזר לקבל לקוחות' : 'העובד מושהה', 'success');
+          renderWorkersList();
+        } else {
+          b.disabled = false;
+          toast('עדכון נכשל: ' + friendlyApiError(r.body), 'error');
+        }
+      };
+    });
+    app.querySelectorAll('button[data-pause]').forEach((b) => {
+      b.onclick = async () => {
+        b.disabled = true;
+        const r = await api('/api/workers/' + b.dataset.pause, {
+          method: 'PATCH',
+          body: JSON.stringify({ paused: false }),
+        });
+        if (r.ok) renderWorkersList();
+        else { b.disabled = false; toast('עדכון נכשל', 'error'); }
       };
     });
   }

@@ -395,3 +395,8 @@
 .ap-row:last-child { border-bottom: none; }
 .ap-row strong { color: var(--text); font-weight: 700; text-transform: capitalize; }
 .ap-row code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); background: rgba(40,38,32,.05); padding: 2px 8px; border-radius: 6px; direction: ltr; }
+
+/* ---- Paused worker visual state ---- */
+.wl-card.is-paused { opacity: 0.7; }
+.wl-card.is-paused .wl-stripe { background: linear-gradient(180deg, #c0543c, #8a3a2a) !important; }
+.wl-pill.is-paused { background: rgba(192, 84, 60, .12); color: #c0543c; }
