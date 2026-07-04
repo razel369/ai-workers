@@ -11,6 +11,11 @@ const PADDLE_ENVIRONMENT = (process.env.PADDLE_ENVIRONMENT ?? 'sandbox').trim().
 const PADDLE_DEFAULT_PRICE_ID = (process.env.PADDLE_PRICE_ID ?? '').trim();
 const DEFAULT_RENT_DAYS = Number(process.env.DEFAULT_RENT_DAYS ?? 30);
 
+if (process.env.NODE_ENV === 'production') {
+  if (!PADDLE_WEBHOOK_SECRET) console.warn('[startup] PADDLE_WEBHOOK_SECRET not set — paddle webhook endpoint will reject all requests');
+  if (!PADDLE_API_KEY) console.warn('[startup] PADDLE_API_KEY not set — paddle checkout disabled');
+}
+
 function parsePriceMap() {
   const raw = process.env.PADDLE_PRICE_MAP ?? '';
   if (!raw.trim()) return {};
@@ -160,12 +165,15 @@ export async function handlePaddleWebhook(req, res, url, { send, readBody, recor
   }
 
   const signature = req.headers['paddle-signature'] ?? '';
-  if (PADDLE_WEBHOOK_SECRET) {
-    const verified = verifyPaddleWebhookSignature(raw, signature);
-    if (!verified.ok) {
-      send(res, 401, { error: 'invalid_paddle_signature', reason: verified.error });
-      return true;
-    }
+  if (!PADDLE_WEBHOOK_SECRET) {
+    console.warn('[paddle-billing] webhook_secret_not_configured — refusing unverified webhook');
+    send(res, 503, { error: 'webhook_secret_not_configured' });
+    return true;
+  }
+  const verified = verifyPaddleWebhookSignature(raw, signature);
+  if (!verified.ok) {
+    send(res, 401, { error: 'invalid_paddle_signature', reason: verified.error });
+    return true;
   }
 
   let event;

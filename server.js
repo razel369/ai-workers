@@ -216,13 +216,24 @@ const hashKey = (k) => crypto.createHash('sha256').update(k).digest('hex');
 integrations.initOAuth({ db, publicBaseUrl: PUBLIC_BASE_URL, newId });
 
 // API key validation: check the key exists in the api_keys table (not just any sk_ string)
+// Also enforces quota: every authenticated call consumes one unit; over-limit returns null
+// with lastQuotaError available to the caller for HTTP 402 responses.
+let lastQuotaError = null;
 function requireAuth(req) {
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
   if (!token.startsWith('sk_')) return null;
   const check = validateApiKey(token);
-  return check.valid ? check.tenantId : null;
+  if (!check.valid) return null;
+  const consumed = consumeApiCall(hashKey(token));
+  if (!consumed.valid) {
+    lastQuotaError = consumed;
+    return null;
+  }
+  return check.tenantId;
 }
+function getLastQuotaError() { return lastQuotaError; }
+function clearLastQuotaError() { lastQuotaError = null; }
 
 function recordCall(o) {
   db.prepare('INSERT INTO calls (at, endpoint, network, amount_usdc, payer, tx_hash, mock, input_chars, auth_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
@@ -506,6 +517,27 @@ function signupRateLimit(ip) {
   b.tokens -= 1; signupBuckets.set(ip, b); return true;
 }
 
+const RATE_WINDOW_MS = 60_000;
+function pruneOldBuckets() {
+  const now = Date.now();
+  for (const [k, b] of buckets) if (now - b.last > RATE_WINDOW_MS) buckets.delete(k);
+  for (const [k, b] of signupBuckets) if (now - b.last > 3_600_000) signupBuckets.delete(k);
+}
+setInterval(() => { try { pruneOldBuckets(); } catch {} }, 60_000).unref?.();
+
+// --- Per-worker chat locks (serialise concurrent chats on the same worker) ---
+const chatLocks = new Map();
+async function withChatLock(workerId, fn) {
+  const prev = chatLocks.get(workerId) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  chatLocks.set(workerId, next.catch(() => {}));
+  try {
+    return await next;
+  } finally {
+    if (chatLocks.get(workerId) === next.catch(() => {})) chatLocks.delete(workerId);
+  }
+}
+
 // --- Entrypoints (reserved for future use) --------------------------------
 
 // --- API keys -------------------------------------------------------------
@@ -716,6 +748,15 @@ async function readBody(req, max = 1024 * 64) {
   const cs = []; let t = 0;
   for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true }; cs.push(c); }
   return { text: Buffer.concat(cs).toString('utf8') };
+}
+
+const MAX_USER_MESSAGE_CHARS = 4000;
+function rejectOversizedMessage(res, body) {
+  if (body && typeof body.message === 'string' && body.message.length > MAX_USER_MESSAGE_CHARS) {
+    send(res, 400, { error: 'message_too_long', max: MAX_USER_MESSAGE_CHARS, length: body.message.length });
+    return true;
+  }
+  return false;
 }
 
 function buildAcquireChannels() {
@@ -1378,21 +1419,24 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
 function buildTryPage(workerId, workerName, baseUrl = PUBLIC_BASE_URL) {
   const name = workerName || 'עובד וירטואלי';
+  const safeName = escapeHtml(name);
+  const safeId = escapeHtml(workerId);
+  const safeUrl = escapeHtml(baseUrl);
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>שיחה עם ${name}</title>
+  <title>שיחה עם ${safeName}</title>
   <style>body{margin:0;min-height:100vh;background:#121218;color:#e8e8e8;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}p{color:#9a9aa8;max-width:420px;line-height:1.5}a{color:#d4a24a}</style>
 </head>
 <body>
   <div>
-    <h1 style="font-size:1.25rem;font-weight:600;margin:0 0 8px">${name}</h1>
+    <h1 style="font-size:1.25rem;font-weight:600;margin:0 0 8px">${safeName}</h1>
     <p>לחצו על הכפתור בפינה לפתיחת שיחה. מופעל על ידי AI Workers.</p>
-    <p><a href="${baseUrl}/marketplace">לשוק העובדים ←</a></p>
+    <p><a href="${safeUrl}/marketplace">לשוק העובדים ←</a></p>
   </div>
-  <script src="${baseUrl}/embed.js" data-worker="${workerId}"></script>
+  <script src="${safeUrl}/embed.js" data-worker="${safeId}"></script>
 </body>
 </html>`;
 }
@@ -1455,11 +1499,23 @@ function buildWorkerInvoiceHtml({ worker, tenantId, template, baseUrl }) {
     ? `מע"מ ${vatRate}% יחושב בחשבונית מס`
     : 'מע"מ: לפי סטטוס עוסק (מורשה / פטור) — יש למלא בחשבונית';
   const paidUntil = worker.paidUntil ? new Date(worker.paidUntil).toLocaleDateString('he-IL') : '—';
+  const safeWorkerName = escapeHtml(worker.name ?? '');
+  const safeWorkerId = escapeHtml(worker.id ?? '');
+  const safeTplHe = escapeHtml(template?.nameHe ?? '');
+  const safeTplName = escapeHtml(template?.name ?? '');
+  const safePayee = PAYEE_NAME ? escapeHtml(PAYEE_NAME) : '';
+  const safeContact = AGENT_OWNER_CONTACT ? escapeHtml(AGENT_OWNER_CONTACT) : '';
+  const safeAgent = escapeHtml(AGENT_NAME ?? '');
+  const safeTenant = escapeHtml(tenantId ?? '');
+  const safeBase = escapeHtml(baseUrl ?? '');
+  const safeVatNote = escapeHtml(vatNote);
+  const itemName = template?.nameHe || template?.name || worker.name;
+  const safeItem = escapeHtml(itemName ?? '');
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>חשבונית — ${worker.name}</title>
+  <title>חשבונית — ${safeWorkerName}</title>
   <style>
     body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:24px;color:#111;line-height:1.6}
     h1{font-size:22px;margin:0 0 8px} .muted{color:#666;font-size:14px}
@@ -1469,23 +1525,23 @@ function buildWorkerInvoiceHtml({ worker, tenantId, template, baseUrl }) {
   </style>
 </head>
 <body>
-  <h1>חשבונית / קבלה — ${AGENT_NAME}</h1>
-  <p class="muted">תאריך: ${date} · מזהה עובד: ${worker.id}</p>
-  ${PAYEE_NAME ? `<p><strong>לכבוד:</strong> ${PAYEE_NAME}</p>` : ''}
-  ${AGENT_OWNER_CONTACT ? `<p><strong>יצירת קשר:</strong> ${AGENT_OWNER_CONTACT}</p>` : ''}
+  <h1>חשבונית / קבלה — ${safeAgent}</h1>
+  <p class="muted">תאריך: ${date} · מזהה עובד: ${safeWorkerId}</p>
+  ${safePayee ? `<p><strong>לכבוד:</strong> ${safePayee}</p>` : ''}
+  ${safeContact ? `<p><strong>יצירת קשר:</strong> ${safeContact}</p>` : ''}
   <table>
     <thead><tr><th>פריט</th><th>תקופה</th><th>סכום (₪)</th></tr></thead>
     <tbody>
       <tr>
-        <td>${template?.nameHe || template?.name || worker.name}</td>
+        <td>${safeItem}</td>
         <td>שכירות חודשית · בתוקף עד ${paidUntil}</td>
         <td>${rent}</td>
       </tr>
     </tbody>
   </table>
   <p class="total">סה"כ לפני מע"מ: ₪${rent}</p>
-  <p class="muted">${vatNote}</p>
-  <p class="muted">Tenant: ${tenantId} · ${baseUrl}</p>
+  <p class="muted">${safeVatNote}</p>
+  <p class="muted">Tenant: ${safeTenant} · ${safeBase}</p>
   <p class="muted" style="margin-top:24px">מסמך זה נוצר אוטומטית לצורכי תיעוד. לחשבונית מס רשמית פנו לתמיכה.</p>
 </body>
 </html>`;
@@ -1955,8 +2011,14 @@ const server = http.createServer(async (req, res) => {
   const msgMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/messages$/);
   if (req.method === 'GET' && msgMatch) {
     const tenantId = requireAuth(req);
-    if (!tenantId) return send(res, 401, { error: 'auth_required' });
-    const messages = workers.listMessages(tenantId, msgMatch[1]);
+    if (!tenantId) {
+      const qe = getLastQuotaError();
+      if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
+      return send(res, 401, { error: 'auth_required' });
+    }
+    const customerId = (url.searchParams.get('customerId') ?? '').toString().slice(0, 128);
+    if (!customerId) return send(res, 400, { error: 'customerId_required' });
+    const messages = workers.listMessages(tenantId, msgMatch[1], customerId);
     return send(res, 200, { messages });
   }
 
@@ -1964,10 +2026,23 @@ const server = http.createServer(async (req, res) => {
   const chatStreamMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat\/stream$/);
   if (req.method === 'POST' && chatStreamMatch) {
     const tenantId = requireAuth(req);
-    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    if (!tenantId) {
+      const qe = getLastQuotaError();
+      if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
+      return send(res, 401, { error: 'auth_required' });
+    }
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+    if (rejectOversizedMessage(res, body)) return;
+    if (!body.testMode && !body.demoMode) {
+      const pre = workers.getWorker(tenantId, chatStreamMatch[1]);
+      if (!pre) return send(res, 404, { error: 'not_found' });
+      const prePaid = pre.paidUntil && new Date(pre.paidUntil) > new Date();
+      if (pre.status !== 'active' || !prePaid || pre.paused) {
+        return send(res, 402, { error: 'not_paid_or_paused', message: 'worker is paused or not paid', paused: !!pre.paused, paidUntil: pre.paidUntil, status: pre.status });
+      }
+    }
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache',
@@ -1996,18 +2071,24 @@ const server = http.createServer(async (req, res) => {
   const chatMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat$/);
   if (req.method === 'POST' && chatMatch) {
     const tenantId = requireAuth(req);
-    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    if (!tenantId) {
+      const qe = getLastQuotaError();
+      if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
+      return send(res, 401, { error: 'auth_required' });
+    }
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
-    const res2 = await workers.chatWithWorker({
+    if (rejectOversizedMessage(res, body)) return;
+    const workerId = chatMatch[1];
+    const res2 = await withChatLock(workerId, () => workers.chatWithWorker({
       tenantId,
-      workerId: chatMatch[1],
+      workerId,
       userMessage: body.message,
       customerId: body.customerId ?? '',
       testMode: !!body.testMode,
       demoMode: !!body.demoMode,
-    });
+    }));
     return send(res, res2.status ?? 200, res2);
   }
 
@@ -2018,6 +2099,7 @@ const server = http.createServer(async (req, res) => {
     const { text: raw } = await readBody(req, BODY_LARGE);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+    if (rejectOversizedMessage(res, body)) return;
     const res2 = await workers.chatWithWorker({ tenantId, workerId: testAgentMatch[1], userMessage: body.message, customerId: body.customerId ?? 'test_customer', testMode: true });
     return send(res, res2.status ?? 200, res2);
   }

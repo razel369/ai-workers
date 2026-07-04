@@ -1330,11 +1330,13 @@ export function getTenantDb(tenantId) {
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       worker_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_messages_worker ON messages(worker_id, id);
+    CREATE INDEX IF NOT EXISTS idx_messages_customer ON messages(worker_id, customer_id, id);
     CREATE TABLE IF NOT EXISTS purchases (
       id TEXT PRIMARY KEY,
       worker_id TEXT NOT NULL,
@@ -1473,6 +1475,8 @@ export function getTenantDb(tenantId) {
   try { db.exec(`ALTER TABLE workers ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { db.exec(`ALTER TABLE workers ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'agent'`); } catch {}
   try { db.exec(`ALTER TABLE leads ADD COLUMN score INTEGER`); } catch {}
+  try { db.exec(`ALTER TABLE messages ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''`); } catch {}
+  try { db.exec(`ALTER TABLE outbox ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`); } catch {}
   tenantDbs.set(tenantId, { db, lastUsed: Date.now() });
   return db;
 }
@@ -1841,13 +1845,19 @@ function parseWorkerRow(r) {
   };
 }
 
+const WORKER_NAME_RE = /^[\p{L}\p{N}\s\-,.&'"\-_]{1,80}$/u;
+
 export function updateWorker(tenantId, workerId, patch) {
   const db = getTenantDb(tenantId);
   const existing = db.prepare(`SELECT id FROM workers WHERE id = ?`).get(workerId);
   if (!existing) return { ok: false, error: 'not_found' };
   const fields = [];
   const values = [];
-  if (patch.name !== undefined) { fields.push('name = ?'); values.push(String(patch.name).slice(0, 80)); }
+  if (patch.name !== undefined) {
+    const nameCandidate = String(patch.name).slice(0, 80);
+    if (!WORKER_NAME_RE.test(nameCandidate)) return { ok: false, error: 'invalid_name' };
+    fields.push('name = ?'); values.push(nameCandidate);
+  }
   if (patch.persona !== undefined) { fields.push('persona = ?'); values.push(String(patch.persona)); }
   if (patch.tasks !== undefined) { fields.push('tasks_json = ?'); values.push(JSON.stringify(patch.tasks)); }
   if (patch.knowledge !== undefined) { fields.push('knowledge = ?'); values.push(String(patch.knowledge)); }
@@ -1870,20 +1880,29 @@ export function updateWorker(tenantId, workerId, patch) {
 
 export function deleteWorker(tenantId, workerId) {
   const db = getTenantDb(tenantId);
-  const r = db.prepare(`DELETE FROM workers WHERE id = ?`).run(workerId);
-  db.prepare(`DELETE FROM messages WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM rentals WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM customer_memories WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM leads WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM escalations WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM outbox WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM conversation_summaries WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM customer_profiles WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM schedule_callbacks WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM followup_triggers WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM crm_notes WHERE worker_id = ?`).run(workerId);
-  db.prepare(`DELETE FROM purchases WHERE worker_id = ?`).run(workerId);
-  return r.changes > 0;
+  try {
+    db.exec('BEGIN');
+    const r = db.prepare(`DELETE FROM workers WHERE id = ?`).run(workerId);
+    db.prepare(`DELETE FROM messages WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM rentals WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM customer_memories WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM leads WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM escalations WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM outbox WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM conversation_summaries WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM customer_profiles WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM schedule_callbacks WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM followup_triggers WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM crm_notes WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM purchases WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM agent_actions WHERE worker_id = ?`).run(workerId);
+    db.prepare(`DELETE FROM weekly_digests WHERE worker_id = ?`).run(workerId);
+    db.exec('COMMIT');
+    return r.changes > 0;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw e;
+  }
 }
 
 export function adminMarkPaid({ workerId, tenantId, days, paymentChannel, paymentReference, amountIls }) {
@@ -1950,17 +1969,20 @@ export function adminWorkerHealth(workerId) {
     const dbPath = path.join(dir, 'workers.db');
     if (!fs.existsSync(dbPath)) continue;
     const db = new DatabaseSync(dbPath);
-    const row = db.prepare(`SELECT id, name, tenant_id AS tenantId, status, paid_until AS paidUntil FROM workers WHERE id = ?`).get(workerId);
-    if (!row) { db.close(); continue; }
-    const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
-    const last24 = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
-    const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
-    const openEsc = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
-    const pendingOut = db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE status='pending'`).get()?.c ?? 0;
-    const lastErr = db.prepare(`SELECT COUNT(*) AS c FROM agent_actions WHERE tool_name='error' AND created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
-    const lastMsgAt = db.prepare(`SELECT MAX(created_at) AS m FROM messages`).get()?.m ?? null;
-    db.close();
-    return { ...row, messageCount, messagesLast24h: last24, leadCount, openEscalations: openEsc, pendingOutbox: pendingOut, agentErrorsLast24h: lastErr, lastMessageAt: lastMsgAt };
+    try {
+      const row = db.prepare(`SELECT id, name, status, paid_until AS paidUntil FROM workers WHERE id = ?`).get(workerId);
+      if (!row) continue;
+      const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+      const last24 = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
+      const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+      const openEsc = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
+      const pendingOut = db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE status='pending'`).get()?.c ?? 0;
+      const lastErr = db.prepare(`SELECT COUNT(*) AS c FROM agent_actions WHERE tool_name='error' AND created_at >= datetime('now','-1 day')`).get()?.c ?? 0;
+      const lastMsgAt = db.prepare(`SELECT MAX(created_at) AS m FROM messages`).get()?.m ?? null;
+      return { ...row, tenantId: tid, messageCount, messagesLast24h: last24, leadCount, openEscalations: openEsc, pendingOutbox: pendingOut, agentErrorsLast24h: lastErr, lastMessageAt: lastMsgAt };
+    } finally {
+      try { db.close(); } catch {}
+    }
   }
   return null;
 }
@@ -2001,14 +2023,15 @@ export function adminFindWorker(workerId) {
 
 // --- Messages / chat ------------------------------------------------------
 
-export function listMessages(tenantId, workerId, limit = 100) {
+export function listMessages(tenantId, workerId, customerId, limit = 100) {
   const db = getTenantDb(tenantId);
-  return db.prepare(`SELECT id, role, content, created_at AS createdAt FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ?`).all(workerId, limit);
+  const cid = customerId ?? '';
+  return db.prepare(`SELECT id, role, content, created_at AS createdAt FROM messages WHERE worker_id = ? AND customer_id = ? ORDER BY id ASC LIMIT ?`).all(workerId, cid, limit);
 }
 
-function appendMessage(tenantId, workerId, role, content) {
+function appendMessage(tenantId, workerId, role, content, customerId = '') {
   const db = getTenantDb(tenantId);
-  db.prepare(`INSERT INTO messages (worker_id, role, content, created_at) VALUES (?, ?, ?, ?)`).run(workerId, role, content, new Date().toISOString());
+  db.prepare(`INSERT INTO messages (worker_id, customer_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`).run(workerId, customerId ?? '', role, content, new Date().toISOString());
 }
 
 function templateRuntimeHint(templateId) {
@@ -2413,6 +2436,10 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   const row = db.prepare(`SELECT * FROM workers WHERE id = ?`).get(workerId);
   if (!row) return { ok: false, status: 404, error: 'not_found' };
   const worker = parseWorkerRow(row);
+  // Hard cap on inbound message size to prevent abuse / token blowups
+  if (typeof userMessage === 'string') userMessage = userMessage.slice(0, 4000);
+  else if (userMessage != null) userMessage = String(userMessage).slice(0, 4000);
+  else userMessage = '';
   const srvCfg = getServerLlmConfig();
   if (srvCfg.apiKey) {
     worker.llm.provider = worker.llm.provider || srvCfg.provider;
@@ -2439,10 +2466,11 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     };
   }
 
-  if (!testMode) appendMessage(tenantId, workerId, 'user', userMessage);
+  const customerIdForContext = customerId ?? '';
+  if (!testMode) appendMessage(tenantId, workerId, 'user', userMessage, customerIdForContext);
   const history = testMode
     ? []
-    : db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId);
+    : db.prepare(`SELECT role, content FROM messages WHERE worker_id = ? AND customer_id = ? ORDER BY id ASC LIMIT ${CHAT_HISTORY_LIMIT}`).all(workerId, customerIdForContext);
   const isFirstDemoReply = demoMode && !history.some((m) => m.role === 'assistant');
   const memories = getCustomerMemories(tenantId, workerId, customerId);
   const convSummaries = customerId ? getConversationSummaries(tenantId, workerId, customerId) : [];
@@ -2597,7 +2625,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     upsertCustomerProfile(tenantId, workerId, customerId, { lastIntent: userMessage.slice(0, 120) });
   }
 
-  if (!testMode) appendMessage(tenantId, workerId, 'assistant', reply);
+  if (!testMode) appendMessage(tenantId, workerId, 'assistant', reply, customerIdForContext);
   if (!testMode && toolCallsLog.length > 0) {
     logAgentActions(tenantId, workerId, customerId, toolCallsLog);
   }

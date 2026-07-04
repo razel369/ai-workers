@@ -9,6 +9,15 @@ const PAYPAL_WEBHOOK_SECRET = process.env.PAYPAL_WEBHOOK_SECRET ?? '';
 const PAYMENT_WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET ?? '';
 const ACTIVATION_SLA_HOURS = Number(process.env.ACTIVATION_SLA_HOURS ?? 24);
 
+if (process.env.NODE_ENV === 'production') {
+  if (!BIT_WEBHOOK_SECRET && !PAYMENT_WEBHOOK_SECRET) {
+    console.warn('[startup] BIT_WEBHOOK_SECRET / PAYMENT_WEBHOOK_SECRET not set — bit webhook endpoint will reject all requests');
+  }
+  if (!PAYPAL_WEBHOOK_SECRET) {
+    console.warn('[startup] PAYPAL_WEBHOOK_SECRET not set — paypal webhook endpoint will reject all requests');
+  }
+}
+
 export function paymentConfigStatus() {
   return {
     autoVerifyEnabled: PAYMENT_AUTO_VERIFY,
@@ -80,8 +89,14 @@ export function tryAutoVerifyActivationProof({ reference, channel }) {
  */
 export async function handlePaymentWebhooks(req, res, url, { send, readBody, markActivationRequestReviewed, recordAdminAudit, findPendingActivation }) {
   if (url.pathname === '/api/webhooks/bit' && req.method === 'POST') {
-    const secretOk = verifySharedSecret(req, BIT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET);
-    if (!secretOk && (BIT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET)) {
+    const bitSecret = BIT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET;
+    if (!bitSecret) {
+      console.warn('[payment-webhooks] webhook_secret_not_configured — refusing unverified bit webhook');
+      send(res, 503, { error: 'webhook_secret_not_configured' });
+      return true;
+    }
+    const secretOk = verifySharedSecret(req, bitSecret);
+    if (!secretOk) {
       send(res, 401, { error: 'invalid_webhook_secret' });
       return true;
     }
