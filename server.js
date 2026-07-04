@@ -2451,7 +2451,7 @@ else console.warn(`  WARN: no LLM_API_KEY set — workers will use mock replies`
 
 function startServer() {
   server.listen(PORT, () => {
-    console.log(`${AGENT_NAME} listening on ${PUBLIC_BASE_URL} (build: stats-v2)`);
+    console.log(`${AGENT_NAME} listening on ${PUBLIC_BASE_URL}`);
     console.log(`  Marketplace: ${PUBLIC_BASE_URL}/marketplace`);
     console.log(`  Payment channels:`);
     if (PAYPAL_ME) console.log(`    - PayPal.me/${PAYPAL_ME}`);

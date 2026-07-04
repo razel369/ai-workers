@@ -236,6 +236,10 @@ const APP = (() => {
     if (body.error === 'not_found') return 'לא מצאנו את העובד — ייתכן שהנתונים נמחקו. התחילו מההתחלה.';
     if (body.error === 'unknown_template') return 'תבנית לא נמצאה — בחרו שוב מהקטלוג';
     if (body.error === 'payment_required') return 'נדרש תשלום להפעלה מלאה — אפשר להמשיך בניסיון חינם';
+    if (body.error === 'rate_limited' || body.error === 'signup_rate_limited') return 'הייתם מהירים מדי. חכו כמה שניות ונסו שוב 🙏';
+    if (body.error === 'agent_timeout' || body.error === 'timeout') return 'העובד לא הספיק לענות — נסו שוב או שאלה קצרה יותר';
+    if (body.error === 'llm_unavailable' || body.error === 'no_api_key') return 'שירות ה-AI עומד בעומס — נסו שוב בעוד רגע';
+    if (body.error === 'forbidden' || body.error === 'not_authorized') return 'אין לכם הרשאה לפעולה הזו';
     return fallback;
   }
 
@@ -2761,6 +2765,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       const row = document.getElementById('success-cta');
       if (row) row.style.display = 'flex';
     }
+    let userMsgCount = messages.filter((m) => m.role === 'user').length;
     let speechRec = null;
     let listening = false;
 
@@ -2814,6 +2819,19 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       el.appendChild(badge);
     }
 
+    function maybeShowUpgradeHint() {
+      if (!isDemo) return;
+      if (userMsgCount < 3) return;
+      if (document.getElementById('upgrade-hint')) return;
+      const hint = document.createElement('div');
+      hint.className = 'upgrade-hint';
+      hint.id = 'upgrade-hint';
+      hint.innerHTML = `${icon('sparkle', 14)} <strong>רוצים שהעובד יענה ללקוחות אמיתיים?</strong>
+        <a href="#/workers/activate/${workerId}">${icon('arrow-right', 12)} הפעילו עכשיו</a>
+        <button type="button" class="upgrade-hint-x" aria-label="סגור" onclick="this.parentNode.remove()">${icon('x', 12)}</button>`;
+      win.parentNode.insertBefore(hint, win.nextSibling);
+    }
+
     async function sendJsonChat(text) {
       const r = await api('/api/workers/' + workerId + '/chat', {
         method: 'POST',
@@ -2839,6 +2857,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         win.appendChild(am);
         appendConfidence(am, quality);
         if (!gotFirstReply) { gotFirstReply = true; showShareSuccess(workerId, w.name); }
+        userMsgCount++;
+        maybeShowUpgradeHint();
         win.scrollTop = win.scrollHeight;
       };
 
