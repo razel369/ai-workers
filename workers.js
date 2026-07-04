@@ -2049,14 +2049,18 @@ RULES:
 - Keep replies concise: aim for under 200 words unless more is genuinely needed`.trim();
 }
 
-function polishDemoReply(reply, worker, { isFirst = false } = {}) {
+function polishDemoReply(reply, worker, { isFirst = false, runtime = 'mock' } = {}) {
+  const isMockRuntime = runtime === 'mock' || runtime === 'mock_agent' || runtime === 'mock_fallback' || runtime === 'demo';
   let clean = String(reply || '')
     .replace(/^\([^)]+\)\s*\n+/i, '')
     .replace(/\n\n\(This is a demo reply[^\)]*\)\.?/gi, '')
     .replace(/\n\n\(Contact the platform admin[^\)]*\)\.?/gi, '')
     .replace(/\n\n\(Demo mode[^\)]*\)\.?/gi, '')
     .trim();
-  if (!isFirst) return clean || reply;
+  // Demo-mode "header" (שלום, אני ... זו תשובה לדוגמה) is only relevant when the
+  // reply actually came from the mock path. With a real LLM, the assistant already
+  // produced a real opening line — adding a stale mock header confuses customers.
+  if (!isFirst || !isMockRuntime) return clean || reply;
   const name = String(worker.name || '').trim();
   const parts = name.split(' — ');
   const biz = parts.length > 1 ? parts[parts.length - 1].trim() : name || 'העסק';
@@ -2509,7 +2513,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   }
 
   if (demoMode && reply) {
-    reply = polishDemoReply(reply, worker, { isFirst: isFirstDemoReply });
+    reply = polishDemoReply(reply, worker, { isFirst: isFirstDemoReply, runtime });
   }
 
   if (!testMode && customerId) {
