@@ -16,6 +16,7 @@ COPY media-tools.js ./
 COPY templates-media.js ./
 COPY workers-ui.html ./
 COPY assets/ ./assets/
+COPY brand/ ./brand/
 COPY mcp-client.js ./
 COPY skills.js ./
 COPY legal-pages.js ./
