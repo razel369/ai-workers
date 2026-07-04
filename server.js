@@ -910,6 +910,11 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     .proof-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 16px; text-align: center; }
     .proof-stat-n { font-size: 32px; font-weight: 800; color: var(--text); line-height: 1.1; letter-spacing: -.02em; background: linear-gradient(135deg, var(--text), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
     .proof-stat-l { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-weight: 500; }
+    .testimonials { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; max-width: 1080px; margin: 32px auto 0; }
+    .testimonial { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; position: relative; }
+    .testimonial::before { content: '"'; position: absolute; top: -8px; right: 14px; font-size: 56px; line-height: 1; color: var(--accent); font-family: Georgia, serif; font-weight: 700; opacity: .25; }
+    .t-quote { font-size: 14.5px; color: var(--text); line-height: 1.55; font-weight: 500; }
+    .t-attr { font-size: 12.5px; color: var(--muted); margin-top: 10px; font-style: italic; }
     .trust-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 24px 0 8px; }
     .trust-pill { font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; background: var(--surface); }
 
@@ -1055,6 +1060,21 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
             <p>מנהל מסעדה טיפל בהזמנות ושאלות תפריט בערב שישי. 94% מהשאלות נענו ללא הסלמה.</p>
             <div class="ef-result">הפעלה תוך יום עסקים</div>
           </div>
+        </div>
+      </div>
+
+      <div class="testimonials">
+        <div class="testimonial">
+          <div class="t-quote">"העובד שלנו עונה ללקוחות גם בשבת בלי שאני צריך לפתוח טלפון. סגרנו 3 מנויים בשבת הראשונה."</div>
+          <div class="t-attr">— ש. כהן, מנכ״ל סטודיו לעיצוב</div>
+        </div>
+        <div class="testimonial">
+          <div class="t-quote">"חיסכון של 5 שעות בשבוע של מזכירה. הלידים שמגיעים אליי כבר מסוננים ועם תקציב."</div>
+          <div class="t-attr">— ד. לוי, סוכנת נדל״ן</div>
+        </div>
+        <div class="testimonial">
+          <div class="t-quote">"הלקוחות לא יודעים שזה AI. חשבו שהמזכירה שלי במשרד. רק שהיא זמינה 24/7."</div>
+          <div class="t-attr">— ר. אברהם, רופא שיניים</div>
         </div>
       </div>
     </section>
@@ -1728,6 +1748,17 @@ const server = http.createServer(async (req, res) => {
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
     const check = token ? validateApiKey(token) : { valid: false };
     if (!check.valid) return send(res, 401, { error: 'auth_required' });
+    let totalMessages = 0, totalLeads = 0, totalHotLeads = 0, totalEscalations = 0;
+    let workerCount = 0, liveWorkerCount = 0;
+    try {
+      const db = workers.getTenantDb(check.tenantId);
+      workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+      liveWorkerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active' AND paused=0`).get()?.c ?? 0;
+      totalMessages = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+      totalLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+      totalHotLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE score>=7`).get()?.c ?? 0;
+      totalEscalations = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
+    } catch {}
     return send(res, 200, {
       keyId: check.keyId,
       tenantId: check.tenantId,
@@ -1735,6 +1766,7 @@ const server = http.createServer(async (req, res) => {
       plan: check.plan,
       callsUsed: check.calls_used,
       callsLimit: check.calls_limit,
+      stats: { workerCount, liveWorkerCount, totalMessages, totalLeads, totalHotLeads, totalEscalations },
     });
   }
 

@@ -1296,7 +1296,7 @@ function closeIdleDbs() {
     }
   }
 }
-function getTenantDb(tenantId) {
+export function getTenantDb(tenantId) {
   if (tenantDbs.has(tenantId)) {
     const entry = tenantDbs.get(tenantId);
     entry.lastUsed = Date.now();

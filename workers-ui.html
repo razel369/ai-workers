@@ -1374,6 +1374,17 @@ async function renderAccount(alive = () => true) {
             </div>
           </div>
         </section>
+        ${a.stats ? `
+        <section class="card" style="margin-top:14px">
+          <h3>${icon('chart', 16)} סיכום פעילות</h3>
+          <div class="ap-stats-grid">
+            <div class="ap-stat"><div class="ap-stat-n">${a.stats.liveWorkerCount}/${a.stats.workerCount}</div><div class="ap-stat-l">עובדים פעילים</div></div>
+            <div class="ap-stat"><div class="ap-stat-n">${(a.stats.totalMessages||0).toLocaleString('he-IL')}</div><div class="ap-stat-l">שיחות</div></div>
+            <div class="ap-stat"><div class="ap-stat-n">${(a.stats.totalLeads||0).toLocaleString('he-IL')}</div><div class="ap-stat-l">לידים</div></div>
+            <div class="ap-stat"><div class="ap-stat-n">${(a.stats.totalHotLeads||0).toLocaleString('he-IL')}</div><div class="ap-stat-l">לידים חמים</div></div>
+            <div class="ap-stat"><div class="ap-stat-n">${a.stats.totalEscalations||0}</div><div class="ap-stat-l">הסלמות פתוחות</div></div>
+          </div>
+        </section>` : ''}
         <section class="card" style="margin-top:14px">
           <h3>${icon('key', 16)} API key</h3>
           <p class="muted">מפתח זה מזהה את העסק שלך. שמור עליו בסוד. אפשר להחליף אותו בכל עת.</p>

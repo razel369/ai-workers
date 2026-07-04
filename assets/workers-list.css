@@ -395,6 +395,10 @@
 .ap-row:last-child { border-bottom: none; }
 .ap-row strong { color: var(--text); font-weight: 700; text-transform: capitalize; }
 .ap-row code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); background: rgba(40,38,32,.05); padding: 2px 8px; border-radius: 6px; direction: ltr; }
+.ap-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-top: 10px; }
+.ap-stat { background: rgba(40,38,32,.04); border: 1px solid rgba(40,38,32,.08); border-radius: 12px; padding: 14px 12px; text-align: center; }
+.ap-stat-n { font-size: 24px; font-weight: 800; color: var(--text); line-height: 1.1; }
+.ap-stat-l { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 
 /* ---- Paused worker visual state ---- */
 .wl-card.is-paused { opacity: 0.7; }
