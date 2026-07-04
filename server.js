@@ -742,10 +742,17 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>עובדי AI — העסק שלך עובד 24/7</title>
+  <title>Nightdesk — עובדי AI שלא ישנים | ₪199 לחודש</title>
+  <meta name="description" content="עובד דיגיטלי שעונה ללקוחות 24/7, שומר לידים ומעביר דחופים — בלי משכורת, בלי חופשות. ₪199 לחודש, פחות מ-₪7 ליום." />
+  <meta property="og:title" content="Nightdesk — עובדי AI שלא ישנים" />
+  <meta property="og:description" content="עובד דיגיטלי 24/7 לעסק שלך. ₪199 לחודש, פחות מ-₪7 ליום." />
+  <meta property="og:image" content="/brand/logo-nightdesk-horizontal.svg" />
+  <meta name="theme-color" content="#080b10" />
+  <link rel="icon" type="image/svg+xml" href="/brand/logo-nightdesk-icon.svg" />
+  <link rel="apple-touch-icon" href="/brand/logo-nightdesk-icon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Secular+One&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700;900&family=Heebo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/material3-theme.css?v=nightdesk10">
   <style>
     :root {
@@ -877,6 +884,10 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     .footer { text-align: center; padding: 40px 0; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
     .footer a { color: var(--accent); }
     .footer .fm { display: flex; gap: 14px; justify-content: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .footer-brand { display: inline-flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .footer-brand img { display: block; }
+    .footer-brand-name { font-family: 'Frank Ruhl Libre', 'Heebo', serif; font-size: 22px; font-weight: 900; color: var(--text); line-height: 1; }
+    .footer-brand-tag { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
     /* === Utilities === */
     code { background: var(--surface2); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
@@ -948,11 +959,11 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
     <div class="hero anim anim-1 section-order-hero-cta hero-split">
       <div class="hero-copy">
-      <div class="badge">פתרון B2B · עברית · תשלום מקומי</div>
-      <h1>העסק <strong class="highlight">לא ישן</strong> — גם כשאתה כן</h1>
-      <p class="subtitle">מרפאות, נדל״ן ומסעדות בישראל — עובד AI שמקבל פניות ב-23:00, עונה ללקוחות, ומעביר רק מה שדחוף.</p>
+      <div class="badge">Nightdesk · עברית · תשלום מקומי</div>
+      <h1>עובד שעונה ללקוחות שלך <strong class="highlight">24/7</strong> — בלי משכורת, בלי חופשות</h1>
+      <p class="subtitle">עובד דיגיטלי שלא ישן: מקבל פניות ב-23:00, עונה בעברית, שומר לידים ומעביר רק מה שדחוף. <strong>₪199 לחודש</strong> — פחות מ-₪7 ליום.</p>
       <div class="cta-group">
-        <a href="/marketplace#/magic" class="cta">נסה עכשיו בחינם ←</a>
+        <a href="/marketplace#/magic" class="cta">גייס עובד ב-3 דקות ←</a>
         <a href="/marketplace" class="cta-secondary">לשוק העובדים ←</a>
       </div>
       <div class="proof-strip">
@@ -1170,6 +1181,13 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
   </div>
 
   <div class="footer">
+    <div class="footer-brand">
+      <img src="/brand/logo-nightdesk-mono.svg" alt="Nightdesk" width="44" height="44" />
+      <div>
+        <div class="footer-brand-name">Nightdesk</div>
+        <div class="footer-brand-tag">עובדים דיגיטליים שלא ישנים</div>
+      </div>
+    </div>
     <div class="fm">
       <a href="/marketplace">שוק העובדים</a>
       <a href="/invoice">איך משלמים</a>
@@ -2505,6 +2523,23 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { error: 'not_found' });
     }
     return;
+  }
+
+  // Serve static brand assets from ./brand/ (logos, favicons, OG)
+  if (req.method === 'GET' && url.pathname.startsWith('/brand/')) {
+    const rawPath = path.join(__dirname, url.pathname);
+    const filePath = path.resolve(rawPath);
+    const brandDir = path.resolve(path.join(__dirname, 'brand'));
+    if (!filePath.startsWith(brandDir)) return send(res, 403, { error: 'forbidden' });
+    try {
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const ct = ext === '.svg' ? 'image/svg+xml' : (ext === '.png' ? 'image/png' : 'application/octet-stream');
+      res.writeHead(200, { 'content-type': ct, 'cache-control': 'public, max-age=86400' });
+      return res.end(content);
+    } catch {
+      return send(res, 404, { error: 'not_found' });
+    }
   }
 
   // Serve static assets from ./assets/

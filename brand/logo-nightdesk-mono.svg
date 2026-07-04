@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Nightdesk monochrome mark">
+  <title>Nightdesk mono mark</title>
+  <defs>
+    <!-- Single warm-gold gradient  no background, no stroke -->
+    <linearGradient id="mono-gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e8c79a"/>
+      <stop offset="55%" stop-color="#d4a574"/>
+      <stop offset="100%" stop-color="#b88a5a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Monochrome speech bubble outline + fill, all in gold on transparent -->
+  <path d="
+      M 56 70
+      H 200
+      Q 218 70 218 88
+      V 168
+      Q 218 186 200 186
+      H 108
+      L 80 214
+      L 86 186
+      H 56
+      Q 38 186 38 168
+      V 88
+      Q 38 70 56 70
+      Z"
+    fill="none"
+    stroke="url(#mono-gold)"
+    stroke-width="6"
+    stroke-linejoin="round"/>
+
+  <!-- Crescent moon in gold, knockout for the crescent shape -->
+  <circle cx="128" cy="126" r="40" fill="url(#mono-gold)"/>
+  <!-- Crescent cutout uses a transparent-defeating mask alternative:
+       we draw a filled rect in the page background tone? No  transparent required.
+       Instead we use mask to subtract the offset disc. -->
+  <mask id="mono-cut" maskUnits="userSpaceOnUse">
+    <rect x="0" y="0" width="256" height="256" fill="#000"/>
+    <circle cx="128" cy="126" r="40" fill="#fff"/>
+    <circle cx="143" cy="116" r="35" fill="#000"/>
+  </mask>
+
+  <g mask="url(#mono-cut)">
+    <rect x="0" y="0" width="256" height="256" fill="url(#mono-gold)"/>
+  </g>
+
+  <!-- Re-stroke the moon outline so the crescent reads cleanly on any background -->
+  <path d="M 143 91 A 40 40 0 1 0 143 161 A 35 35 0 1 1 143 91 Z"
+        fill="url(#mono-gold)"/>
+</svg>
