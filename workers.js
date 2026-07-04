@@ -1919,9 +1919,20 @@ async function runMockAgentLoop({ worker, userMessage, toolCtx, enabledToolNames
     const phone = extractPhone(msg) || toolCtx.customerProfile?.phone || 'unknown';
     await runTool('schedule_callback', { phone, preferredTime: 'בהקדם', notes: msg.slice(0, 200) });
   }
-  if ((/מנהל|אדם|נציג|human|החזר|refund|משפטי|legal|כועס|angry/i.test(msg)) && can('escalate_to_human')) {
-    const priority = /דחוף|urgent|כועס|החזר|refund/i.test(msg) ? 'high' : 'normal';
-    await runTool('escalate_to_human', { reason: msg.slice(0, 300), priority, urgency: priority });
+  // Escalation triggers: explicit words, urgent medical / legal, hostile tone
+  const isUrgentMedical = /כאב.*חזה|קוצר נשימה|דימום|התעלף|התעלפות|כאב חזק|חירום/i.test(msg);
+  const isUrgentLegal = /דיון.*מחר|צו.*עיכוב|מעצר|מאסר|חוב.*דחוף/i.test(msg);
+  const isHostile = /תבע|תובע|גנב|רמאות|אכזב|מתעלל/i.test(msg);
+  const triggerEscalate = /מנהל|אדם|נציג|human|החזר|refund|משפטי|legal|כועס|angry|דחוף|urgent/i.test(msg)
+    || isUrgentMedical || isUrgentLegal || isHostile;
+  if (triggerEscalate && can('escalate_to_human')) {
+    const priority = /דחוף|urgent|כועס|החזר|refund|חירום|isUrgentMedical|isUrgentLegal/i.test(msg) || isUrgentMedical || isUrgentLegal ? 'high' : 'normal';
+    const reasonText = isUrgentMedical
+      ? 'Urgent medical symptom — recommend immediate human/ER'
+      : isUrgentLegal
+        ? 'Urgent legal matter (court deadline / authority notice)'
+        : msg.slice(0, 300);
+    await runTool('escalate_to_human', { reason: reasonText, priority, urgency: priority });
   }
   if (can('search_knowledge') && msg.length > 8 && !/^(שלום|היי|hello|hi)\b/i.test(msg.trim())) {
     const kbRes = await runTool('search_knowledge', { query: msg.slice(0, 120), maxChunks: 3 });

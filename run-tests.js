@@ -60,19 +60,21 @@ async function stopServer() {
 startServer();
 
 try {
-    await waitForHealth(baseUrl);
-    await runSuite('test.js');
-    await runSuite('worker-tests.js');
-    await stopServer();
-    const browserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-browser-'));
-    port = await getFreePort();
-    baseUrl = `http://localhost:${port}`;
-    env = buildEnv(browserRoot, port, baseUrl);
-    startServer();
-    await waitForHealth(baseUrl);
-    await runSuite('browser-flow-test.js');
-    await stopServer();
-    fs.rmSync(browserRoot, { recursive: true, force: true });
+  await waitForHealth(baseUrl);
+  await runSuite('test.js');
+  await runSuite('worker-tests.js');
+  await stopServer();
+  const browserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-browser-'));
+  port = await getFreePort();
+  baseUrl = `http://localhost:${port}`;
+  env = buildEnv(browserRoot, port, baseUrl);
+  startServer();
+  await waitForHealth(baseUrl);
+  await runSuite('browser-flow-test.js');
+  await stopServer();
+  fs.rmSync(browserRoot, { recursive: true, force: true });
+  // AI eval harness runs standalone (mock mode, no server needed)
+  await runSuite('eval-harness.js');
   console.log('\nALL SUITES PASSED');
 } finally {
   await stopServer();
