@@ -28,6 +28,7 @@ function buildEnv(root, listenPort, publicUrl) {
     DB_PATH: path.join(root, 'earnings.db'),
     TENANTS_DIR: path.join(root, 'tenants'),
     TRUST_PROXY_HEADERS: '',
+    RATE_LIMIT_PER_MIN: String(Number(process.env.RATE_LIMIT_PER_MIN ?? 120) * 5),
     PADDLE_CLIENT_TOKEN: process.env.PADDLE_CLIENT_TOKEN ?? 'test_client_token',
     PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID ?? 'pri_test_monthly',
     PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET ?? 'test-paddle-webhook-secret',

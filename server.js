@@ -66,6 +66,7 @@ import {
   handlePaddleWebhook,
 } from './paddle-billing.js';
 import { buildEmbedScript } from './embed-widget.js';
+import * as urlSecurity from './url-security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1964,6 +1965,63 @@ const server = http.createServer(async (req, res) => {
     const insights = workers.getWorkerInsights(tenantId, insightsMatch[1]);
     if (!insights) return send(res, 404, { error: 'not_found' });
     return send(res, 200, insights);
+  }
+
+  const digestMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/weekly-digest$/);
+  if (digestMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    if (req.method === 'GET') {
+      const digest = workers.getWeeklyDigest(tenantId, digestMatch[1]);
+      if (!digest) return send(res, 404, { error: 'not_found' });
+      return send(res, 200, digest);
+    }
+    if (req.method === 'POST') {
+      const { text: raw } = await readBody(req, BODY_TINY);
+      let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+      const channel = String(body.channel ?? 'webhook').toLowerCase();
+      const digest = workers.getWeeklyDigest(tenantId, digestMatch[1]);
+      if (!digest) return send(res, 404, { error: 'not_found' });
+      const webhookInt = integrations.getIntegrationsByType(tenantId, 'webhook')[0];
+      let delivery = null;
+      if (channel === 'webhook' && webhookInt?.config?.hookUrl) {
+        try {
+          const text = workers.formatWeeklyDigestText(digest);
+          const html = workers.formatWeeklyDigestHtml(digest);
+          const url = webhookInt.config.hookUrl;
+          const res = await urlSecurity.fetchPublicHttpContent(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              type: 'weekly_digest',
+              workerId: digestMatch[1],
+              subject: `סיכום שבועי — ${digest.worker.name}`,
+              text,
+              html,
+              digest,
+            }),
+          });
+          delivery = { ok: res.status >= 200 && res.status < 300, status: res.status };
+        } catch (e) {
+          delivery = { ok: false, error: e.message };
+        }
+      } else if (channel === 'webhook' && !webhookInt?.config?.hookUrl) {
+        return send(res, 400, { ok: false, error: 'no_webhook_configured' });
+      }
+      const sentAt = workers.recordWeeklyDigest(tenantId, digestMatch[1], digest, channel);
+      return send(res, 200, { ok: true, sentAt, delivery });
+    }
+    return send(res, 405, { error: 'method_not_allowed' });
+  }
+
+  const digestHtmlMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/weekly-digest\.html$/);
+  if (req.method === 'GET' && digestHtmlMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const digest = workers.getWeeklyDigest(tenantId, digestHtmlMatch[1]);
+    if (!digest) return send(res, 404, { error: 'not_found' });
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    return res.end(workers.formatWeeklyDigestHtml(digest));
   }
 
   const waRouteMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/whatsapp-route$/);

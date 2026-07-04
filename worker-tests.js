@@ -195,6 +195,19 @@ let activationRequestId = null;
   expect('  SSE token events', text.includes('event: token'));
   expect('  SSE done event', text.includes('event: done'));
 }
+{
+  // Weekly digest endpoint: returns KPIs + topics + recent activity
+  const r = await req(`/api/workers/${firstWorkerId}/weekly-digest`, { headers: auth() });
+  expect('weekly-digest -> 200', r.status === 200);
+  expect('  digest has worker block', !!r.body.worker?.id);
+  expect('  digest has KPIs', typeof r.body.kpis?.messagesThisWeek === 'number');
+  expect('  digest has topTopics array', Array.isArray(r.body.topTopics));
+  expect('  digest period is 7 days', r.body.period?.days === 7);
+  const htmlR = await req(`/api/workers/${firstWorkerId}/weekly-digest.html`, { headers: auth() });
+  expect('  digest html -> 200', htmlR.status === 200);
+  expect('  digest html is RTL', /dir="rtl"/.test(htmlR.body));
+  expect('  digest html includes worker name', htmlR.body.includes(r.body.worker.name));
+}
 
 // 6a2. public pre-signup template demo chat
 {
@@ -711,6 +724,15 @@ let integrationId = null;
   });
   expect('POST whatsapp connect with phone only -> 201/200', r.status === 201 || r.status === 200);
 }
-
+{
+  // Weekly digest POST channel=web records the digest locally (no webhook required)
+  const webPost = await req(`/api/workers/${mediaWorkerId}/weekly-digest`, {
+    method: 'POST', headers: auth(), body: JSON.stringify({ channel: 'web' }),
+  });
+  expect('  POST digest channel=web -> 200', webPost.status === 200 && webPost.body.ok === true);
+  expect('  digest records lastSentAt', !!webPost.body.sentAt);
+  const r2 = await req(`/api/workers/${mediaWorkerId}/weekly-digest`, { headers: auth() });
+  expect('  digest lastSentAt is set', !!r2.body.lastSentAt);
+}
 console.log(`\n${failures === 0 ? 'All worker tests passed.' : `${failures} worker test(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -2,6 +2,10 @@
 import './bootstrap-env.js';
 
 import crypto from 'node:crypto';
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1050,6 +1054,220 @@ export function getWorkerInsights(tenantId, workerId) {
   };
 }
 
+const DIGEST_TOPIC_KEYWORDS = {
+  pricing: /מחיר|כמה|עולה|תקציב|price|cost/i,
+  appointment: /תור|פגישה|לקבוע|booking|schedule|יומן/i,
+  complaint: /תלונה|לא מרוצה|בעיה|complaint|broken/i,
+  refund: /החזר|זיכוי|refund/i,
+  callback: /תחזרו|התקשרו|callback|call.?back/i,
+  info: /מידע|פרטים|info|שאלה/i,
+  order: /הזמנה|משלוח|order|tracking/i,
+};
+
+function classifyTopic(text = '') {
+  for (const [topic, re] of Object.entries(DIGEST_TOPIC_KEYWORDS)) {
+    if (re.test(text)) return topic;
+  }
+  return 'other';
+}
+
+export function getWeeklyDigest(tenantId, workerId, { days = 7 } = {}) {
+  const db = getTenantDb(tenantId);
+  const w = db.prepare(`SELECT id, name, template_id FROM workers WHERE id=?`).get(workerId);
+  if (!w) return null;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const prevSince = new Date(Date.now() - days * 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  const messagesThisWeek = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE worker_id=? AND created_at>=?`).get(workerId, since)?.c ?? 0;
+  const messagesPrevWeek = db.prepare(`SELECT COUNT(*) AS c FROM messages WHERE worker_id=? AND created_at>=? AND created_at<?`).get(workerId, prevSince, since)?.c ?? 0;
+  const newLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=? AND created_at>=?`).get(workerId, since)?.c ?? 0;
+  const newLeadsPrev = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=? AND created_at>=? AND created_at<?`).get(workerId, prevSince, since)?.c ?? 0;
+  const hotLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=? AND created_at>=? AND score>=7`).get(workerId, since)?.c ?? 0;
+  const escalationsOpen = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND status='open'`).get(workerId)?.c ?? 0;
+  const escalationsNew = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND created_at>=?`).get(workerId, since)?.c ?? 0;
+  const escalationsHigh = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND created_at>=? AND (urgency='high' OR urgency='critical')`).get(workerId, since)?.c ?? 0;
+  const callbacks = db.prepare(`SELECT COUNT(*) AS c FROM schedule_callbacks WHERE worker_id=? AND created_at>=?`).get(workerId, since)?.c ?? 0;
+  const messagesOut = db.prepare(`SELECT COUNT(*) AS c FROM outbox WHERE worker_id=? AND created_at>=?`).get(workerId, since)?.c ?? 0;
+
+  const trend = (curr, prev) => {
+    if (!prev) return curr > 0 ? 'new' : 'flat';
+    if (curr > prev) return 'up';
+    if (curr < prev) return 'down';
+    return 'flat';
+  };
+
+  const recentUserMessages = db.prepare(
+    `SELECT content FROM messages WHERE worker_id=? AND role='user' AND created_at>=? ORDER BY created_at DESC LIMIT 200`
+  ).all(workerId, since);
+  const topicCounts = {};
+  for (const m of recentUserMessages) {
+    const t = classifyTopic(m.content);
+    topicCounts[t] = (topicCounts[t] || 0) + 1;
+  }
+  const topTopics = Object.entries(topicCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([topic, count]) => ({ topic, count }));
+
+  const recentLeadsList = db.prepare(
+    `SELECT id, full_name AS fullName, phone, score, created_at AS createdAt
+     FROM leads WHERE worker_id=? AND created_at>=? ORDER BY score DESC, created_at DESC LIMIT 5`
+  ).all(workerId, since);
+  const recentEscalationsList = db.prepare(
+    `SELECT id, reason, urgency, status, created_at AS createdAt
+     FROM escalations WHERE worker_id=? AND created_at>=? ORDER BY created_at DESC LIMIT 5`
+  ).all(workerId, since);
+
+  const lastSentAt = db.prepare(
+    `SELECT MAX(sent_at) AS m FROM weekly_digests WHERE worker_id=?`
+  ).get(workerId)?.m ?? null;
+
+  return {
+    worker: { id: w.id, name: w.name, templateId: w.template_id },
+    period: { days, since, until: new Date().toISOString() },
+    headline: buildDigestHeadline({ messagesThisWeek, newLeads, hotLeads, escalationsOpen, escalationsHigh }),
+    kpis: {
+      messagesThisWeek,
+      messagesTrend: trend(messagesThisWeek, messagesPrevWeek),
+      newLeads,
+      newLeadsTrend: trend(newLeads, newLeadsPrev),
+      hotLeads,
+      escalationsOpen,
+      escalationsNew,
+      escalationsHigh,
+      callbacks,
+      messagesOut,
+    },
+    topTopics,
+    recentLeads: recentLeadsList,
+    recentEscalations: recentEscalationsList,
+    lastSentAt,
+  };
+}
+
+function buildDigestHeadline({ messagesThisWeek, newLeads, hotLeads, escalationsOpen, escalationsHigh }) {
+  if (escalationsHigh > 0) return `${escalationsHigh} פניות דחופות דורשות טיפול מיידי`;
+  if (escalationsOpen > 0) return `${escalationsOpen} פניות פתוחות ממתינות לתשובה`;
+  if (hotLeads > 0) return `${hotLeads} לידים חמים מוכנים לפגישה`;
+  if (newLeads > 0) return `${newLeads} לידים חדשים השבוע`;
+  if (messagesThisWeek > 0) return `${messagesThisWeek} שיחות עם לקוחות השבוע`;
+  return 'שבוע שקט — אין פעילות משמעותית';
+}
+
+export function recordWeeklyDigest(tenantId, workerId, digest, channel = 'web') {
+  const db = getTenantDb(tenantId);
+  const sentAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO weekly_digests (worker_id, period_start, period_end, payload_json, sent_at, channel) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    workerId,
+    digest.period.since,
+    digest.period.until,
+    JSON.stringify(digest),
+    sentAt,
+    channel,
+  );
+  return sentAt;
+}
+
+export function formatWeeklyDigestHtml(digest) {
+  const { worker, kpis, topTopics, recentLeads, recentEscalations, headline, period } = digest;
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  const trendIcon = (t) => t === 'up' ? '↑' : t === 'down' ? '↓' : t === 'new' ? '✨' : '·';
+  const topicHe = {
+    pricing: 'מחירים',
+    appointment: 'תורים ופגישות',
+    complaint: 'תלונות',
+    refund: 'החזרים',
+    callback: 'בקשות להתקשרות חזרה',
+    info: 'שאלות מידע',
+    order: 'הזמנות ומשלוחים',
+    other: 'שונות',
+  };
+  return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>סיכום שבועי — ${escapeHtml(worker.name)}</title></head>
+<body style="font-family:'Heebo','Rubik',Arial,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#fdfaf4;color:#2a2520">
+<h1 style="font-family:Georgia,serif;font-size:26px;margin:0 0 4px">סיכום שבועי — ${escapeHtml(worker.name)}</h1>
+<p style="color:#7a6f63;margin:0 0 24px">${fmtDate(period.since)} → ${fmtDate(period.until)}</p>
+
+<h2 style="font-family:Georgia,serif;font-size:20px;margin:24px 0 8px">${escapeHtml(headline)}</h2>
+
+<table style="width:100%;border-collapse:collapse;margin:16px 0">
+  <tr>
+    <td style="padding:14px;background:#fff;border:1px solid #ece4d6;border-radius:8px;text-align:center;width:25%">
+      <div style="font-size:24px;font-weight:bold">${kpis.messagesThisWeek}</div>
+      <div style="font-size:12px;color:#7a6f63">שיחות ${trendIcon(kpis.messagesTrend)}</div>
+    </td>
+    <td style="width:8px"></td>
+    <td style="padding:14px;background:#fff;border:1px solid #ece4d6;border-radius:8px;text-align:center;width:25%">
+      <div style="font-size:24px;font-weight:bold">${kpis.newLeads}</div>
+      <div style="font-size:12px;color:#7a6f63">לידים חדשים ${trendIcon(kpis.newLeadsTrend)}</div>
+    </td>
+    <td style="width:8px"></td>
+    <td style="padding:14px;background:#fff;border:1px solid #ece4d6;border-radius:8px;text-align:center;width:25%">
+      <div style="font-size:24px;font-weight:bold;color:#c97539">${kpis.hotLeads}</div>
+      <div style="font-size:12px;color:#7a6f63">לידים חמים</div>
+    </td>
+    <td style="width:8px"></td>
+    <td style="padding:14px;background:#fff;border:1px solid #ece4d6;border-radius:8px;text-align:center;width:25%">
+      <div style="font-size:24px;font-weight:bold;color:${kpis.escalationsOpen > 0 ? '#c0543c' : '#5a8f6a'}">${kpis.escalationsOpen}</div>
+      <div style="font-size:12px;color:#7a6f63">פתוחים</div>
+    </td>
+  </tr>
+</table>
+
+${topTopics.length ? `
+<h3 style="font-family:Georgia,serif;font-size:16px;margin:24px 0 8px">נושאים מובילים</h3>
+<ul style="list-style:none;padding:0">
+${topTopics.map((t) => `<li style="padding:6px 0;border-bottom:1px solid #ece4d6"><strong>${escapeHtml(topicHe[t.topic] || t.topic)}</strong> — ${t.count} שיחות</li>`).join('')}
+</ul>` : ''}
+
+${recentLeads.length ? `
+<h3 style="font-family:Georgia,serif;font-size:16px;margin:24px 0 8px">לידים אחרונים</h3>
+<ul style="list-style:none;padding:0">
+${recentLeads.map((l) => `<li style="padding:8px 0;border-bottom:1px solid #ece4d6"><strong>${escapeHtml(l.fullName || 'ללא שם')}</strong>${l.phone ? ' · ' + escapeHtml(l.phone) : ''}${l.score != null ? ' · <span style="color:#c97539">' + l.score + '/10</span>' : ''}<div style="font-size:12px;color:#7a6f63">${fmtDate(l.createdAt)}</div></li>`).join('')}
+</ul>` : ''}
+
+${recentEscalations.length ? `
+<h3 style="font-family:Georgia,serif;font-size:16px;margin:24px 0 8px;color:#c0543c">דורש טיפול</h3>
+<ul style="list-style:none;padding:0">
+${recentEscalations.map((e) => `<li style="padding:8px 0;border-bottom:1px solid #ece4d6"><span style="font-family:monospace;font-size:11px;background:${e.urgency === 'critical' || e.urgency === 'high' ? '#c0543c' : '#7a6f63'};color:#fff;padding:2px 6px;border-radius:3px">${escapeHtml(e.urgency)}</span> ${escapeHtml((e.reason || '').slice(0, 120))}<div style="font-size:12px;color:#7a6f63">${fmtDate(e.createdAt)}</div></li>`).join('')}
+</ul>` : ''}
+
+<p style="margin-top:32px;padding-top:16px;border-top:1px solid #ece4d6;font-size:12px;color:#7a6f63">
+  נשלח אוטומטית · ${new Date().toLocaleString('he-IL')}
+</p>
+</body></html>`;
+}
+
+export function formatWeeklyDigestText(digest) {
+  const { worker, kpis, topTopics, recentLeads, recentEscalations, headline, period } = digest;
+  const lines = [];
+  lines.push(`סיכום שבועי — ${worker.name}`);
+  lines.push(`${period.since} → ${period.until}`);
+  lines.push('');
+  lines.push(headline);
+  lines.push('');
+  lines.push(`שיחות: ${kpis.messagesThisWeek}`);
+  lines.push(`לידים חדשים: ${kpis.newLeads} (${kpis.hotLeads} חמים)`);
+  lines.push(`Escalations פתוחים: ${kpis.escalationsOpen} (${kpis.escalationsHigh} דחופים)`);
+  if (topTopics.length) {
+    lines.push('');
+    lines.push('נושאים מובילים:');
+    for (const t of topTopics) lines.push(`  · ${t.topic} (${t.count})`);
+  }
+  if (recentLeads.length) {
+    lines.push('');
+    lines.push('לידים אחרונים:');
+    for (const l of recentLeads) lines.push(`  · ${l.fullName || 'ללא שם'}${l.phone ? ' · ' + l.phone : ''}${l.score != null ? ' · ' + l.score + '/10' : ''}`);
+  }
+  if (recentEscalations.length) {
+    lines.push('');
+    lines.push('דורש טיפול:');
+    for (const e of recentEscalations) lines.push(`  · [${e.urgency}] ${(e.reason || '').slice(0, 100)}`);
+  }
+  return lines.join('\n');
+}
+
 // --- Per-tenant DB --------------------------------------------------------
 
 const APP_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\//, ''));
@@ -1239,6 +1457,16 @@ function getTenantDb(tenantId) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_actions_worker ON agent_actions(worker_id, id DESC);
+    CREATE TABLE IF NOT EXISTS weekly_digests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id TEXT NOT NULL,
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'web'
+    );
+    CREATE INDEX IF NOT EXISTS idx_weekly_digests_worker ON weekly_digests(worker_id, id DESC);
   `);
   try { db.exec(`ALTER TABLE workers ADD COLUMN mcp_servers_json TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { db.exec(`ALTER TABLE workers ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'`); } catch {}

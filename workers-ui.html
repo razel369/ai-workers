@@ -780,7 +780,8 @@ const APP = (() => {
       <div class="toolbar">
         <h2>${icon('activity', 20)} לוח ביצועים</h2>
         <span class="muted">${escapeHtml(worker.name)}</span>
-        <a href="#/workers/chat/${workerId}" class="btn btn-outline btn-sm" style="margin-right:auto">${icon('chat', 14)} צ'אט</a>
+        <a href="#/workers/digest/${workerId}" class="btn btn-primary btn-sm" style="margin-right:auto">${icon('sparkle', 14)} סיכום שבועי</a>
+        <a href="#/workers/chat/${workerId}" class="btn btn-outline btn-sm">${icon('chat', 14)} צ'אט</a>
         <a href="#/workers" class="btn btn-outline btn-sm">${icon('arrow-right', 14)} חזרה</a>
       </div>
       <div class="insights-grid">
@@ -802,6 +803,102 @@ const APP = (() => {
         <table class="insights-table"><thead><tr><th>כלי</th><th>תוצאה</th><th>תאריך</th></tr></thead><tbody>${actionRows}</tbody></table>
       </div>
     `;
+  }
+
+  const DIGEST_TOPIC_HE = {
+    pricing: 'מחירים',
+    appointment: 'תורים ופגישות',
+    complaint: 'תלונות',
+    refund: 'החזרים',
+    callback: 'בקשות להתקשרות חזרה',
+    info: 'שאלות מידע',
+    order: 'הזמנות ומשלוחים',
+    other: 'שונות',
+  };
+
+  async function renderWeeklyDigest(workerId, alive = () => true) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען סיכום שבועי...</div>`;
+    const r = await api('/api/workers/' + workerId + '/weekly-digest');
+    if (!alive()) return;
+    if (!r.ok) {
+      app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון את הסיכום</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`;
+      return;
+    }
+    const d = r.body;
+    const k = d.kpis;
+    const trend = (t) => t === 'up' ? '<span class="digest-trend up">↑</span>' : t === 'down' ? '<span class="digest-trend down">↓</span>' : t === 'new' ? '<span class="digest-trend new">✨</span>' : '';
+    const topicsHtml = (d.topTopics || []).map((t) =>
+      `<li><span>${escapeHtml(DIGEST_TOPIC_HE[t.topic] || t.topic)}</span><span class="muted">${t.count} שיחות</span></li>`
+    ).join('') || '<li class="muted">עדיין אין נושאים זיהויים</li>';
+    const leadRows = (d.recentLeads || []).map((l) =>
+      `<tr><td><strong>${escapeHtml(l.fullName || '—')}</strong></td><td dir="ltr">${escapeHtml(l.phone || '—')}</td><td>${l.score != null ? '<span class="pill pill-active">' + l.score + '/10</span>' : '—'}</td><td class="muted">${fmtDate(l.createdAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="muted">עדיין אין לידים</td></tr>';
+    const escRows = (d.recentEscalations || []).map((e) =>
+      `<tr><td><span class="pill ${e.urgency === 'critical' || e.urgency === 'high' ? 'pill-pending' : 'pill'}">${escapeHtml(e.urgency)}</span></td><td>${escapeHtml((e.reason || '').slice(0, 100))}</td><td class="muted">${fmtDate(e.createdAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="3" class="muted">אין פניות דורשות טיפול השבוע 🎉</td></tr>';
+    const sentHtml = d.lastSentAt
+      ? `<span class="muted">נשלח לאחרונה: ${fmtDate(d.lastSentAt)}</span>`
+      : '<span class="muted">עדיין לא נשלח סיכום</span>';
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>${icon('sparkle', 20)} סיכום שבועי</h2>
+        <span class="muted">${escapeHtml(d.worker.name)}</span>
+        ${sentHtml}
+        <button id="digest-send-webhook" class="btn btn-primary btn-sm" style="margin-right:auto">${icon('send', 14)} שלח ל-Webhook</button>
+        <a href="/api/workers/${encodeURIComponent(workerId)}/weekly-digest.html" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${icon('eye', 14)} תצוגה</a>
+        <a href="#/workers/insights/${workerId}" class="btn btn-outline btn-sm">${icon('arrow-right', 14)} חזרה</a>
+      </div>
+      <div class="digest-hero">
+        <h2 class="digest-headline">${escapeHtml(d.headline)}</h2>
+        <p class="muted">${fmtDate(d.period.since)} → ${fmtDate(d.period.until)}</p>
+      </div>
+      <div class="digest-kpis">
+        <div class="digest-kpi"><div class="n">${k.messagesThisWeek}</div><div class="l">שיחות ${trend(k.messagesTrend)}</div></div>
+        <div class="digest-kpi"><div class="n">${k.newLeads}</div><div class="l">לידים חדשים ${trend(k.newLeadsTrend)}</div></div>
+        <div class="digest-kpi hot"><div class="n">${k.hotLeads}</div><div class="l">לידים חמים (7+)</div></div>
+        <div class="digest-kpi warn"><div class="n">${k.escalationsOpen}</div><div class="l">פתוחים ${k.escalationsHigh > 0 ? `(${k.escalationsHigh} דחופים)` : ''}</div></div>
+      </div>
+      <div class="digest-grid">
+        <div class="card">
+          <h3>${icon('activity', 16)} נושאים מובילים</h3>
+          <ul class="digest-topics">${topicsHtml}</ul>
+        </div>
+        <div class="card">
+          <h3>${icon('users', 16)} לידים אחרונים</h3>
+          <table class="insights-table"><thead><tr><th>שם</th><th>טלפון</th><th>ציון</th><th>תאריך</th></tr></thead><tbody>${leadRows}</tbody></table>
+        </div>
+        <div class="card">
+          <h3>${icon('alert', 16)} דורש טיפול</h3>
+          <table class="insights-table"><thead><tr><th>דחיפות</th><th>פירוט</th><th>תאריך</th></tr></thead><tbody>${escRows}</tbody></table>
+        </div>
+      </div>
+    `;
+    const sendBtn = document.getElementById('digest-send-webhook');
+    if (sendBtn) {
+      sendBtn.onclick = async () => {
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = icon('loading', 14, 'icon-spin') + ' שולח...';
+        const res = await api('/api/workers/' + workerId + '/weekly-digest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ channel: 'webhook' }),
+        });
+        if (!alive()) return;
+        if (res.ok) {
+          toast('הסיכום נשלח בהצלחה · ' + fmtDate(res.body.sentAt), 'success');
+          if (res.body.delivery && !res.body.delivery.ok) {
+            toast('שליחה ל-Webhook נכשלה: ' + (res.body.delivery.error || res.body.delivery.status), 'warning');
+          }
+          renderWeeklyDigest(workerId, alive);
+        } else {
+          toast('שליחה נכשלה: ' + friendlyApiError(res.body), 'error');
+          sendBtn.disabled = false;
+          sendBtn.innerHTML = icon('send', 14) + ' שלח ל-Webhook';
+        }
+      };
+    }
   }
 
   // ---- Category filter state ----
@@ -872,6 +969,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'connect') return renderConnectTools(routeId(rest[1]), alive);
     if (section === 'workers' && rest[0] === 'chat') return renderChat(routeId(rest[1]), alive);
     if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(routeId(rest[1]), alive);
+    if (section === 'workers' && rest[0] === 'digest') return renderWeeklyDigest(routeId(rest[1]), alive);
     if (section === 'admin') return renderAdmin(alive);
     return renderMarketplace(alive);
   }
