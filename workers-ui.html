@@ -974,6 +974,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'chat') return renderChat(routeId(rest[1]), alive);
     if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(routeId(rest[1]), alive);
     if (section === 'workers' && rest[0] === 'digest') return renderWeeklyDigest(routeId(rest[1]), alive);
+    if (section === 'account') return renderAccount(alive);
     if (section === 'admin') return renderAdmin(alive);
     return renderMarketplace(alive);
   }
@@ -1324,6 +1325,58 @@ function fmtRelative(iso) {
   return fmtDate(iso);
 }
 
+async function renderAccount(alive = () => true) {
+    setActive('workers');
+    if (!(await ensureSession('העסק שלי'))) return;
+    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען...</div>`;
+    const acc = await api('/api/account');
+    if (!alive()) return;
+    if (!acc.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון</h2><p>${escapeHtml(friendlyApiError(acc.body))}</p></div>`; return; }
+    const a = acc.body;
+    const pct = a.callsLimit ? Math.min(100, Math.round((a.callsUsed / a.callsLimit) * 100)) : 0;
+    const rotateRow = await api('/api/account/rotate-key', { method: 'POST' }).catch(() => null);
+    app.innerHTML = `
+      <div class="toolbar">
+        <h2>${icon('shield', 20)} החשבון שלי</h2>
+        <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
+      </div>
+      <div class="account-page">
+        <section class="card">
+          <h3>${icon('shield', 16)} חבילה</h3>
+          <div class="ap-row"><span>תוכנית</span><strong>${escapeHtml(a.plan || 'trial')}</strong></div>
+          <div class="ap-row"><span>שימוש החודש</span>
+            <div style="flex:1;min-width:120px">
+              <div class="ab-bar"><div class="ab-bar-fill" style="width:${pct}%"></div></div>
+              <div class="ab-sub">${a.callsUsed.toLocaleString('he-IL')} / ${(a.callsLimit || 0).toLocaleString('he-IL')} שיחות</div>
+            </div>
+          </div>
+        </section>
+        <section class="card" style="margin-top:14px">
+          <h3>${icon('key', 16)} API key</h3>
+          <p class="muted">מפתח זה מזהה את העסק שלך. שמור עליו בסוד. אפשר להחליף אותו בכל עת.</p>
+          <div class="ap-row"><span>key id</span><code>${escapeHtml(a.keyId || '')}</code></div>
+          <div class="ap-row"><span>tenant id</span><code>${escapeHtml(a.tenantId || '')}</code></div>
+          <div class="ap-row"><span>label</span><strong>${escapeHtml(a.label || '')}</strong></div>
+          <button type="button" class="btn btn-outline btn-sm" id="rotate-key-btn" style="margin-top:10px">${icon('refresh', 14)} החלף key (הקודם לא יעבוד יותר)</button>
+          <div id="rotate-status" class="muted" style="margin-top:8px;font-size:12px"></div>
+        </section>
+      </div>`;
+    const rotateBtn = document.getElementById('rotate-key-btn');
+    if (rotateBtn) rotateBtn.onclick = async () => {
+      if (!confirm('להחליף את ה-key? הקודם יפסיק לעבוד מיידית.')) return;
+      rotateBtn.disabled = true;
+      const r = await api('/api/account/rotate-key', { method: 'POST' });
+      if (r.ok) {
+        setKey(r.body.key);
+        document.getElementById('rotate-status').innerHTML = `${icon('check', 12)} key חדש נשמר: <code>${escapeHtml(r.body.key.slice(0, 12))}…</code>`;
+        rotateBtn.disabled = false;
+      } else {
+        document.getElementById('rotate-status').textContent = 'נכשל: ' + friendlyApiError(r.body);
+        rotateBtn.disabled = false;
+      }
+    };
+  }
+
 async function renderWorkersList(alive = () => true) {
     setActive('workers');
     if (!(await ensureSession('העסק שלי'))) {
@@ -1332,10 +1385,12 @@ async function renderWorkersList(alive = () => true) {
       return;
     }
     app.innerHTML = '<div class="grid" style="margin-top:20px">' + Array(3).fill(0).map(() => '<div class="card" style="height:160px;padding:0"><div class="shimmer" style="width:100%;height:100%"></div></div>').join('') + '</div>';
+    const acc = await api('/api/account').catch(() => ({ ok: false }));
     const r = await api('/api/workers');
     if (!alive()) return;
     if (!r.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון עובדים</h2><p>${escapeHtml(friendlyApiError(r.body))}</p></div>`; return; }
     const workers = r.body.workers;
+    const plan = acc.ok ? acc.body : null;
     if (!workers.length) {
       app.innerHTML = `
         <div class="wl-page">
@@ -1355,6 +1410,17 @@ async function renderWorkersList(alive = () => true) {
       return;
     }
     const catOf = (w) => (w.template && (w.template.category || w.template.cat)) || w.category || 'sales';
+    const accountBanner = plan ? `
+      <div class="account-banner">
+        <div class="ab-info">
+          <div class="ab-label">${icon('shield', 13)} חבילה <strong>${escapeHtml(plan.plan || 'trial')}</strong></div>
+          ${plan.callsLimit ? `
+            <div class="ab-bar"><div class="ab-bar-fill" style="width:${Math.min(100, Math.round((plan.callsUsed / plan.callsLimit) * 100))}%"></div></div>
+            <div class="ab-sub">${plan.callsUsed.toLocaleString('he-IL')} / ${plan.callsLimit.toLocaleString('he-IL')} שיחות החודש</div>
+          ` : ''}
+        </div>
+        <a class="ab-cta" href="#/account">${icon('arrow-right', 12)} נהל חשבון</a>
+      </div>` : '';
     const daysLeft = (iso) => {
       if (!iso) return null;
       const ms = new Date(iso).getTime() - Date.now();
@@ -1362,6 +1428,7 @@ async function renderWorkersList(alive = () => true) {
     };
     app.innerHTML = `
       <div class="wl-page">
+        ${accountBanner}
         <div class="wl-head">
           <h2>העובדים שלי</h2>
           <span class="wl-count">${workers.length} עובדים</span>
