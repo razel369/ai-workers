@@ -617,14 +617,17 @@ const TOOL_DEFS = [
       }, required: ['key', 'value'],
     },
     handler: async (args, ctx) => {
+      const key = String(args?.key ?? '').slice(0, 100);
+      const value = String(args?.value ?? '').slice(0, 5000);
+      if (!key) return { ok: false, error: 'invalid_args' };
       const db = getTenantDb(ctx.tenantId);
       const now = new Date().toISOString();
       db.prepare(`INSERT INTO customer_memories (worker_id, customer_id, key, value, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(worker_id, customer_id, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(
-        ctx.workerId, ctx.customerId ?? '', args.key, args.value, now, now
+        ctx.workerId, ctx.customerId ?? '', key, value, now, now
       );
-      return { result: `Remembered: ${args.key} = ${args.value}` };
+      return { result: `Remembered: ${key} = ${value}` };
     },
   },
   {
@@ -650,21 +653,29 @@ const TOOL_DEFS = [
       }, required: ['to', 'subject'],
     },
     handler: async (args, ctx) => {
+      const to = String(args?.to ?? '').slice(0, 5000);
+      const subject = String(args?.subject ?? '').slice(0, 5000);
+      const body = String(args?.body ?? '').slice(0, 5000);
+      if (!/^[^\s@]+@[^\s@]+$/.test(to)) return { ok: false, error: 'invalid_args' };
       const db = getTenantDb(ctx.tenantId);
       db.prepare(`INSERT INTO outbox (worker_id, customer_id, recipient, subject, body, created_at)
         VALUES (?, ?, ?, ?, ?, ?)`).run(
-        ctx.workerId, ctx.customerId ?? '', args.to, args.subject, args.body ?? '', new Date().toISOString()
+        ctx.workerId, ctx.customerId ?? '', to, subject, body, new Date().toISOString()
       );
       const webhook = process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_EMAIL_WEBHOOK`] || process.env.EMAIL_WEBHOOK_URL || '';
       if (webhook) {
         try {
-          await fetch(webhook, {
+          const safe = await validatePublicHttpUrl(webhook);
+          if (!safe.ok) {
+            return { ok: false, error: 'invalid_webhook', reason: safe.error };
+          }
+          await fetch(safe.url, {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ to: args.to, subject: args.subject, body: args.body, workerId: ctx.workerId, tenantId: ctx.tenantId }),
+            body: JSON.stringify({ to, subject, body, workerId: ctx.workerId, tenantId: ctx.tenantId }),
           });
         } catch {}
       }
-      return { result: `Email recorded for ${args.to} with subject "${args.subject}". It will be delivered when the email service is connected.` };
+      return { result: `Email recorded for ${to} with subject "${subject}". It will be delivered when the email service is connected.` };
     },
   },
   {
@@ -677,12 +688,16 @@ const TOOL_DEFS = [
       }, required: ['event'],
     },
     handler: async (args, ctx) => {
+      const event = String(args?.event ?? '').slice(0, 200);
+      if (!event) return { ok: false, error: 'invalid_args' };
       const url = process.env.WEBHOOK_NOTIFY_URL || process.env[`WORKER_${ctx.workerId.slice(0, 8).toUpperCase()}_WEBHOOK`] || '';
-      const body = { event: args.event, payload: args.payload ?? {}, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
+      const body = { event, payload: args.payload ?? {}, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
       if (!url) return { result: 'Webhook URL not configured (set WEBHOOK_NOTIFY_URL). Event logged locally only.', logged: body };
       try {
-        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-        return { result: r.ok ? `Webhook notified: ${args.event}` : `Webhook returned ${r.status}`, status: r.status };
+        const safe = await validatePublicHttpUrl(url);
+        if (!safe.ok) return { ok: false, error: 'invalid_args', reason: safe.error };
+        const r = await fetch(safe.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        return { result: r.ok ? `Webhook notified: ${event}` : `Webhook returned ${r.status}`, status: r.status };
       } catch (e) {
         return { result: `Webhook failed: ${e?.message ?? e}` };
       }
@@ -1858,13 +1873,13 @@ export function updateWorker(tenantId, workerId, patch) {
     if (!WORKER_NAME_RE.test(nameCandidate)) return { ok: false, error: 'invalid_name' };
     fields.push('name = ?'); values.push(nameCandidate);
   }
-  if (patch.persona !== undefined) { fields.push('persona = ?'); values.push(String(patch.persona)); }
-  if (patch.tasks !== undefined) { fields.push('tasks_json = ?'); values.push(JSON.stringify(patch.tasks)); }
-  if (patch.knowledge !== undefined) { fields.push('knowledge = ?'); values.push(String(patch.knowledge)); }
-  if (patch.tools !== undefined) { fields.push('tools_json = ?'); values.push(JSON.stringify(patch.tools)); }
+  if (patch.persona !== undefined) { fields.push('persona = ?'); values.push(String(patch.persona ?? '').slice(0, 20000)); }
+  if (patch.tasks !== undefined) { fields.push('tasks_json = ?'); values.push(JSON.stringify((Array.isArray(patch.tasks) ? patch.tasks : []).slice(0, 20))); }
+  if (patch.knowledge !== undefined) { fields.push('knowledge = ?'); values.push(String(patch.knowledge ?? '').slice(0, 50000)); }
+  if (patch.tools !== undefined) { fields.push('tools_json = ?'); values.push(JSON.stringify((Array.isArray(patch.tools) ? patch.tools : []).slice(0, 20))); }
   if (patch.agentMode !== undefined) { fields.push('agent_mode = ?'); values.push(patch.agentMode === 'chat' ? 'chat' : 'agent'); }
-  if (patch.mcpServers !== undefined) { fields.push('mcp_servers_json = ?'); values.push(JSON.stringify(patch.mcpServers)); }
-  if (patch.skills !== undefined) { fields.push('skills_json = ?'); values.push(JSON.stringify(patch.skills)); }
+  if (patch.mcpServers !== undefined) { fields.push('mcp_servers_json = ?'); values.push(JSON.stringify((Array.isArray(patch.mcpServers) ? patch.mcpServers : []).slice(0, 10))); }
+  if (patch.skills !== undefined) { fields.push('skills_json = ?'); values.push(JSON.stringify((Array.isArray(patch.skills) ? patch.skills : []).slice(0, 10))); }
   if (patch.paused !== undefined) { fields.push('paused = ?'); values.push(patch.paused ? 1 : 0); }
   if (patch.llm) {
     if (patch.llm.provider !== undefined) { fields.push('llm_provider = ?'); values.push(String(patch.llm.provider).slice(0, 30)); }

@@ -1539,13 +1539,15 @@ async function renderWorkersList(alive = () => true) {
     const wlSearch = document.getElementById('wl-search');
     const wlFilter = document.getElementById('wl-filter');
     const wlCount = document.getElementById('wl-count');
+    const wlGrid = document.getElementById('wl-grid');
     function applyWlFilter() {
+      if (!wlGrid) return;
       const q = (wlSearch?.value || '').trim().toLowerCase();
       const f = wlFilter?.value || 'all';
       let visible = 0;
-      app.querySelectorAll('.wl-card').forEach((card) => {
-        const name = card.dataset.wlName || '';
-        const status = card.dataset.wlStatus || '';
+      wlGrid.querySelectorAll('.wl-card').forEach((card) => {
+        const name = (card.getAttribute('data-wl-name') || '').toLowerCase();
+        const status = card.getAttribute('data-wl-status') || '';
         const matchQ = !q || name.includes(q);
         const matchF = f === 'all' || status === f;
         const show = matchQ && matchF;
@@ -1554,8 +1556,8 @@ async function renderWorkersList(alive = () => true) {
       });
       if (wlCount) wlCount.textContent = `${visible} / ${workers.length} עובדים`;
     }
-    if (wlSearch) wlSearch.oninput = applyWlFilter;
-    if (wlFilter) wlFilter.onchange = applyWlFilter;
+    if (wlSearch) wlSearch.addEventListener('input', applyWlFilter);
+    if (wlFilter) wlFilter.addEventListener('change', applyWlFilter);
     app.querySelectorAll('button[data-del]').forEach((b) => {
       b.onclick = async () => {
         if (!confirm('למחוק את העובד ואת השיחות שלו?')) return;
@@ -1564,26 +1566,6 @@ async function renderWorkersList(alive = () => true) {
         else toast('המחיקה נכשלה: ' + friendlyApiError(r.body), 'error');
       };
     });
-    const searchEl = document.getElementById('wl-search');
-    const filterEl = document.getElementById('wl-filter');
-    const gridEl = document.getElementById('wl-grid');
-    const countEl = document.getElementById('wl-count');
-    function applyWlFilter() {
-      if (!gridEl) return;
-      const q = (searchEl?.value || '').trim().toLowerCase();
-      const f = filterEl?.value || 'all';
-      let shown = 0;
-      gridEl.querySelectorAll('.wl-card').forEach((card) => {
-        const matchesSearch = !q || (card.getAttribute('data-wl-name') || '').includes(q);
-        const matchesFilter = f === 'all' || card.getAttribute('data-wl-status') === f;
-        const show = matchesSearch && matchesFilter;
-        card.style.display = show ? '' : 'none';
-        if (show) shown++;
-      });
-      if (countEl) countEl.textContent = `${shown} / ${workers.length} עובדים`;
-    }
-    if (searchEl) searchEl.addEventListener('input', applyWlFilter);
-    if (filterEl) filterEl.addEventListener('change', applyWlFilter);
     app.querySelectorAll('button[data-pause-toggle]').forEach((b) => {
       b.onclick = async () => {
         const wasPaused = b.dataset.paused === '1';

@@ -122,6 +122,15 @@ const ASSETS_CACHE_MAX_AGE = 86400;
 const DEFAULT_RENT_DAYS = 30;
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 0);
 const EMBED_ALLOW_PUBLIC = process.env.EMBED_ALLOW_PUBLIC !== '0';
+const EMBED_ALLOWED_ORIGINS = new Set(
+  String(process.env.EMBED_ALLOWED_ORIGINS ?? '*')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+if (!process.env.EMBED_ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
+  console.warn('[security] EMBED_ALLOWED_ORIGINS is not set; embed widget accepts requests from any origin. Set to a comma-separated list or "*" explicitly.');
+}
 const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
 const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
 
@@ -194,6 +203,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
   CREATE INDEX IF NOT EXISTS idx_activation_requests_status ON activation_requests(status, at);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_pending ON activation_requests(tenant_id, worker_id) WHERE status='pending';
   CREATE INDEX IF NOT EXISTS idx_admin_audit_events_at ON admin_audit_events(at);
   CREATE INDEX IF NOT EXISTS idx_admin_audit_events_action ON admin_audit_events(action, at);
   CREATE TABLE IF NOT EXISTS whatsapp_routes (
@@ -412,15 +422,32 @@ function issueSelfServeTenant({ businessName, contact }) {
 function recordActivationRequest({ tenantId, worker, channel, reference, contact, note, amountIls }) {
   const id = newId('act');
   const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO activation_requests
-      (id, at, tenant_id, worker_id, worker_name, template_id, amount_ils, channel, reference, contact, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id, now, tenantId, worker.id, worker.name, worker.templateId,
-    amountIls ?? 0, cleanText(channel, 40) || 'manual', cleanText(reference, 120) || null,
-    cleanText(contact, 160), cleanText(note, 300) || null
-  );
+  // Dedupe: return existing pending request for same (tenant, worker) if present.
+  try {
+    const existing = db.prepare(
+      `SELECT id, at FROM activation_requests WHERE tenant_id = ? AND worker_id = ? AND status = 'pending' LIMIT 1`
+    ).get(tenantId, worker.id);
+    if (existing) return { id: existing.id, at: existing.at, deduplicated: true };
+  } catch {}
+  try {
+    db.prepare(
+      `INSERT INTO activation_requests
+        (id, at, tenant_id, worker_id, worker_name, template_id, amount_ils, channel, reference, contact, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id, now, tenantId, worker.id, worker.name, worker.templateId,
+      amountIls ?? 0, cleanText(channel, 40) || 'manual', cleanText(reference, 120) || null,
+      cleanText(contact, 160), cleanText(note, 300) || null
+    );
+  } catch (e) {
+    // Race: another request won. Re-read the winning row.
+    try {
+      const winner = db.prepare(
+        `SELECT id, at FROM activation_requests WHERE tenant_id = ? AND worker_id = ? AND status = 'pending' ORDER BY at DESC LIMIT 1`
+      ).get(tenantId, worker.id);
+      if (winner) return { id: winner.id, at: winner.at, deduplicated: true };
+    } catch {}
+  }
   return { id, at: now };
 }
 
@@ -694,11 +721,24 @@ function embedCorsHeaders(req) {
   if (!EMBED_ALLOW_PUBLIC) return {};
   const origin = req.headers.origin;
   if (!origin) return {};
+  // Embed is a public widget: by default we reflect any origin. Operators can lock
+  // it down with EMBED_ALLOWED_ORIGINS=<csv> or "*".
+  const allowAll = EMBED_ALLOWED_ORIGINS.has('*');
+  const allowOrigin = allowAll || EMBED_ALLOWED_ORIGINS.has(origin);
+  if (!allowOrigin) {
+    // Explicit deny: echo a non-functional origin so the browser blocks the response.
+    return {
+      'access-control-allow-origin': 'null',
+      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'vary': 'Origin',
+    };
+  }
   return {
-    'access-control-allow-origin': origin,
+    'access-control-allow-origin': allowAll ? '*' : origin,
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'vary': 'Origin',
+    ...(allowAll ? {} : { 'vary': 'Origin' }),
   };
 }
 
@@ -1580,7 +1620,7 @@ const server = http.createServer(async (req, res) => {
     } : {});
     return send(res, 204, '', preflight);
   }
-  if (!rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
+  if (url.pathname !== '/health' && !rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
 
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
@@ -1837,7 +1877,7 @@ const server = http.createServer(async (req, res) => {
       trialDays: TRIAL_DAYS,
       paddleEnabled: paddleEnabled(),
       ownerContact: AGENT_OWNER_CONTACT || '',
-    });
+    }).replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
     html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;const PADDLE_ENABLED=PAYMENT_CONFIG.paddleEnabled;const AGENT_OWNER_CONTACT=PAYMENT_CONFIG.ownerContact;</script></body>`);
     return send(res, 200, html, { 'content-type': 'text/html; charset=utf-8' });
   }
@@ -2070,26 +2110,33 @@ const server = http.createServer(async (req, res) => {
   // API: chat with worker
   const chatMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/chat$/);
   if (req.method === 'POST' && chatMatch) {
-    const tenantId = requireAuth(req);
-    if (!tenantId) {
-      const qe = getLastQuotaError();
-      if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
-      return send(res, 401, { error: 'auth_required' });
+    try {
+      const tenantId = requireAuth(req);
+      if (!tenantId) {
+        const qe = getLastQuotaError();
+        if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
+        return send(res, 401, { error: 'auth_required' });
+      }
+      const { text: raw } = await readBody(req, BODY_SMALL);
+      let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+      if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
+      if (rejectOversizedMessage(res, body)) return;
+      const workerId = chatMatch[1];
+      const res2 = await withChatLock(workerId, () => workers.chatWithWorker({
+        tenantId,
+        workerId,
+        userMessage: body.message,
+        customerId: body.customerId ?? '',
+        testMode: !!body.testMode,
+        demoMode: !!body.demoMode,
+      }));
+      return send(res, res2.status ?? 200, res2);
+    } catch (e) {
+      console.error('[chat-error]', e);
+      if (!res.headersSent) return send(res, 500, { error: 'internal' });
+      try { res.end(); } catch {}
+      return;
     }
-    const { text: raw } = await readBody(req, BODY_SMALL);
-    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
-    if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
-    if (rejectOversizedMessage(res, body)) return;
-    const workerId = chatMatch[1];
-    const res2 = await withChatLock(workerId, () => workers.chatWithWorker({
-      tenantId,
-      workerId,
-      userMessage: body.message,
-      customerId: body.customerId ?? '',
-      testMode: !!body.testMode,
-      demoMode: !!body.demoMode,
-    }));
-    return send(res, res2.status ?? 200, res2);
   }
 
   const testAgentMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/test-agent$/);
@@ -2709,7 +2756,11 @@ const server = http.createServer(async (req, res) => {
     const rawPath = path.join(__dirname, url.pathname);
     const filePath = path.resolve(rawPath);
     const brandDir = path.resolve(path.join(__dirname, 'brand'));
-    if (!filePath.startsWith(brandDir)) return send(res, 403, { error: 'forbidden' });
+    // Windows-safe containment: resolve relative path, reject .. or absolute escapes.
+    const rel = path.relative(brandDir, filePath);
+    const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    const ci = process.platform === 'win32' ? filePath.toLowerCase().startsWith(brandDir.toLowerCase() + path.sep.toLowerCase()) : inside;
+    if (!inside && !ci) return send(res, 403, { error: 'forbidden' });
     try {
       const content = fs.readFileSync(filePath);
       const ext = path.extname(filePath).toLowerCase();
@@ -2726,7 +2777,10 @@ const server = http.createServer(async (req, res) => {
     const rawPath = path.join(__dirname, url.pathname);
     const filePath = path.resolve(rawPath);
     const assetsDir = path.resolve(path.join(__dirname, 'assets'));
-    if (!filePath.startsWith(assetsDir)) return send(res, 403, { error: 'forbidden' });
+    const rel = path.relative(assetsDir, filePath);
+    const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    const ci = process.platform === 'win32' ? filePath.toLowerCase().startsWith(assetsDir.toLowerCase() + path.sep.toLowerCase()) : inside;
+    if (!inside && !ci) return send(res, 403, { error: 'forbidden' });
     try {
       const content = fs.readFileSync(filePath);
       const ext = path.extname(filePath).toLowerCase();
