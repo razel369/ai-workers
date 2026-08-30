@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { buildOAuthReturnUrl } from '../url-security.js';
 import { connectIntegration } from './store.js';
 import { OAUTH_PROVIDERS } from './auth-providers.js';
+import { normalizeShopifyShopHost } from './registry.js';
 
 let _db = null;
 let _publicBaseUrl = '';
@@ -68,13 +69,25 @@ export function createOAuthStart(tenantId, { type, returnPath = '/marketplace', 
     return { ok: false, error: 'oauth_not_configured', messageHe: 'חיבור OAuth לא מוגדר בשרת — פנה למנהל המערכת או השתמש בחיבור קישור.' };
   }
 
+  const normalizedExtra = extra && typeof extra === 'object' && !Array.isArray(extra) ? { ...extra } : {};
+  if (provider.id === 'shopify') {
+    if (!normalizedExtra.shop) {
+      return { ok: false, error: 'shop_required', messageHe: 'הכנס שם חנות Shopify (לדוגמה: mystore.myshopify.com)' };
+    }
+    const shop = normalizeShopifyShopHost(normalizedExtra.shop);
+    if (!shop) {
+      return { ok: false, error: 'invalid_shop_domain', messageHe: 'יש להזין דומיין Shopify תקין שמסתיים ב־myshopify.com.' };
+    }
+    normalizedExtra.shop = shop;
+  }
+
   cleanupExpiredStates();
   const state = crypto.randomBytes(24).toString('hex');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + STATE_TTL_MS).toISOString();
   _db.prepare(`INSERT INTO oauth_states (state, tenant_id, integration_type, provider_id, return_path, extra_json, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    state, tenantId, type, provider.id, returnPath, JSON.stringify(extra ?? {}), now.toISOString(), expiresAt
+    state, tenantId, type, provider.id, returnPath, JSON.stringify(normalizedExtra), now.toISOString(), expiresAt
   );
 
   const redirectUri = `${_publicBaseUrl}/api/integrations/oauth/callback`;
@@ -82,10 +95,8 @@ export function createOAuthStart(tenantId, { type, returnPath = '/marketplace', 
   let authorizeUrl;
 
   if (provider.id === 'shopify') {
-    const shop = extra.shop;
-    if (!shop) return { ok: false, error: 'shop_required', messageHe: 'הכנס שם חנות Shopify (לדוגמה: mystore.myshopify.com)' };
     authorizeUrl = provider.buildAuthUrl({
-      shop,
+      shop: normalizedExtra.shop,
       redirectUri,
       state,
       clientId,
@@ -128,13 +139,14 @@ async function exchangeCode(provider, code, extra = {}) {
   let body;
 
   if (provider.id === 'shopify') {
-    const host = String(extra.shop || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-    if (!host) throw new Error('shop_required');
+    const host = normalizeShopifyShopHost(extra.shop);
+    if (!host) return { ok: false, error: 'invalid_shop_domain' };
     tokenUrl = `https://${host}/admin/oauth/access_token`;
     const r = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+      redirect: 'error',
       signal: AbortSignal.timeout(15_000),
     });
     const data = await r.json().catch(() => ({}));
@@ -191,6 +203,15 @@ export async function handleOAuthCallback({ code, state, error }) {
 
   const provider = OAUTH_PROVIDERS[row.provider_id];
   if (!provider) return { ok: false, error: 'unknown_provider' };
+
+  if (provider.id === 'shopify') {
+    const shop = normalizeShopifyShopHost(row.extra?.shop);
+    if (!shop) {
+      _db.prepare(`DELETE FROM oauth_states WHERE state = ?`).run(state);
+      return { ok: false, error: 'invalid_shop_domain', messageHe: 'דומיין Shopify אינו תקין — התחילו את החיבור מחדש.' };
+    }
+    row.extra = { ...row.extra, shop };
+  }
 
   const exchanged = await exchangeCode(provider, code, row.extra);
   if (!exchanged.ok) {
