@@ -2,7 +2,7 @@
 
 Paddle משמש כ-**Merchant of Record**: הם מוכרים רשמית, גובים מע"מ/מסות בחו"ל, ומעבירים אליך את הכסף. מתאים לפרטי בישראל **בלי חברה** — עדיין צריך לדווח הכנסה לרשות המיסים.
 
-## משתני סביבה (Railway)
+## משתני סביבה (Render)
 
 ```env
 PADDLE_ENVIRONMENT=sandbox          # sandbox | production
@@ -31,11 +31,8 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 
 ### 4. Webhook
 1. **Developer tools → Notifications → New destination**
-2. URL: `https://paid-agent-demo-production.up.railway.app/api/webhooks/paddle`
+2. URL: `https://YOUR_SERVICE.onrender.com/api/webhooks/paddle`
 3. Events:
-   - `subscription.created`
-   - `subscription.activated`
-   - `subscription.updated`
    - `transaction.completed`
 4. העתק **Endpoint secret key** → `PADDLE_WEBHOOK_SECRET`
 
@@ -50,7 +47,8 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 
 ```
 לקוח → Paywall → Paddle Checkout (overlay)
-       → webhook subscription.created / transaction.completed
+       → webhook transaction.completed
+       → אימות חתימה + סכום מדויק בשקלים
        → autoActivateWorker (30 יום)
        → redirect לצ'אט
 ```

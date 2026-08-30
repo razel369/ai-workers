@@ -1,15 +1,16 @@
 # GTM pilot kit — AI Workers (Israel)
 
-14-day trial positioning, three vertical scripts, cold outreach, and LinkedIn draft.  
-Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
+Optional pilot positioning, three vertical scripts, cold outreach, and LinkedIn draft.
+
+> **טיוטה בלבד — אין לשלוח.** ברירת המחדל בפרודקשן היא `TRIAL_DAYS=0`. לפני שימוש בטקסט הזה, בעל העסק חייב לאשר במפורש את משך הפיילוט, מכסת השימוש, המחיר, `PUBLIC_BASE_URL` ופרטי הקשר. החליפו כל מופע של `[TRIAL_DAYS]` במספר שאושר.
 
 ---
 
-## 14-day trial offer (Hebrew copy)
+## Optional timed-pilot offer (Hebrew copy)
 
 ### Headline (landing / WhatsApp)
 
-**14 יום ניסיון — עובד AI שעונה ללקוחות 24/7**
+**[TRIAL_DAYS] ימי פיילוט — עובד AI שעונה ללקוחות 24/7**
 
 ### Subhead
 
@@ -20,16 +21,16 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 - עובד מוכן תוך דקות — לא פרויקט IT
 - עברית מלאה + הסלמה אליכם כשצריך אדם
 - תשלום ישראלי: Bit, PayPal או העברה בנקאית
-- אחרי 14 יום: מנוי חודשי שקוף (ביטול בכל עת)
+- אחרי [TRIAL_DAYS] ימים: מנוי חודשי שקוף (ביטול בכל עת)
 
 ### CTA
 
-**התחילו ניסיון:** `[PUBLIC_BASE_URL]/marketplace`  
+**התחילו פיילוט:** `[PUBLIC_BASE_URL]/marketplace`
 שאלות: `[AGENT_OWNER_CONTACT]`
 
 ### Fine print (footer)
 
-ניסיון כפוף לאישור הפעלה ולמכסת הודעות סבירה. לא כולל מספר WhatsApp ייעודי (בקרוב).
+הפיילוט כפוף לאישור הפעלה, למשך ולמכסת ההודעות שאושרו מראש. לא כולל מספר WhatsApp ייעודי.
 
 ---
 
@@ -51,7 +52,7 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 3. צ'אט באתר: "יש תור להיום?" → איסוף שם וטלפון → ליד בלוח
 
 **Close**  
-"14 יום ניסיון — תראו כמה פניות נסגרות בלי שתגיעו לטלפון. מחיר מנוי חודשי פחות מיום עבודה של מזכירה."
+"[TRIAL_DAYS] ימי פיילוט — נמדוד כמה פניות טופלו בלי שתגיעו לטלפון. מחיר המנוי יוצג מראש."
 
 ---
 
@@ -71,7 +72,7 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 3. צ'אט: "מחפש 4 חדרים בהרצליה עד 3.5M" → ליד מסודר
 
 **Close**  
-"תשלום חודשי — פחות מעמלת עסקה אחת קטנה. ניסיון 14 יום לפני התחייבות."
+"תשלום חודשי במחיר שמוצג מראש, אחרי [TRIAL_DAYS] ימי פיילוט ללא התחייבות."
 
 ---
 
@@ -91,13 +92,13 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 3. צ'אט: "יש מקום ל-6 הערב?" → פרטים → הסלמה למנהל
 
 **Close**  
-"14 יום — תמדדו כמה שאלות נענו בלי להפריע למלצרים. מנוי חודשי צפוי."
+"[TRIAL_DAYS] ימים — נמדוד כמה שאלות נענו בלי להפריע לצוות. מחיר המנוי מוצג מראש."
 
 ---
 
 ## Cold outreach template (email / WhatsApp)
 
-**Subject:** פניות שלא נענו בערב — ניסיון 14 יום
+**Subject:** פניות שלא נענו בערב — פיילוט [TRIAL_DAYS] ימים
 
 שלום [שם],
 
@@ -105,7 +106,7 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 
 אנחנו מפעילים **עובדי AI בעברית** לעסקים בישראל — צ'אט באתר שעונה על שאלות נפוצות, אוסף לידים, ומעביר אליכם רק מה שדורש אדם.
 
-**מה מקבלים בניסיון 14 יום:**
+**מה מקבלים בפיילוט [TRIAL_DAYS] ימים:**
 - תבנית מותאמת ל[קליניקה / נדל״ן / מסעדה]
 - התאמה בשפה שלכם (שעות, מחירים, מדיניות)
 - צ'אט חי באתר + דוח לידים
@@ -132,7 +133,7 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 עברית מלאה. תשלום ישראלי (Bit / PayPal). הסלמה אליכם כשצריך.
 
 **CTA**  
-מחפשים 5 עסקים לפיילוט **14 יום ניסיון** — כתבו לי בפרטי או בתגובות "פיילוט".
+לאחר אישור ההצעה: מחפשים 5 עסקים לפיילוט של **[TRIAL_DAYS] ימים** — כתבו לי בפרטי או בתגובות "פיילוט".
 
 #בינהמלאכותית #עסקיםקטנים #ישראל #לקוחות #WhatsApp
 
@@ -140,7 +141,7 @@ Adjust `PUBLIC_BASE_URL`, pricing, and contact details before sending.
 
 ## Pilot metrics (track weekly)
 
-| Metric | Target (14 days) |
+| Metric | Target ([TRIAL_DAYS] days) |
 |--------|------------------|
 | Conversations started | 20+ |
 | Leads with phone/email | 5+ |

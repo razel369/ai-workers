@@ -1,153 +1,190 @@
-# חיבורים להשקה — ישראל (מפעיל פרטי, בלי עוסק)
+# חיבורים להשקה בישראל
 
-**אתר פרודקשן:** https://paid-agent-demo-production.up.railway.app
+**סטטוס:** אין כרגע אתר פרודקשן חי ומאומת. יעד הפריסה הוא Render באזור Frankfurt עם Persistent Disk ב־`/app/data`; כתובת ה־`onrender.com` תיקבע רק אחרי יצירה ואימות.
+**כתובת Railway הישנה:** `https://paid-agent-demo-production.up.railway.app` — היסטורית/offline, אין להשתמש בה ב־webhooks או בפרסום.
 
-מדריך זה מרכז את כל מה שצריך לחבר כדי להשיק ברמה גבוהה — בלי סליקת כרטיסי אשראי (שדורשת עוסק/חברה).
+מדריך זה מרכז את החיבורים הנדרשים להשקה. יצירת שירות Render חדש אינה מעבירה secrets או נתוני לקוחות מ־Railway, ולכן כל חיבור חייב להיות מוגדר ונבדק מחדש.
 
----
+## 0. תשתית Render
+
+- Region: **Frankfurt, Germany** ([Render Regions](https://render.com/docs/regions)).
+- Web Service: בודקים דרך **New → Blueprint** מהענף `codex/revive-ai-workers-baseline`, אך עוצרים לפני `Deploy Blueprint` עד לאישור מפורש של המחיר החי. אחרי יצירה מגדירים Blueprint Auto Sync ל־No בנפרד מ־`autoDeployTrigger: off`. מעבר ל־`main` מתבצע רק אחרי אימות המועמד וניתוק Vercel Production, ומעדכן יחד את `render.yaml`, הענף המקושר של ה־Blueprint וענף השירות לפני Manual Sync יחיד.
+- Storage: דיסק קבוע של 1 GB לפחות, mount path: `/app/data` ([Persistent Disks](https://render.com/docs/disks)).
+- עלות baseline משוערת: **US$7.25 לחודש לפני מס ו־egress** — US$7 compute ועוד US$0.25 לדיסק 1 GB. יש לאמת את הסכום במסך החי לפני חיוב: [Render Pricing](https://render.com/pricing).
+- Health Check Path: `/infra-ready`. `/health` הוא liveness/אבחון בלבד, ו־`/ready` הוא שער ההשקה המחמיר ללקוחות.
+
+```env
+NODE_ENV=production
+# Render מספק RENDER_EXTERNAL_URL; מלא PUBLIC_BASE_URL רק לדומיין מותאם
+PUBLIC_BASE_URL=
+TRUST_PROXY_HEADERS=1
+DATA_DIR=/app/data
+DB_PATH=/app/data/earnings.db
+TENANTS_DIR=/app/data/tenants
+REQUIRE_PERSISTENT_VOLUME=1
+EMBED_ALLOW_PUBLIC=0
+# בעת הפעלה חיצונית בלבד: EMBED_ALLOWED_ORIGINS=https://customer.example
+```
+
+אחרי הפריסה:
+
+```bash
+curl -i https://YOUR_SERVICE.onrender.com/health  # מצופה 200; liveness בלבד
+curl -i https://YOUR_SERVICE.onrender.com/ready   # חובה 200 ו-ok:true לפני לקוחות
+```
 
 ## 1. תשלומים
 
-### Paddle (כרטיס אשראי — מומלץ) — ראה `docs/PADDLE.md`
+### Paddle (כרטיס אשראי) — ראו `docs/PADDLE.md`
 
 | משתנה | הערה |
 |--------|------|
-| `PADDLE_CLIENT_TOKEN` | מ-Paddle Dashboard |
+| `PADDLE_API_KEY` | secret של Paddle ליצירת/אימות פעולות שרת |
+| `PADDLE_CLIENT_TOKEN` | מ־Paddle Dashboard |
 | `PADDLE_PRICE_ID` | מחיר מנוי חודשי |
-| `PADDLE_WEBHOOK_SECRET` | מ-Notifications |
-| `PADDLE_ENVIRONMENT` | `sandbox` עד שמוכנים |
+| `PADDLE_WEBHOOK_SECRET` | מ־Notifications |
+| `PADDLE_ENVIRONMENT` | `sandbox` עד שכל הזרימה נבדקה |
 
-Webhook: `https://paid-agent-demo-production.up.railway.app/api/webhooks/paddle`
+Webhook מתוכנן:
 
-### Bit / PayPal (גיבוי ידני — כבר מוגדר)
+```text
+https://YOUR_SERVICE.onrender.com/api/webhooks/paddle
+```
+
+### Bit / PayPal / העברה בנקאית
 
 | ערוץ | רישום נדרש | איך זה עובד אצלנו |
 |------|------------|-------------------|
-| **Bit** | חשבון Bit אישי | לקוח לוחץ קישור → משלם → שולח אסמכתא → אתה מאשר ב-`#/admin` |
-| **PayPal.me** | חשבון PayPal אישי | אותו תהליך |
-| **העברה בנקאית** | חשבון בנק אישי | פרטים ב-`/invoice` ובמסך הפעלה |
+| **Bit** | חשבון Bit מתאים למפעיל | לקוח משלם, שולח אסמכתה, והמפעיל מאשר ב־`#/admin` |
+| **PayPal.me** | חשבון PayPal | אותו תהליך ידני |
+| **העברה בנקאית** | חשבון מתאים | פרטים ב־`/invoice` ובמסך הפעלה |
 
-**לא בשימוש כרגע:** Stripe / כרטיס אשראי / סליקה ישראלית — דורשים עוסק או חברה.
+יש לבדוק עצמאית חובות רישום, חשבוניות ומס לפני גבייה אמיתית.
 
-### משתני Railway (תשלום)
+### משתני Render לתשלום
 
 ```env
-BIT_PHONE=9725XXXXXXXX           # הגדירו רק ב-Railway; אל תשמרו מספר אמיתי ב-Git
-PAYPAL_ME=שם-המשתמש-שלך          # אחרי שתשלח לנו
+BIT_PHONE=9725XXXXXXXX           # להגדיר רק כ-secret ב-Render; לא לשמור מספר אמיתי ב-Git
+PAYPAL_ME=שם-המשתמש-שלך
 PAYEE_NAME=שם מלא בעברית
 BANK_NAME=שם הבנק
 BANK_BRANCH=מספר סניף
 BANK_ACCOUNT=מספר חשבון
-TRIAL_DAYS=14
+TRIAL_DAYS=0                    # לשנות רק לאחר החלטה עסקית מפורשת
 ACTIVATION_SLA_HOURS=24
 ```
 
 ### תהליך יומיומי
 
-1. לקוח מסיים ניסיון → `#/workers/activate/:id`
-2. לוחץ **Bit** או **PayPal** → משלם
-3. ממלא אסמכתא + פרטי קשר
-4. אתה נכנס ל-**https://paid-agent-demo-production.up.railway.app/marketplace#/admin**
-5. מאשר בקשה → העובד פעיל ללקוחות
+1. לקוח מסיים ניסיון → `#/workers/activate/:id`.
+2. הלקוח משלם ושולח אסמכתה + פרטי קשר.
+3. המפעיל נכנס ל־`https://YOUR_SERVICE.onrender.com/marketplace#/admin`.
+4. המפעיל מאשר את הבקשה; העובד נהיה פעיל.
 
----
+התהליך אינו מאומת לפרודקשן עד שבוצע פעם אחת מקצה לקצה על Render עם דיסק קבוע.
 
-## 2. AI (OpenRouter) — כבר מחובר ✓
+## 2. AI דרך OpenRouter או ספק OpenAI-compatible
 
-| משתנה | ערך נוכחי |
-|--------|-----------|
-| `LLM_API_KEY` | OpenRouter (מוגדר) |
-| `LLM_BASE_URL` | `https://openrouter.ai/api` |
-| `LLM_MODEL` | `meta-llama/llama-3.3-70b-instruct:free` |
+מפתחות שהיו ב־Railway אינם מועברים ל־Render. יש להזין מחדש secret ולבצע תשובת LLM אמיתית:
 
-**שדרוג מומלץ לפני שיווק:** הוסף $5–10 קרדיט ב-[openrouter.ai/settings/credits](https://openrouter.ai/settings/credits) ועבור למודל בתשלום (פחות מגבלות).
+```env
+LLM_API_KEY=<render-secret>
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=https://openrouter.ai/api
+LLM_MODEL=<model-id>
+```
 
----
+ללא `LLM_API_KEY`, המערכת פועלת ב־mock ו־`/ready` נכשל בכוונה. לפני שיווק יש להגדיר תקציב, rate limits ומודל שאינו תלוי במכסה חינמית לא יציבה.
 
-## 3. מסמכים משפטיים — מקושרים ✓
+## 3. מסמכים משפטיים
 
-| דף | כתובת |
-|----|--------|
+| דף | כתובת יחסית |
+|----|-------------|
 | פרטיות | `/privacy` |
 | תנאים | `/terms` |
 | תשלום | `/invoice` |
 
-קישורים בדף הבית ובתחתית המרקטפלייס.
+אחרי הפריסה יש לוודא שכל דף מחזיר `200`, שהקישורים מופיעים בדף הבית ובמרקטפלייס, ושהתוכן מתאים לסטטוס העסק בפועל.
 
----
+## 4. WhatsApp
 
-## 4. WhatsApp (הכי חשוב לשוק ישראלי — עדיין ידני)
+### שלב א — התראות לבעל העסק
 
-### שלב א — התראות לבעל העסק (קל)
+באשף ההקמה או בהגדרות העובד מזינים מספר מאומת לקבלת התראות על לידים.
 
-באשף הקמה או בהגדרות עובד: הזן **מספר לקבלת התראות** על לידים.
+### שלב ב — לקוחות כותבים ב־WhatsApp (Meta Business)
 
-### שלב ב — לקוחות כותבים ב-WhatsApp (Meta Business)
-
-1. צור אפליקציה ב-[developers.facebook.com](https://developers.facebook.com)
-2. הוסף מוצר **WhatsApp**
-3. ב-Railway הגדר:
+1. יוצרים אפליקציה ב־[developers.facebook.com](https://developers.facebook.com).
+2. מוסיפים את מוצר WhatsApp.
+3. מגדירים ב־Render:
 
 ```env
 WHATSAPP_PROVIDER=meta
 WHATSAPP_VERIFY_TOKEN=מחרוזת-אקראית-ארוכה
 WHATSAPP_ACCESS_TOKEN=טוקן-ממטא
 WHATSAPP_PHONE_NUMBER_ID=מזהה-מספר
-PUBLIC_BASE_URL=https://paid-agent-demo-production.up.railway.app
+# אופציונלי עד לחיבור דומיין מותאם; Render משתמש ב-RENDER_EXTERNAL_URL
+PUBLIC_BASE_URL=
 ```
 
-4. Webhook URL ב-Meta:
-   `https://paid-agent-demo-production.up.railway.app/api/webhooks/whatsapp`
-5. Verify token = אותו `WHATSAPP_VERIFY_TOKEN`
+4. Webhook URL ב־Meta:
+   `https://YOUR_SERVICE.onrender.com/api/webhooks/whatsapp`
+5. ה־Verify token חייב להיות זהה ל־`WHATSAPP_VERIFY_TOKEN`.
 
-> **פרטי:** Meta עשויה לדרוש אימות עסקי. עד אז — צ'אט באתר + Bit מספיקים לפיילוט.
+Meta עשויה לדרוש אימות עסקי. עד להשלמתו אפשר להריץ פיילוט מוגבל בצ'אט האתר, בלי לטעון ש־WhatsApp פעיל.
 
----
+## 5. דומיין משלך
 
-## 5. דומיין משלך (מומלץ)
-
-1. קנה דומיין (למשל `ai-workers.co.il`)
-2. Railway → Service → **Settings → Networking → Custom Domain**
-3. עדכן `PUBLIC_BASE_URL=https://הדומיין-שלך`
-4. עדכן GitHub homepage
-
----
+1. קונים דומיין, למשל `ai-workers.co.il`.
+2. ב־Render: Service → Settings → Custom Domains.
+3. מעדכנים `PUBLIC_BASE_URL=https://הדומיין-שלך`.
+4. מעדכנים callbacks של OAuth, כתובות webhook ו־GitHub homepage.
+5. מריצים שוב `/ready` ואת ה־buyer flow אחרי שינוי הדומיין.
 
 ## 6. אבטחה ותפעול
 
-| משימה | סטטוס |
-|--------|--------|
-| `ADMIN_TOKEN` ב-Railway | ✓ |
-| `INTEGRATIONS_SECRET` | ✓ |
-| Volume `/app/data` | ✓ |
-| נתק Vercel (אופציונלי) | מומלץ |
-| גיבוי שבועי ל-volume | לעשות |
-| סובב מפתח OpenRouter אם נחשף | לפי צורך |
+| משימה | סטטוס נדרש לפני השקה |
+|--------|-----------------------|
+| `ADMIN_TOKEN` סודי ב־Render | [ ] |
+| `INTEGRATIONS_SECRET` סודי ב־Render | [ ] |
+| דיסק אמיתי ב־`/app/data` | [ ] |
+| `/ready` מחזיר `200` | [ ] |
+| Vercel Production auto-deploy מ־`main` חסום | [ ] |
+| גיבוי + restore test ל־`/app/data` | [ ] |
+| סיבוב מפתחות שנחשפו | [ ] לפי צורך |
 
----
+Vercel הוא preview בלבד: `/tmp` אקראי וזמני, ללא נתוני לקוחות. PR previews יכולים לשמש ל־UI, אך `main` לא צריך לבצע שם Production auto-deploy.
 
-## 7. צ'קליסט השקה (סדר מומלץ)
+## 7. שחזור Railway מול fresh launch
 
-- [x] Railway + DB קבוע
-- [x] AI (OpenRouter)
-- [ ] Bit — לאמת את מספר המקבל ב-Railway (לא לשמור מספר אמיתי ב-Git)
-- [ ] PayPal.me — שלח שם משתמש
-- [ ] פרטי בנק (אופציונלי) ב-Railway
-- [x] דפים משפטיים מקושרים
-- [ ] פיילוט 3 עסקים
-- [ ] WhatsApp Meta (אחרי פיילוט)
-- [ ] דומיין משלך
-- [ ] שדרוג LLM מתשלום
+דיסק Render חדש מתחיל ריק. יש לבחור במפורש:
 
----
+- **Fresh launch:** אין לקוחות ישנים; מתחילים מאפס ומצהירים כך.
+- **Recovery:** משיגים export מאומת של `/app/data/earnings.db` ושל `/app/data/tenants/`, ומשמרים את `INTEGRATIONS_SECRET` הישן המדויק. אם הוא לא היה מוגדר, משמרים את `ADMIN_TOKEN` הישן ששימש fallback. משחזרים לדיסק Render, מגדירים את מפתח ההצפנה התואם, ובודקים tenant/worker וכל integration קיים לפני פתיחת תעבורה.
 
-## 8. קישורים מהירים
+פריסה שעוברת `/ready` אינה לבדה הוכחת recovery. בלי export מאומת ומפתח הצפנה תואם אין לטעון שהלקוחות, העובדים, התשלומים, השיחות או החיבורים מ־Railway נשמרו. אם המפתח הישן אינו זמין, יש לחבר מחדש כל OAuth/webhook ולתעד זאת.
+
+## 8. צ'קליסט קצר
+
+- [ ] Render Frankfurt נוצר ושולם רק לאחר אישור הסכום במסך החי.
+- [ ] דיסק `/app/data` מחובר ו־`/ready` ירוק.
+- [ ] הוחלט fresh launch או recovery, וההחלטה מתועדת.
+- [ ] AI אמיתי נבדק.
+- [ ] Bit/PayPal/בנק אומתו בלי סודות ב־Git.
+- [ ] דפים משפטיים זמינים.
+- [ ] Vercel מוגבל ל־preview בלבד.
+- [ ] buyer flow מלא עבר.
+- [ ] שלושה עסקים לפיילוט זוהו.
+- [ ] WhatsApp ודומיין יתווספו לפי שערי הפיילוט.
+
+## 9. קישורים מהירים
 
 | מה | איפה |
 |----|------|
-| אתר | https://paid-agent-demo-production.up.railway.app |
-| מרקטפלייס | /marketplace |
-| אדמין | /marketplace#/admin |
-| בריאות | /health |
-| Railway Variables | railway.app → paid-agent-demo → Variables |
+| יעד שירות | `https://YOUR_SERVICE.onrender.com` — עדיין לא הוקצה/אומת |
+| מרקטפלייס | `/marketplace` |
+| אדמין | `/marketplace#/admin` |
+| Liveness | `/health` |
+| Production readiness | `/ready` |
+| Render Dashboard | https://dashboard.render.com/ |
 | GitHub | https://github.com/razel369/ai-workers |

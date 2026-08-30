@@ -6,11 +6,11 @@
 2. הזן שם עסק → בחר תבנית → **דבר איתו עכשיו**
 3. כתוב שלום בצ'אט — אחרי התשובה לחץ **מעולה! שתף עם לקוחות**
 4. התראות וואטסאפ? **הגדרות** בצ'אט (לא באשף)
-5. `curl http://localhost:8765/health` → `מוכן לעבודה` או `צריך הגדרה`
+5. `curl http://localhost:8765/health` → liveness ואבחון; בפרודקשן רק `curl http://localhost:8765/ready` עם `200` ו־`ok:true` מאשר מוכנות
 
 ---
 
-מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב-Vercel (mock), או ב-Railway (LLM אמיתי + DB קבוע).
+מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב־Vercel preview זמני, או ב־Render עם LLM אמיתי ודיסק קבוע.
 
 ---
 
@@ -40,7 +40,7 @@ Copy-Item .env.demo.example .env
 | `WEBHOOK_NOTIFY_URL` | מומלץ | JSON ל-webhook.site על save_lead / escalate |
 | `MEETING_BOOKING_URL` | מומלץ | קישור ל-`book_meeting_link` |
 | `GOOGLE_AI_API_KEY` | אופציונלי | `generate_image` אמיתי (בלי — SVG mock) |
-| `TRIAL_DAYS=14` | מומלץ | עובד חדש **פעיל מיד** 14 יום |
+| `TRIAL_DAYS=0` | חובה בפרודקשן עד החלטת בעלים | אין הפעלה חינמית אוטומטית; לדמו מקומי בלבד אפשר לבחור משך אחר |
 
 דוגמה מלאה: [`.env.demo.example`](../.env.demo.example)
 
@@ -70,24 +70,34 @@ Copy-Item .env.demo.example .env
 
 ---
 
-## אופציה B — Vercel (mock LLM) vs Railway (LLM + DB)
+## אופציה B — Vercel Preview מול Render Production
 
-| | **Vercel** | **Railway** |
-|---|------------|-------------|
-| URL לדוגמה | `https://paid-agent-demo-production.up.railway.app` |
-| LLM | Mock (אין persistence ל-API key ב-/tmp) | `LLM_API_KEY` ב-Variables |
-| SQLite | אфמרלי — `/tmp`, מתאפס | Volume ב-`/app/data` |
-| מתאים ל | UI, Magic flow, mock tools | דמו production, webhooks, היסטוריה |
-| Deploy | push ל-main → Vercel auto | [railway.app/new](https://railway.app/new) + `railway.toml` |
+| | **Vercel Preview בלבד** | **Render — יעד פרודקשן** |
+|---|--------------------------|---------------------------|
+| URL | URL זמני של PR preview | `https://YOUR_SERVICE.onrender.com` — עדיין לא הוקצה/אומת |
+| LLM | Mock מומלץ; אין להסתמך על persistence | `LLM_API_KEY` כ־secret ב־Render |
+| SQLite | ephemeral ב־`/tmp`; מתאפס | Persistent Disk ב־`/app/data` |
+| מתאים ל | UI, Magic flow וכלי mock | פרודקשן, webhooks והיסטוריה לאחר readiness + smoke |
+| Deploy | PR previews בלבד; `main` לא יבצע Production auto-deploy | GitHub + `render.yaml` + `Dockerfile` |
 
-**Vercel — מה לצפות:** כלים יופעלו ב-**mock_agent** (זיהוי מילות מפתח בעברית). tool trace מלא ב-Builder test panel; בצ'אט — סיכום בתוך התשובה.
+**Vercel — מה לצפות:** כלים יכולים לפעול ב־**mock_agent** (זיהוי מילות מפתח בעברית). tool trace מלא ב־Builder test panel; בצ'אט — סיכום בתוך התשובה. הנתונים זמניים, ולכן אין להזין לקוחות אמיתיים ואין להציג את ה־URL כפרודקשן. לפני merge ל־`main` חייבים לחסום Vercel Production auto-deploy.
 
-**Railway — checklist:**
+**Render — checklist:**
 
-1. Deploy from GitHub → Volume `/app/data`
-2. Variables מ-`.env.production.example` + `LLM_API_KEY`, `ADMIN_TOKEN`, `TRIAL_DAYS=14`
-3. `PUBLIC_BASE_URL=https://<domain>.up.railway.app`
-4. `curl https://<domain>/health` → `persistentStorage: true`
+לפני יצירה אפשר להגיע למסך הסיכום ולבדוק את המחיר, אך **עוצרים לפני `Deploy Blueprint` עד שבעל העסק מאשר במפורש את הסכום החי**; הלחיצה יוצרת שירות בתשלום ומתחילה deploy ראשוני.
+
+1. בחר **New → Blueprint**, חבר את הענף `codex/revive-ai-workers-baseline`, קבל את האישור המפורש ורק אז צור את השירות באזור **Frankfurt** דרך `render.yaml`.
+2. חבר Persistent Disk של 1 GB לפחות ל־`/app/data`.
+3. הגדר variables מ־`.env.production.example`, כולל `DATA_DIR=/app/data`, `DB_PATH=/app/data/earnings.db`, `TENANTS_DIR=/app/data/tenants`, `REQUIRE_PERSISTENT_VOLUME=1`, וכן `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`, `ADMIN_TOKEN` וערוץ תשלום. אם משנים mount, מעבירים יחד את שלושת נתיבי הנתונים. השאר `EMBED_ALLOW_PUBLIC=0` עד שאושר אתר לקוח; אז הפעל והגדר `EMBED_ALLOWED_ORIGINS` מפורש.
+4. ודא ש־`/health` מציג את `RENDER_EXTERNAL_URL`; הגדר `PUBLIC_BASE_URL` רק לדומיין מותאם ומאומת.
+5. `GET /health` חייב להחזיר `200`, אך זו בדיקת liveness בלבד.
+6. `GET /ready` חייב להחזיר `200` ו־`ok:true`; `503` חוסם פרודקשן.
+7. הרץ buyer flow עם LLM אמיתי לפני פרסום הכתובת.
+8. מיד אחרי היצירה הגדר **Blueprint Settings → Auto Sync → No**; זה מנגנון נפרד מ־`autoDeployTrigger: off`. ב־cutover ל־`main`, עדכן גם את `branch:` ב־`render.yaml`, גם את הענף המקושר של ה־Blueprint וגם את ענף השירות, ואז הרץ Manual Sync יחיד.
+
+עלות baseline משוערת: **US$7.25 לחודש לפני מס ו־egress** — US$7 compute ועוד US$0.25 לדיסק 1 GB. יש לאמת את החיוב במסך Render מול [Pricing](https://render.com/pricing), [Persistent Disks](https://render.com/docs/disks) ו־[Regions](https://render.com/docs/regions).
+
+> Render חדש מתחיל עם DB ריק. הוא אינו משחזר אוטומטית את `earnings.db` או `tenants/` מה־volume הישן של Railway. Recovery דורש גם את `INTEGRATIONS_SECRET` הישן המדויק (או את `ADMIN_TOKEN` הישן אם שימש fallback), אחרת יש לחבר מחדש כל integration. ללא export, מפתח הצפנה ושחזור מאומתים, זהו fresh launch ולא recovery.
 
 ---
 
@@ -103,9 +113,9 @@ Copy-Item .env.demo.example .env
    - **מוקדן לידים B2B** (`sales-leads-il`) — מומלץ לכלים save_lead + book_meeting
    - **מזכיר/ת רפואי/ת** (`clinic-receptionist-he`) — תורים + escalate
 4. לחץ **«דבר איתו עכשיו!»**
-5. נפתח **צ'אט** ב-`#/workers/chat/wk_...` עם באנר «מצב ניסיון»
+5. נפתח **צ'אט** ב-`#/workers/chat/wk_...` עם באנר «מצב דמו»; אם הוגדר trial מאושר יוצג «מצב ניסיון»
 
-> עם `TRIAL_DAYS=14` העובד **פעיל** — אין paywall בצ'אט. בלי trial — צ'אט demoMode עדיין עובד; להפעלה מלאה → אדמין.
+> בדמו מקומי בלבד, `TRIAL_DAYS=14` יוצר עובד **פעיל** ל־14 יום. בפרודקשן ברירת המחדל היא `0`; במצב זה demoMode עדיין עובד, ולהפעלה מלאה נדרש תשלום ואישור אדמין.
 
 ### URL אחרי Magic
 
@@ -150,7 +160,7 @@ http://localhost:8765/marketplace#/workers/edit/<workerId>
 
 ### הכנה
 
-1. `TRIAL_DAYS=14`, `WEBHOOK_NOTIFY_URL` מ-[webhook.site](https://webhook.site)
+1. לדמו מקומי בלבד: `TRIAL_DAYS=14`, ו־`WEBHOOK_NOTIFY_URL` מ-[webhook.site](https://webhook.site). בפרודקשן נשארים עם `0` עד החלטת בעלים.
 2. `MEETING_BOOKING_URL=https://cal.com/demo` (או Cal.com שלך)
 3. קנה/צור עובד `sales-leads-il` (Magic או Pro)
 4. Builder → שלב 4 → ודא **מצב סוכן** + כלים: `save_lead`, `book_meeting_link`, `notify_webhook`
@@ -254,8 +264,9 @@ npm test
 | **Local** | http://localhost:8765/marketplace |
 | **Magic** | http://localhost:8765/marketplace#/magic |
 | **Admin** | http://localhost:8765/marketplace#/admin |
-| **Production** | https://paid-agent-demo-production.up.railway.app/marketplace |
-| **Railway** | https://\<your-app\>.up.railway.app/marketplace |
+| **Render target** | `https://YOUR_SERVICE.onrender.com/marketplace` — עדיין לא הוקצה/אומת |
+| **Historical Railway** | `https://paid-agent-demo-production.up.railway.app` — offline, לא להשתמש |
+| **Readiness** | `https://YOUR_SERVICE.onrender.com/ready` — חובה `200` לפני לקוחות |
 
 ---
 
@@ -266,3 +277,4 @@ npm test
 3. **הרץ** `.\scripts\prepare-demo.ps1` — וודא Node ≥ 22.5.
 4. **עבור Magic או Pro flow** עם הודעות העברית מהטבלה למעלה.
 5. **בדוק tool trace** ב-Builder שלב 4 («הרץ בדיקה») + webhook.site.
+6. לפרודקשן: בדוק את מחיר Render Frankfurt, עצור לפני `Deploy Blueprint` עד לאישור מפורש, צור עם דיסק `/app/data`, ודא `/ready`, ואז הרץ את אותו מסלול עם LLM אמיתי.

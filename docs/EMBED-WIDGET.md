@@ -5,7 +5,7 @@
 ## דרישות
 
 - העובד חייב להיות **פעיל** (`isActive`).
-- לצ'אט מדומיין חיצוני: הגדירו `CORS_ALLOW_ORIGIN=https://your-website.com` (או השאירו `EMBED_ALLOW_PUBLIC=1` — השרת משקף את כותרת `Origin` בנתיבי `/api/embed/*`).
+- ברירת המחדל הבטוחה היא `EMBED_ALLOW_PUBLIC=0`, שמאפשרת שימוש באותו origin בלבד. לצ'אט מדומיין חיצוני: הגדירו `EMBED_ALLOW_PUBLIC=1` וגם `EMBED_ALLOWED_ORIGINS=https://your-website.com` (רשימה מופרדת בפסיקים למספר אתרים). `*` מותר רק בהחלטה מודעת על embed ציבורי מכל אתר.
 
 ## העתקה לאתר
 
@@ -45,10 +45,10 @@
 
 ## אבטחה
 
-- `EMBED_ALLOW_PUBLIC=0` חוסם config לעובדים לא פעילים.
+- `EMBED_ALLOW_PUBLIC=0` חוסם CORS חיצוני וגם config לעובדים לא פעילים.
 - Rate limit גלובלי חל על כל הבקשות.
 - העדיפו `data-key` כשהאתר המארח אינו באותו דומיין.
 
-## חשבונית לעובד
+## סיכום הזמנה לעובד
 
-`GET /invoice/:workerId` — HTML עם שורת מע"מ (placeholder).
+`GET /invoice/:workerId` — HTML עם מחיר וסטטוס גישה, שמסומן במפורש כסיכום הזמנה שאינו חשבונית מס או קבלה.
