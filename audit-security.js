@@ -1,7 +1,7 @@
 // Security audit: SSRF, auth bypass, IDOR, and edge cases.
 const target = process.argv[2] || process.env.BASE_URL;
 if (!target) {
-  console.error('Missing target. Pass an explicit URL: node audit-security.js https://YOUR_SERVICE.onrender.com');
+  console.error('Missing target. Pass an explicit URL: node audit-security.js https://YOUR_DOMAIN');
   console.error('Or set BASE_URL explicitly before running the audit.');
   process.exit(64);
 }

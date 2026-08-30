@@ -1896,7 +1896,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (handleLegalRoutes(req, res, url, send)) return;
 
-  // Render's infrastructure health check can succeed once SQLite and the
+  // The infrastructure health check can succeed once SQLite and the
   // persistent mount work, but production traffic remains fail-closed until
   // the separate business/configuration gate is fully ready.
   if (process.env.NODE_ENV === 'production') {

@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
 
 runDockerContextSmoke();
-runRenderConfigSmoke();
+runOciConfigSmoke();
 await runLegacyMigrationSmoke();
 await runReadinessSafetySmoke();
 await runShopifyOAuthBoundarySmoke();
@@ -139,34 +139,70 @@ function runDockerContextSmoke() {
   console.log('OK    Dockerfile copies runtime modules and uses persistent data paths');
 }
 
-function runRenderConfigSmoke() {
-  console.log('--- render-config-smoke ---');
-  const blueprint = fs.readFileSync('render.yaml', 'utf8');
-  const required = [
-    'runtime: docker',
-    'branch: codex/revive-ai-workers-baseline',
-    'region: frankfurt',
-    'plan: 0.5c-512mb',
-    'numInstances: 1',
-    'autoDeployTrigger: "off"',
-    'healthCheckPath: /infra-ready',
-    'mountPath: /app/data',
-    'value: /app/data/earnings.db',
-    'value: /app/data/tenants',
-    'key: REQUIRE_PERSISTENT_VOLUME',
-    'key: ALLOW_PRIVATE_NETWORK_URLS',
-    'key: TRIAL_DAYS',
-    'key: EMBED_ALLOW_PUBLIC',
-    'key: LLM_BASE_URL',
-    'value: "0"',
-    'key: INTEGRATIONS_SECRET',
+function runOciConfigSmoke() {
+  console.log('--- oci-config-smoke ---');
+  if (fs.existsSync('render.yaml')) throw new Error('Paid Render Blueprint must stay removed from the zero-cost deployment branch');
+  const compose = fs.readFileSync('compose.oci.yaml', 'utf8');
+  const appBlock = compose.match(/^  app:\n([\s\S]*?)^  caddy:/m)?.[1] ?? '';
+  const caddyBlock = compose.match(/^  caddy:\n([\s\S]*?)^volumes:/m)?.[1] ?? '';
+  const requiredAppSettings = [
+    'INSTALL_TUNNEL: "0"',
+    'PUBLIC_BASE_URL: "https://${AI_WORKERS_DOMAIN:',
+    'REQUIRE_PERSISTENT_VOLUME: "1"',
+    'TRUST_PROXY_HEADERS: "1"',
+    'ALLOW_PRIVATE_NETWORK_URLS: "0"',
+    'PAYMENT_AUTO_VERIFY: "0"',
+    'TRIAL_DAYS: "0"',
+    'EMBED_ALLOW_PUBLIC: "0"',
+    './data:/app/data',
   ];
-  const missing = required.filter((entry) => !blueprint.includes(entry));
-  if (missing.length) throw new Error(`render.yaml missing safe production setting(s): ${missing.join(', ')}`);
-  if (!/- key: INTEGRATIONS_SECRET\s+#[\s\S]*?sync: false/m.test(blueprint)) throw new Error('Render must prompt for the durable integration encryption secret');
-  if (!/- key: LLM_BASE_URL(?:\s+#[^\n]*)*\s+sync: false/m.test(blueprint)) throw new Error('Render must prompt for the operator-controlled LLM API root');
-  if (!/- key: ALLOW_PRIVATE_NETWORK_URLS\s+value: "0"/m.test(blueprint)) throw new Error('Render must explicitly disable private-network fetches');
-  console.log('OK    Render blueprint pins Frankfurt, disables service auto-deploy, and defines readiness, secrets, and persistent paths');
+  const missing = requiredAppSettings.filter((entry) => !appBlock.includes(entry));
+  if (missing.length) throw new Error(`OCI app service missing safe setting(s): ${missing.join(', ')}`);
+  if (/^\s+ports:/m.test(appBlock)) throw new Error('OCI app service must not publish port 8765');
+  if (!/^\s+expose:\s*\n\s+- "8765"/m.test(appBlock)) throw new Error('OCI app service must expose port 8765 only to the Compose network');
+  if (!/image: caddy:\d+\.\d+\.\d+-alpine/.test(caddyBlock)) throw new Error('OCI Caddy image must use an exact stable Alpine tag');
+  for (const binding of ['"80:80"', '"443:443"']) {
+    if (!caddyBlock.includes(binding)) throw new Error(`OCI Caddy service missing public binding ${binding}`);
+  }
+  if (caddyBlock.includes('"8765:8765"')) throw new Error('OCI Caddy service must not expose the private app port');
+
+  const caddyfile = fs.readFileSync('deploy/oci/Caddyfile', 'utf8');
+  if (!caddyfile.includes('{$AI_WORKERS_DOMAIN}') || !caddyfile.includes('reverse_proxy app:8765')) {
+    throw new Error('OCI Caddyfile must terminate the configured hostname and proxy only to the private app service');
+  }
+  if (/caddy:[\s\S]*?env_file:/m.test(compose)) throw new Error('OCI Caddy service must not receive the app secret environment file');
+  if (/^\s*log\s*\{/m.test(caddyfile)) throw new Error('OCI Caddy access logs must stay off unless OAuth query strings are explicitly redacted');
+
+  const envTemplate = fs.readFileSync('.env.oci.example', 'utf8');
+  for (const safeDefault of ['TRIAL_DAYS=0', 'PAYMENT_AUTO_VERIFY=0', 'EMBED_ALLOW_PUBLIC=0', 'ALLOW_PRIVATE_NETWORK_URLS=0']) {
+    if (!new RegExp(`^${safeDefault}$`, 'm').test(envTemplate)) throw new Error(`OCI env template missing ${safeDefault}`);
+  }
+  for (const requiredPlaceholder of ['AI_WORKERS_DOMAIN=REPLACE_ME', 'LLM_API_KEY=REPLACE_ME', 'ADMIN_TOKEN=REPLACE_ME', 'INTEGRATIONS_SECRET=REPLACE_ME']) {
+    if (!envTemplate.includes(requiredPlaceholder)) throw new Error(`OCI env template must fail visibly with ${requiredPlaceholder}`);
+  }
+
+  const deployScript = fs.readFileSync('deploy/oci/deploy.sh', 'utf8');
+  const placeholderGuard = deployScript.indexOf("/REPLACE_ME/p");
+  const domainGuard = deployScript.indexOf('AI_WORKERS_DOMAIN must be a plain public hostname');
+  const composeStart = deployScript.indexOf(' up -d --build');
+  if (placeholderGuard < 0 || domainGuard < 0 || composeStart < 0 || placeholderGuard > composeStart || domainGuard > composeStart) {
+    throw new Error('OCI deploy script must reject placeholders and malformed hostnames before starting containers');
+  }
+  const bootstrap = fs.readFileSync('deploy/oci/bootstrap.sh', 'utf8');
+  if (/docker compose[^\n]* up /.test(bootstrap)) throw new Error('OCI bootstrap must not deploy before the owner configures secrets');
+  if (!bootstrap.includes('$(uname -m)') || !bootstrap.includes('aarch64') || !bootstrap.includes('VERSION_ID:-') || !bootstrap.includes('24.04')) {
+    throw new Error('OCI bootstrap must reject the wrong architecture or Ubuntu release before package installation');
+  }
+  for (const script of ['deploy/oci/bootstrap.sh', 'deploy/oci/deploy.sh', 'deploy/oci/backup.sh']) {
+    if ((fs.statSync(script).mode & 0o111) === 0) throw new Error(`${script} must be executable`);
+  }
+  for (const ignoreFile of ['.gitignore', '.dockerignore']) {
+    if (!new RegExp('^backups/?$', 'm').test(fs.readFileSync(ignoreFile, 'utf8'))) {
+      throw new Error(`${ignoreFile} must exclude staged customer-data backups`);
+    }
+  }
+
+  console.log('OK    OCI free-tier stack binds host data, keeps app private, proxies HTTPS, and leaves launch settings fail-closed');
 }
 
 async function runLegacyMigrationSmoke() {

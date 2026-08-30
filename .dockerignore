@@ -5,6 +5,7 @@
 !.env.production.example
 node_modules
 data
+backups
 *.db
 *.db-shm
 *.db-wal

@@ -1,6 +1,6 @@
 # HISTORICAL RAILWAY CONFIGURATION — not the current deployment path.
-# Do not use this file for a new production service. Use the reviewed Render
-# Blueprint in render.yaml. These retained settings are fail-closed so an old
+# Do not use this file for a new production service. Use the reviewed Oracle
+# Always Free stack in compose.oci.yaml. These retained settings are fail-closed so an old
 # linked Railway project cannot become ready without its persistent volume and
 # complete production configuration.
 

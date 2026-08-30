@@ -6,6 +6,7 @@ node_modules/
 *.log
 .DS_Store
 data/
+backups/
 server.out
 server.err
 landing_raw.txt

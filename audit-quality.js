@@ -1,7 +1,7 @@
 // Quality audit: real LLM responses in production. Check if Hebrew + correct flow.
 const target = process.argv[2] || process.env.BASE_URL;
 if (!target) {
-  console.error('Missing target. Pass an explicit URL: node audit-quality.js https://YOUR_SERVICE.onrender.com');
+  console.error('Missing target. Pass an explicit URL: node audit-quality.js https://YOUR_DOMAIN');
   console.error('Or set BASE_URL explicitly before running the audit.');
   process.exit(64);
 }

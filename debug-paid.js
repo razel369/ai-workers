@@ -1,7 +1,7 @@
 // Debug: check if paid chat actually enforces payment_required.
 const target = process.argv[2] || process.env.BASE_URL;
 if (!target) {
-  console.error('Missing target. Pass an explicit URL: node debug-paid.js https://YOUR_SERVICE.onrender.com');
+  console.error('Missing target. Pass an explicit URL: node debug-paid.js https://YOUR_DOMAIN');
   console.error('Or set BASE_URL explicitly before running this destructive debug flow.');
   process.exit(64);
 }

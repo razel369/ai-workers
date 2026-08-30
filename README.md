@@ -1,10 +1,12 @@
 # AI Workers — AI Employees for Israeli Businesses
 
-**Production status (verified 2026-08-30): offline.** Render (Frankfurt) is the
-approved replacement host, but it has not been deployed or verified yet. The old
-Railway address is historical/offline: `https://paid-agent-demo-production.up.railway.app`.
+**Production status (verified 2026-08-30): offline.** The recommended zero-cost
+hosting path is an Oracle Cloud **Always Free** A1 VM; no Oracle resource has been created
+or verified yet. The empty Render project has zero services, and its paid
+deployment path was rejected. The old Railway address is historical/offline:
+`https://paid-agent-demo-production.up.railway.app`.
 
-**Current production URL:** none yet. A fresh Render deployment starts with an
+**Current production URL:** none yet. A fresh Oracle deployment starts with an
 empty database; it does not recover customers, workers, payments, or conversations
 from the Railway volume automatically.
 
@@ -98,99 +100,66 @@ database (`earnings.db`) and per-tenant worker databases (`tenants/*/workers.db`
 If this directory is ephemeral, customers will lose keys, workers, audit events,
 payment status, and chat history on restart.
 
-| Platform | Config | Persistent DB | Status |
+| Platform | Config | Persistent DB/files | Status |
 |---|---|---|---|
-| **Render** (primary target) | `render.yaml` + `Dockerfile` + disk `/app/data` | Yes | Planned; not deployed |
-| Fly.io | `fly.toml` + `Dockerfile` | Yes (volume) | 5 min |
+| **Oracle Cloud Always Free A1** | `compose.oci.yaml` + `deploy/oci/` | Yes, on VM boot volume | Recommended free path; not deployed |
+| Render Free | No deploy config | **No** durable local disk | Incompatible; paid Blueprint removed |
 | Railway | `railway.toml` + `Dockerfile` | Historical/offline | Not the current target |
 | Vercel | `vercel.json` | **No** (`/tmp` only) | Preview only |
-| Any VPS | `Dockerfile` | Yes (mount volume) | 15 min |
 
-### Render in Frankfurt (primary target)
+### Oracle Cloud Always Free (primary target)
 
-The intended baseline is one paid Render web service in **Frankfurt, Germany**
-with the smallest paid compute plan and a 1 GB persistent disk mounted at
-`/app/data`. Estimated baseline cost: **US$7.25/month before tax and outbound
-bandwidth/egress** (US$7 compute + US$0.25 for the 1 GB disk). Confirm the live
-amount before creating the service: [Render pricing](https://render.com/pricing),
-[persistent disk documentation](https://render.com/docs/disks), and
-[available regions](https://render.com/docs/regions).
+The intended baseline is one `VM.Standard.A1.Flex` Ubuntu ARM64 VM in the
+account's home region, sized at 1 OCPU / 4 GB RAM with a 50 GB boot volume. Every
+resource must display **Always Free Eligible** and a zero estimate before it is
+created. Do not upgrade the account or substitute a paid shape when A1 capacity
+is unavailable.
 
-1. Open the [Render Dashboard](https://dashboard.render.com/) and choose **New → Blueprint**, connect this GitHub repository, and select branch `codex/revive-ai-workers-baseline`. Review the proposed resources and live price, then **stop before `Deploy Blueprint` until the owner explicitly approves that amount**; clicking it provisions the paid service and starts the initial deploy. Do not create a manual Web Service: it does not apply `render.yaml` automatically and can omit the disk, region, and readiness gates.
-2. Confirm the region is **Frankfurt**, the Docker service uses `render.yaml`, and the persistent disk is mounted at `/app/data` with at least 1 GB.
-3. During Blueprint creation, fill every `sync:false` prompt. As soon as the service resource appears, open **Environment** and add at least one real payment channel. The first deploy can validate the disk through `/infra-ready`, but every customer route intentionally returns `503` until the stricter `/ready` gate passes. Configure:
-   - `PUBLIC_BASE_URL` = optional on Render because `RENDER_EXTERNAL_URL` is used automatically; set it only when a verified custom domain should be canonical
-   - `ADMIN_TOKEN` = random hex (`node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`)
-   - `INTEGRATIONS_SECRET` = a separate random secret; for recovery, use the exact old encryption secret instead
-   - `LLM_API_KEY`, `LLM_MODEL`, and operator-controlled `LLM_BASE_URL` = the real provider configuration (`https://api.openai.com` for OpenAI or `https://openrouter.ai/api` for OpenRouter; the app appends `/v1` routes)
-   - `BIT_PHONE`, `PAYPAL_ME`, a complete bank-transfer set, or verified Paddle production settings = at least one real payment channel in the Render dashboard (payment is not hard-coded in `render.yaml`)
-   - keep `EMBED_ALLOW_PUBLIC=0` for the safe launch default; when external embeds are approved, change it to `1` and set an explicit HTTPS `EMBED_ALLOWED_ORIGINS` allow-list
-4. Keep `DATA_DIR=/app/data`, `DB_PATH=/app/data/earnings.db`,
-   `TENANTS_DIR=/app/data/tenants`, and `REQUIRE_PERSISTENT_VOLUME=1`.
-5. Deploy, then check all three endpoints:
-   - `GET /health` returning `200` proves the process is alive and exposes diagnostics; it is **not** the production gate.
-   - `GET /infra-ready` must return `200`; Render uses it to verify SQLite, writable paths, and the mounted disk during bootstrap.
-   - `GET /ready` must return `200` with `ok:true`; `503` means Render must keep the service out of production.
-6. Run the full buyer smoke flow before publishing a URL: signup → template → activation proof → admin approval → real configured-LLM chat.
-7. Immediately after provisioning, set **Blueprint Settings → Auto Sync → No**. This is separate from `autoDeployTrigger: off` and prevents Blueprint changes from redeploying resources automatically.
-8. Only after the candidate is verified and Vercel production auto-deploys are disabled, perform one approved cutover: change `branch:` in `render.yaml` to `main` as part of the merge, point both the Blueprint's linked branch and the service branch to `main`, then run one Manual Sync. Keep Blueprint Auto Sync off.
+The repository provides:
 
-Set variables in the Render dashboard (same as step 3 above):
+- `compose.oci.yaml`: app + Caddy, with no public app port and `/app/data` bound
+  to persistent host storage
+- `.env.oci.example`: fail-closed production settings with no committed secrets
+- `deploy/oci/bootstrap.sh`: installs Docker/Compose but deliberately does not
+  start the application
+- `deploy/oci/deploy.sh`: refuses placeholders, validates Compose, then starts
+  the stack
+- `deploy/oci/backup.sh`: briefly stops the app and creates a checksum-protected
+  staging archive that must be encrypted/copied off the VM and verified there
+
+Follow the complete [Oracle deployment runbook](deploy/oci/README.md). Account
+creation, login, identity/card checks, home-region choice, and the final Oracle
+**Create** action remain owner-controlled steps.
+
+After DNS and `.env` are configured:
 
 ```bash
-ADMIN_TOKEN=<random-hex>          # node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
-LLM_API_KEY=sk-...
-LLM_MODEL=<provider-model-id>
-LLM_BASE_URL=https://api.openai.com # or https://openrouter.ai/api
-# Optional on Render; set only for a verified canonical custom domain
-PUBLIC_BASE_URL=
-TRUST_PROXY_HEADERS=1
-DATA_DIR=/app/data
-DB_PATH=/app/data/earnings.db
-TENANTS_DIR=/app/data/tenants
-REQUIRE_PERSISTENT_VOLUME=1
-EMBED_ALLOW_PUBLIC=0             # enable later only with an explicit HTTPS allow-list
-AGENT_OWNER_CONTACT=you@example.com
-BIT_PHONE=9725XXXXXXXX            # or PAYPAL_ME; set the real value only in Render
-WEBHOOK_NOTIFY_URL=               # optional: lead/escalation webhook
+sudo ./deploy/oci/deploy.sh
+curl -i https://YOUR_DUCKDNS_HOST/health
+curl -i https://YOUR_DUCKDNS_HOST/infra-ready
+curl -i https://YOUR_DUCKDNS_HOST/ready
 ```
 
-`render.yaml` defines the Render baseline, including Frankfurt, the disk mount,
-and the readiness health-check path.
+`/health` is liveness only. `/infra-ready` must prove SQLite, writable paths,
+and the Docker bind mount; it does not prove Oracle retention or off-VM backup.
+`/ready` must return HTTP 200 with `ok:true` before
+customer traffic; it also requires real secrets, owner contact, an LLM and a
+payment channel. Free hosting does not make a paid LLM API free, so use a real
+free provider quota/model if the whole stack must remain at $0.
 
-After deploy, verify:
-
-```bash
-curl https://your-service.onrender.com/health
-# liveness only: expect HTTP 200 and inspect diagnostics
-curl -i https://your-service.onrender.com/infra-ready
-# Render infrastructure gate: expect HTTP 200 after the persistent disk is mounted
-curl -i https://your-service.onrender.com/ready
-# production gate: expect HTTP 200 and ok:true (not 503)
-```
+Oracle's current Always Free allowance and reclamation policy are documented in
+[Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
+There is no SLA, A1 capacity may be unavailable, and an instance classified as
+idle may be reclaimed. Keep off-VM backups and a tested restore path.
 
 #### Fresh deployment is not Railway data recovery
 
-Render creates a new, empty `/app/data` disk. Before directing returning
+A new VM starts with an empty `data/` directory. Before directing returning
 customers to it, separately obtain and verify a Railway backup containing both
 `earnings.db` and `tenants/`. Preserve the exact old `INTEGRATIONS_SECRET`; if it
-was unset, preserve the old `ADMIN_TOKEN` value that served as the encryption
-fallback. Restore the data and matching encryption secret to Render, then
-validate tenant counts, decrypt/test every integration, and run a real customer
-flow. If the old encryption secret is unavailable, reconnect every integration
-and document that limitation. If no verified Railway export is available, label
-the Render instance as a **fresh launch**, not a recovered production system.
-
-Deployment checklist:
-
-- Set `ADMIN_TOKEN` from a secret manager, never in source.
-- Set `LLM_API_KEY` for real worker replies; without it the app intentionally runs in mock mode.
-- Mount persistent storage at `DATA_DIR`; if using a path other than `/app/data`, move the mount and update `DATA_DIR`, `DB_PATH`, and `TENANTS_DIR` together so both database paths remain under that mount.
-- Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy/load balancer that overwrites `X-Forwarded-*` headers.
-- Confirm `/health` reports Render's external URL; set `PUBLIC_BASE_URL` only for a verified canonical custom domain.
-- Use `/health` for liveness diagnostics, `/infra-ready` for Render's infrastructure health check, and require `/ready` to return `200` before sending customer traffic.
-- Run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
-- Roll back by redeploying the previous image/revision, then verify `/ready` and the admin audit panel.
+was unset, preserve the old `ADMIN_TOKEN` that served as the encryption fallback.
+If no verified export exists, label the instance as a **fresh launch**, not a
+recovered production system.
 
 **Production URL:** not assigned or verified yet. The previous Railway URL is
 historical and offline. Vercel uses ephemeral `/tmp` storage and is allowed only
