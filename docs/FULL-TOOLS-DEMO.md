@@ -10,7 +10,7 @@
 
 ---
 
-מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב־Vercel preview זמני, או ב־Render עם LLM אמיתי ודיסק קבוע.
+מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב־Vercel preview זמני, או ב־Oracle Always Free עם LLM אמיתי ואחסון קבוע.
 
 ---
 
@@ -70,34 +70,34 @@ Copy-Item .env.demo.example .env
 
 ---
 
-## אופציה B — Vercel Preview מול Render Production
+## אופציה B — Vercel Preview מול Oracle Production
 
-| | **Vercel Preview בלבד** | **Render — יעד פרודקשן** |
+| | **Vercel Preview בלבד** | **Oracle Always Free — יעד פרודקשן** |
 |---|--------------------------|---------------------------|
-| URL | URL זמני של PR preview | `https://YOUR_SERVICE.onrender.com` — עדיין לא הוקצה/אומת |
-| LLM | Mock מומלץ; אין להסתמך על persistence | `LLM_API_KEY` כ־secret ב־Render |
-| SQLite | ephemeral ב־`/tmp`; מתאפס | Persistent Disk ב־`/app/data` |
+| URL | URL זמני של PR preview | `https://YOUR_DOMAIN` — עדיין לא הוקצה/אומת |
+| LLM | Mock מומלץ; אין להסתמך על persistence | `LLM_API_KEY` ב־`.env`; free hosting אינו free inference |
+| SQLite | ephemeral ב־`/tmp`; מתאפס | `./data` קבוע שמחובר ל־`/app/data` |
 | מתאים ל | UI, Magic flow וכלי mock | פרודקשן, webhooks והיסטוריה לאחר readiness + smoke |
-| Deploy | PR previews בלבד; `main` לא יבצע Production auto-deploy | GitHub + `render.yaml` + `Dockerfile` |
+| Deploy | PR previews בלבד; `main` לא יבצע Production auto-deploy | GitHub + `compose.oci.yaml` + `deploy/oci/` |
 
 **Vercel — מה לצפות:** כלים יכולים לפעול ב־**mock_agent** (זיהוי מילות מפתח בעברית). tool trace מלא ב־Builder test panel; בצ'אט — סיכום בתוך התשובה. הנתונים זמניים, ולכן אין להזין לקוחות אמיתיים ואין להציג את ה־URL כפרודקשן. לפני merge ל־`main` חייבים לחסום Vercel Production auto-deploy.
 
-**Render — checklist:**
+**Oracle Always Free — checklist:**
 
-לפני יצירה אפשר להגיע למסך הסיכום ולבדוק את המחיר, אך **עוצרים לפני `Deploy Blueprint` עד שבעל העסק מאשר במפורש את הסכום החי**; הלחיצה יוצרת שירות בתשלום ומתחילה deploy ראשוני.
+יצירת החשבון, login, home region ו־2FA נשארים בשליטת הבעלים. יוצרים רק משאב שמסומן **Always Free Eligible** ועוצרים אם מוצג מחיר שאינו `$0`.
 
-1. בחר **New → Blueprint**, חבר את הענף `codex/revive-ai-workers-baseline`, קבל את האישור המפורש ורק אז צור את השירות באזור **Frankfurt** דרך `render.yaml`.
-2. חבר Persistent Disk של 1 GB לפחות ל־`/app/data`.
-3. הגדר variables מ־`.env.production.example`, כולל `DATA_DIR=/app/data`, `DB_PATH=/app/data/earnings.db`, `TENANTS_DIR=/app/data/tenants`, `REQUIRE_PERSISTENT_VOLUME=1`, וכן `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`, `ADMIN_TOKEN` וערוץ תשלום. אם משנים mount, מעבירים יחד את שלושת נתיבי הנתונים. השאר `EMBED_ALLOW_PUBLIC=0` עד שאושר אתר לקוח; אז הפעל והגדר `EMBED_ALLOWED_ORIGINS` מפורש.
-4. ודא ש־`/health` מציג את `RENDER_EXTERNAL_URL`; הגדר `PUBLIC_BASE_URL` רק לדומיין מותאם ומאומת.
+1. צור `VM.Standard.A1.Flex` ב־home region: ‏1 OCPU, ‏4 GB, ‏Ubuntu ARM64 ו־boot volume של 50 GB.
+2. פתח רק 80/443 לציבור והגבל SSH ל־IP של הבעלים; אל תפתח 8765.
+3. בצע את [`deploy/oci/README.md`](../deploy/oci/README.md), הגדר hostname חינמי ומלא `.env` בלי `REPLACE_ME`.
+4. ודא ש־`/health` מציג `PUBLIC_BASE_URL` תואם ל־`https://YOUR_DOMAIN`.
 5. `GET /health` חייב להחזיר `200`, אך זו בדיקת liveness בלבד.
-6. `GET /ready` חייב להחזיר `200` ו־`ok:true`; `503` חוסם פרודקשן.
+6. `GET /infra-ready` וגם `GET /ready` חייבים להחזיר `200`; `503` חוסם פרודקשן.
 7. הרץ buyer flow עם LLM אמיתי לפני פרסום הכתובת.
-8. מיד אחרי היצירה הגדר **Blueprint Settings → Auto Sync → No**; זה מנגנון נפרד מ־`autoDeployTrigger: off`. ב־cutover ל־`main`, עדכן גם את `branch:` ב־`render.yaml`, גם את הענף המקושר של ה־Blueprint וגם את ענף השירות, ואז הרץ Manual Sync יחיד.
+8. צור staging backup, העתק אותו לאחסון מוצפן מחוץ ל־VM ואמת checksum + restore.
 
-עלות baseline משוערת: **US$7.25 לחודש לפני מס ו־egress** — US$7 compute ועוד US$0.25 לדיסק 1 GB. יש לאמת את החיוב במסך Render מול [Pricing](https://render.com/pricing), [Persistent Disks](https://render.com/docs/disks) ו־[Regions](https://render.com/docs/regions).
+אין SLA, A1 capacity אינה מובטחת ו־Oracle רשאית reclaim למכונה שהיא מסווגת כ־idle. אין לעבור למשאב בתשלום במקרה כזה. ראו [Oracle Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
 
-> Render חדש מתחיל עם DB ריק. הוא אינו משחזר אוטומטית את `earnings.db` או `tenants/` מה־volume הישן של Railway. Recovery דורש גם את `INTEGRATIONS_SECRET` הישן המדויק (או את `ADMIN_TOKEN` הישן אם שימש fallback), אחרת יש לחבר מחדש כל integration. ללא export, מפתח הצפנה ושחזור מאומתים, זהו fresh launch ולא recovery.
+> Oracle VM חדש מתחיל עם DB ריק. הוא אינו משחזר אוטומטית את `earnings.db` או `tenants/` מה־volume הישן של Railway. Recovery דורש גם את `INTEGRATIONS_SECRET` הישן המדויק (או את `ADMIN_TOKEN` הישן אם שימש fallback), אחרת יש לחבר מחדש כל integration. ללא export, מפתח הצפנה ושחזור מאומתים, זהו fresh launch ולא recovery.
 
 ---
 
@@ -264,9 +264,9 @@ npm test
 | **Local** | http://localhost:8765/marketplace |
 | **Magic** | http://localhost:8765/marketplace#/magic |
 | **Admin** | http://localhost:8765/marketplace#/admin |
-| **Render target** | `https://YOUR_SERVICE.onrender.com/marketplace` — עדיין לא הוקצה/אומת |
+| **Oracle target** | `https://YOUR_DOMAIN/marketplace` — עדיין לא הוקצה/אומת |
 | **Historical Railway** | `https://paid-agent-demo-production.up.railway.app` — offline, לא להשתמש |
-| **Readiness** | `https://YOUR_SERVICE.onrender.com/ready` — חובה `200` לפני לקוחות |
+| **Readiness** | `https://YOUR_DOMAIN/ready` — חובה `200` לפני לקוחות |
 
 ---
 
@@ -277,4 +277,4 @@ npm test
 3. **הרץ** `.\scripts\prepare-demo.ps1` — וודא Node ≥ 22.5.
 4. **עבור Magic או Pro flow** עם הודעות העברית מהטבלה למעלה.
 5. **בדוק tool trace** ב-Builder שלב 4 («הרץ בדיקה») + webhook.site.
-6. לפרודקשן: בדוק את מחיר Render Frankfurt, עצור לפני `Deploy Blueprint` עד לאישור מפורש, צור עם דיסק `/app/data`, ודא `/ready`, ואז הרץ את אותו מסלול עם LLM אמיתי.
+6. לפרודקשן: בצע את runbook של Oracle Always Free, עצור אם מוצג מחיר שאינו `$0`, ודא `/infra-ready` ו־`/ready`, ואז הרץ את אותו מסלול עם LLM אמיתי.

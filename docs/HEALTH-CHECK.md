@@ -3,16 +3,16 @@
 לשירות יש שני endpoints עם תפקידים שונים:
 
 - `GET /health` הוא **liveness**: אם תהליך Node חי, הוא מחזיר `200` ומציג אבחון. גם `ok:true` כאן אינו אישור שהמערכת בטוחה ללקוחות.
-- `GET /infra-ready` הוא שער התשתית של Render: הוא בודק SQLite, נתיבים ודיסק קבוע, בלי לדרוש שכבר נבחר ערוץ תשלום.
+- `GET /infra-ready` הוא שער התשתית: הוא בודק SQLite, נתיבים ו־Docker bind mount, בלי לדרוש שכבר נבחר ערוץ תשלום. הוא אינו מוכיח retention של Oracle או קיום גיבוי מחוץ ל־VM.
 - `GET /ready` הוא **שער המוכנות ללקוחות**: הוא מחזיר `200` רק כאשר ההגדרות העסקיות והאחסון הנדרשים תקינים; אחרת הוא מחזיר `503`, ובפרודקשן גם שאר נתיבי הלקוחות נשארים סגורים.
 
-Render צריך להשתמש ב־`/infra-ready` כ־Health Check Path. היעד המתוכנן הוא Render באזור Frankfurt עם דיסק קבוע ב־`/app/data`; נכון ל־2026-08-30 עדיין אין פריסה חיה מאומתת.
+במסלול Oracle Always Free, ה־healthcheck של קונטיינר app משתמש ב־`/infra-ready`, ו־Caddy מתחיל רק לאחר שהוא עובר. `compose.oci.yaml` מחבר את `./data` הקבוע ב־VM אל `/app/data`; נכון ל־2026-08-30 עדיין אין פריסה חיה מאומתת.
 
 ## Liveness — `GET /health`
 
 ```http
 GET /health HTTP/1.1
-Host: your-service.onrender.com
+Host: YOUR_DOMAIN
 ```
 
 לא נדרש אימות. דוגמת תשובה (`200`):
@@ -26,7 +26,7 @@ Host: your-service.onrender.com
   "llmConfigured": true,
   "llmProvider": "openai_compatible",
   "llmModel": "gpt-5.5",
-  "publicBaseUrl": "https://your-service.onrender.com",
+  "publicBaseUrl": "https://YOUR_DOMAIN",
   "dbPath": "/app/data/earnings.db",
   "tenantsDir": "/app/data/tenants",
   "persistentStorage": true,
@@ -46,13 +46,13 @@ Host: your-service.onrender.com
 
 ## Infrastructure readiness — `GET /infra-ready`
 
-Render משתמש בנתיב הזה כדי לאשר שהגרסה החדשה יכולה לפתוח את SQLite, לכתוב לנתיבי הנתונים ולראות mount אמיתי כאשר `REQUIRE_PERSISTENT_VOLUME=1`. הוא אינו אישור לפרסם את המוצר; כאשר `/infra-ready` הוא `200` אבל `/ready` הוא `503`, הפריסה קיימת לצורכי bootstrap בלבד וכל נתיבי הלקוחות בפרודקשן מחזירים `503`.
+Docker משתמש בנתיב הזה כדי לאשר שהגרסה החדשה יכולה לפתוח את SQLite, לכתוב לנתיבי הנתונים ולראות mount אמיתי כאשר `REQUIRE_PERSISTENT_VOLUME=1`. הוא אינו אישור לפרסם את המוצר; כאשר `/infra-ready` הוא `200` אבל `/ready` הוא `503`, הפריסה קיימת לצורכי bootstrap בלבד וכל נתיבי הלקוחות בפרודקשן מחזירים `503`.
 
 ## Readiness — `GET /ready`
 
 ```http
 GET /ready HTTP/1.1
-Host: your-service.onrender.com
+Host: YOUR_DOMAIN
 ```
 
 דוגמת תשובה מוכנה (`200`):
@@ -86,7 +86,7 @@ Host: your-service.onrender.com
     "mounted": true
   },
   "agent": "AI Workers",
-  "publicBaseUrl": "https://your-service.onrender.com"
+  "publicBaseUrl": "https://YOUR_DOMAIN"
 }
 ```
 
@@ -94,21 +94,21 @@ Host: your-service.onrender.com
 
 ### תנאי המוכנות
 
-| בדיקה | ערך נדרש ב־Render | פעולה אם נכשל |
+| בדיקה | ערך נדרש בפרודקשן | פעולה אם נכשל |
 |-------|----------------------|----------------|
 | `adminEnabled` | `true` | להגדיר `ADMIN_TOKEN` אקראי באורך 24 תווים לפחות |
 | `integrationsEncryptionConfigured` | `true` | להגדיר `INTEGRATIONS_SECRET` אקראי; ב־recovery להשתמש בערך הישן המדויק |
 | `llmConfigured` | `true` | להגדיר מפתח ומודל אמיתיים; placeholder או mock אינם פרודקשן. אם מגדירים `LLM_BASE_URL`, הוא חייב להיות יעד HTTPS ציבורי ומאומת של המפעיל |
 | `paymentChannelConfigured` | `true` | להגדיר ערוץ אמיתי; מספר/חשבון placeholder או Paddle sandbox אינם עוברים |
 | `ownerContactConfigured` | `true` | להגדיר אימייל, מספר ישראלי או URL תמיכה אמיתי ב־`AGENT_OWNER_CONTACT` |
-| `publicBaseUrlConfigured` | `true` | Render מספק `RENDER_EXTERNAL_URL`; לדומיין מותאם להגדיר `PUBLIC_BASE_URL` מאומת |
+| `publicBaseUrlConfigured` | `true` | ב־OCI להגדיר `AI_WORKERS_DOMAIN`; Compose קובע `PUBLIC_BASE_URL=https://...` |
 | `embedOriginsConfigured` | `true` | ב־safe launch להגדיר `EMBED_ALLOW_PUBLIC=0`; אם מפעילים embed חיצוני, להגדיר HTTPS origins אמיתיים (`*` רק בהחלטה מודעת) |
 | `privateNetworkFetchDisabled` | `true` | להשאיר `ALLOW_PRIVATE_NETWORK_URLS=0`; הערך `1` מיועד רק למעבדה מקומית מבודדת ולעולם לא לפרודקשן |
 | `paymentAutoVerifyDisabled` | `true` | להשאיר `PAYMENT_AUTO_VERIFY=0`; מצב ה־stub מיועד לבדיקות בלבד ואסור בפרודקשן |
 | `persistence.pathsAligned` | `true` | `DATA_DIR`, `DB_PATH` ו־`TENANTS_DIR` חייבים להיות תחת `/app/data` |
 | `persistence.writable` | `true` | לבדוק הרשאות כתיבה לדיסק |
 | `persistence.dbOk` | `true` | לבדוק פתיחת SQLite ושגיאות אתחול |
-| `persistence.mounted` | `true` ב־Render או כאשר `REQUIRE_PERSISTENT_VOLUME=1` | לחבר Render Persistent Disk ל־`/app/data` |
+| `persistence.mounted` | `true` כאשר `REQUIRE_PERSISTENT_VOLUME=1` | לוודא ש־`./data:/app/data` מחובר דרך Compose ולא רק קיימת ספרייה בקונטיינר |
 
 ## בדיקות ידניות אחרי פריסה
 
@@ -116,7 +116,7 @@ Host: your-service.onrender.com
 # Liveness — אמור להחזיר 200, אך אינו שער השקה
 curl -i https://YOUR_HOST/health
 
-# Render infrastructure readiness — חובה 200 לאחר חיבור הדיסק
+# Infrastructure readiness — חובה 200 לאחר חיבור האחסון
 curl -i https://YOUR_HOST/infra-ready
 
 # Customer readiness — חובה 200 ו-ok:true לפני פרסום
@@ -138,25 +138,25 @@ curl -s -o /dev/null -w "%{http_code}" https://YOUR_HOST/terms
 ## סקריפט Smoke
 
 ```powershell
-.\scripts\smoke-production.ps1 -BaseUrl "https://your-service.onrender.com"
+.\scripts\smoke-production.ps1 -BaseUrl "https://YOUR_DOMAIN"
 ```
 
 Exit code `0` מעיד רק שהבדיקות שהסקריפט מריץ עברו. יש לבדוק בנפרד ש־`/ready` הוא `200` ושבוצע buyer flow אמיתי.
 
-## תצורת Render
+## תצורת Oracle + Docker
 
-`render.yaml` מגדיר את `/infra-ready` כ־health check ואת הדיסק ב־`/app/data`. אם הפריסה לא עוברת את בדיקת התשתית:
+`compose.oci.yaml` מגדיר את app+Caddy ואת החיבור `./data:/app/data`; ה־Dockerfile מגדיר את `/infra-ready` כ־healthcheck. אם הפריסה לא עוברת את בדיקת התשתית:
 
 1. ודאו שהדיסק מחובר ל־`/app/data`, לא רק שהספרייה קיימת בתוך ה־container.
 2. ודאו: `DATA_DIR=/app/data`, `DB_PATH=/app/data/earnings.db`, `TENANTS_DIR=/app/data/tenants`, `REQUIRE_PERSISTENT_VOLUME=1`, `ALLOW_PRIVATE_NETWORK_URLS=0`.
 3. ודאו שכל הסודות וה־URL הוגדרו. ב־safe launch השאירו `EMBED_ALLOW_PUBLIC=0`; אם הוא `1`, חובה להגדיר `EMBED_ALLOWED_ORIGINS` מפורש.
 4. בדקו את לוגי הפריסה לשגיאות SQLite או startup.
 
-Render מתכנן להפעיל את השירות ב־Frankfurt. לפי המסמכים הרשמיים, שירות עם דיסק חייב להיות בתוכנית compute בתשלום, ורק תוכן תחת נתיב ה־mount נשמר: [Persistent Disks](https://render.com/docs/disks), [Regions](https://render.com/docs/regions).
+הפעלת ה־VM נשארת שלב בשליטת בעל החשבון. יש לבחור רק `VM.Standard.A1.Flex` שמסומן Always Free Eligible ולעצור אם מוצג מחיר שאינו `$0`: [Oracle Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
 
 ## גבול שחזור הנתונים
 
-דיסק Render חדש הוא ריק. תשובת `/ready` תקינה מוכיחה שהתשתית החדשה מוכנה — היא **אינה** מוכיחה שנתוני Railway שוחזרו. שחזור לקוחות קיימים דורש export מאומת ונפרד של `earnings.db` ושל `tenants/`, וגם את הערך המדויק של `INTEGRATIONS_SECRET` הישן. אם המשתנה לא היה מוגדר, `ADMIN_TOKEN` הישן שימש כמפתח החלופי. לאחר ההעתקה יש לבדוק ספירות, פענוח של כל integration וזרימה של לקוח קיים; ללא המפתח הישן חייבים לחבר מחדש את החיבורים.
+תיקיית data חדשה ב־Oracle היא ריקה. תשובת `/ready` תקינה מוכיחה שהתשתית החדשה מוכנה — היא **אינה** מוכיחה שנתוני Railway שוחזרו. שחזור לקוחות קיימים דורש export מאומת ונפרד של `earnings.db` ושל `tenants/`, וגם את הערך המדויק של `INTEGRATIONS_SECRET` הישן. אם המשתנה לא היה מוגדר, `ADMIN_TOKEN` הישן שימש כמפתח החלופי. לאחר ההעתקה יש לבדוק ספירות, פענוח של כל integration וזרימה של לקוח קיים; ללא המפתח הישן חייבים לחבר מחדש את החיבורים.
 
 ## Related
 

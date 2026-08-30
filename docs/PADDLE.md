@@ -2,7 +2,7 @@
 
 Paddle משמש כ-**Merchant of Record**: הם מוכרים רשמית, גובים מע"מ/מסות בחו"ל, ומעבירים אליך את הכסף. מתאים לפרטי בישראל **בלי חברה** — עדיין צריך לדווח הכנסה לרשות המיסים.
 
-## משתני סביבה (Render)
+## משתני סביבה (קובץ `.env` המוגן בשרת)
 
 ```env
 PADDLE_ENVIRONMENT=sandbox          # sandbox | production
@@ -31,7 +31,7 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 
 ### 4. Webhook
 1. **Developer tools → Notifications → New destination**
-2. URL: `https://YOUR_SERVICE.onrender.com/api/webhooks/paddle`
+2. URL: `https://YOUR_DOMAIN/api/webhooks/paddle`
 3. Events:
    - `transaction.completed`
 4. העתק **Endpoint secret key** → `PADDLE_WEBHOOK_SECRET`

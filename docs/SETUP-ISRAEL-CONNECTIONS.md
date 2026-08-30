@@ -1,27 +1,25 @@
 # חיבורים להשקה בישראל
 
-**סטטוס:** אין כרגע אתר פרודקשן חי ומאומת. יעד הפריסה הוא Render באזור Frankfurt עם Persistent Disk ב־`/app/data`; כתובת ה־`onrender.com` תיקבע רק אחרי יצירה ואימות.
+**סטטוס:** אין כרגע אתר פרודקשן חי ומאומת. יעד הפריסה הוא Oracle Always Free A1 עם `./data` קבוע שמחובר ל־`/app/data`; הדומיין ייקבע רק אחרי יצירה ואימות.
 **כתובת Railway הישנה:** `https://paid-agent-demo-production.up.railway.app` — היסטורית/offline, אין להשתמש בה ב־webhooks או בפרסום.
 
-מדריך זה מרכז את החיבורים הנדרשים להשקה. יצירת שירות Render חדש אינה מעבירה secrets או נתוני לקוחות מ־Railway, ולכן כל חיבור חייב להיות מוגדר ונבדק מחדש.
+מדריך זה מרכז את החיבורים הנדרשים להשקה. יצירת VM חדש אינה מעבירה secrets או נתוני לקוחות מ־Railway, ולכן כל חיבור חייב להיות מוגדר ונבדק מחדש.
 
-## 0. תשתית Render
+## 0. תשתית Oracle Always Free
 
-- Region: **Frankfurt, Germany** ([Render Regions](https://render.com/docs/regions)).
-- Web Service: בודקים דרך **New → Blueprint** מהענף `codex/revive-ai-workers-baseline`, אך עוצרים לפני `Deploy Blueprint` עד לאישור מפורש של המחיר החי. אחרי יצירה מגדירים Blueprint Auto Sync ל־No בנפרד מ־`autoDeployTrigger: off`. מעבר ל־`main` מתבצע רק אחרי אימות המועמד וניתוק Vercel Production, ומעדכן יחד את `render.yaml`, הענף המקושר של ה־Blueprint וענף השירות לפני Manual Sync יחיד.
-- Storage: דיסק קבוע של 1 GB לפחות, mount path: `/app/data` ([Persistent Disks](https://render.com/docs/disks)).
-- עלות baseline משוערת: **US$7.25 לחודש לפני מס ו־egress** — US$7 compute ועוד US$0.25 לדיסק 1 GB. יש לאמת את הסכום במסך החי לפני חיוב: [Render Pricing](https://render.com/pricing).
+- Region: ה־**home region** של חשבון Oracle; Always Free Compute זמין רק שם.
+- Compute: ‏`VM.Standard.A1.Flex`, ‏1 OCPU / ‏4 GB, ‏Ubuntu ARM64, ורק אם מסומן **Always Free Eligible**.
+- Storage: ‏boot volume של 50 GB; `compose.oci.yaml` מחבר `./data` אל `/app/data`.
+- Cost gate: לא לשדרג ל־Pay As You Go ולעצור לפני Create אם מוצג estimate שאינו `$0`.
+- Runbook: [`deploy/oci/README.md`](../deploy/oci/README.md).
 - Health Check Path: `/infra-ready`. `/health` הוא liveness/אבחון בלבד, ו־`/ready` הוא שער ההשקה המחמיר ללקוחות.
 
 ```env
-NODE_ENV=production
-# Render מספק RENDER_EXTERNAL_URL; מלא PUBLIC_BASE_URL רק לדומיין מותאם
-PUBLIC_BASE_URL=
-TRUST_PROXY_HEADERS=1
-DATA_DIR=/app/data
-DB_PATH=/app/data/earnings.db
-TENANTS_DIR=/app/data/tenants
-REQUIRE_PERSISTENT_VOLUME=1
+AI_WORKERS_DOMAIN=YOUR_DOMAIN
+# שאר ערכי הבטיחות למטה נכפים גם ב-compose.oci.yaml
+TRIAL_DAYS=0
+PAYMENT_AUTO_VERIFY=0
+ALLOW_PRIVATE_NETWORK_URLS=0
 EMBED_ALLOW_PUBLIC=0
 # בעת הפעלה חיצונית בלבד: EMBED_ALLOWED_ORIGINS=https://customer.example
 ```
@@ -29,8 +27,9 @@ EMBED_ALLOW_PUBLIC=0
 אחרי הפריסה:
 
 ```bash
-curl -i https://YOUR_SERVICE.onrender.com/health  # מצופה 200; liveness בלבד
-curl -i https://YOUR_SERVICE.onrender.com/ready   # חובה 200 ו-ok:true לפני לקוחות
+curl -i https://YOUR_DOMAIN/health        # מצופה 200; liveness בלבד
+curl -i https://YOUR_DOMAIN/infra-ready   # חובה 200 לאחסון/SQLite
+curl -i https://YOUR_DOMAIN/ready         # חובה 200 ו-ok:true לפני לקוחות
 ```
 
 ## 1. תשלומים
@@ -48,7 +47,7 @@ curl -i https://YOUR_SERVICE.onrender.com/ready   # חובה 200 ו-ok:true לפ
 Webhook מתוכנן:
 
 ```text
-https://YOUR_SERVICE.onrender.com/api/webhooks/paddle
+https://YOUR_DOMAIN/api/webhooks/paddle
 ```
 
 ### Bit / PayPal / העברה בנקאית
@@ -61,10 +60,10 @@ https://YOUR_SERVICE.onrender.com/api/webhooks/paddle
 
 יש לבדוק עצמאית חובות רישום, חשבוניות ומס לפני גבייה אמיתית.
 
-### משתני Render לתשלום
+### משתני תשלום ב־`.env` המוגן
 
 ```env
-BIT_PHONE=9725XXXXXXXX           # להגדיר רק כ-secret ב-Render; לא לשמור מספר אמיתי ב-Git
+BIT_PHONE=9725XXXXXXXX           # להגדיר רק ב-.env המוגן; לא לשמור מספר אמיתי ב-Git
 PAYPAL_ME=שם-המשתמש-שלך
 PAYEE_NAME=שם מלא בעברית
 BANK_NAME=שם הבנק
@@ -78,17 +77,17 @@ ACTIVATION_SLA_HOURS=24
 
 1. לקוח מסיים ניסיון → `#/workers/activate/:id`.
 2. הלקוח משלם ושולח אסמכתה + פרטי קשר.
-3. המפעיל נכנס ל־`https://YOUR_SERVICE.onrender.com/marketplace#/admin`.
+3. המפעיל נכנס ל־`https://YOUR_DOMAIN/marketplace#/admin`.
 4. המפעיל מאשר את הבקשה; העובד נהיה פעיל.
 
-התהליך אינו מאומת לפרודקשן עד שבוצע פעם אחת מקצה לקצה על Render עם דיסק קבוע.
+התהליך אינו מאומת לפרודקשן עד שבוצע פעם אחת מקצה לקצה על Oracle מול האחסון הקבוע.
 
 ## 2. AI דרך OpenRouter או ספק OpenAI-compatible
 
-מפתחות שהיו ב־Railway אינם מועברים ל־Render. יש להזין מחדש secret ולבצע תשובת LLM אמיתית:
+מפתחות שהיו ב־Railway אינם מועברים ל־Oracle. יש להזין מחדש secret ולבצע תשובת LLM אמיתית:
 
 ```env
-LLM_API_KEY=<render-secret>
+LLM_API_KEY=<provider-secret>
 LLM_PROVIDER=openai_compatible
 LLM_BASE_URL=https://openrouter.ai/api
 LLM_MODEL=<model-id>
@@ -116,19 +115,19 @@ LLM_MODEL=<model-id>
 
 1. יוצרים אפליקציה ב־[developers.facebook.com](https://developers.facebook.com).
 2. מוסיפים את מוצר WhatsApp.
-3. מגדירים ב־Render:
+3. מגדירים ב־`.env` המוגן בשרת:
 
 ```env
 WHATSAPP_PROVIDER=meta
 WHATSAPP_VERIFY_TOKEN=מחרוזת-אקראית-ארוכה
 WHATSAPP_ACCESS_TOKEN=טוקן-ממטא
 WHATSAPP_PHONE_NUMBER_ID=מזהה-מספר
-# אופציונלי עד לחיבור דומיין מותאם; Render משתמש ב-RENDER_EXTERNAL_URL
-PUBLIC_BASE_URL=
+# Compose בונה PUBLIC_BASE_URL מתוך AI_WORKERS_DOMAIN
+AI_WORKERS_DOMAIN=YOUR_DOMAIN
 ```
 
 4. Webhook URL ב־Meta:
-   `https://YOUR_SERVICE.onrender.com/api/webhooks/whatsapp`
+   `https://YOUR_DOMAIN/api/webhooks/whatsapp`
 5. ה־Verify token חייב להיות זהה ל־`WHATSAPP_VERIFY_TOKEN`.
 
 Meta עשויה לדרוש אימות עסקי. עד להשלמתו אפשר להריץ פיילוט מוגבל בצ'אט האתר, בלי לטעון ש־WhatsApp פעיל.
@@ -136,8 +135,8 @@ Meta עשויה לדרוש אימות עסקי. עד להשלמתו אפשר ל�
 ## 5. דומיין משלך
 
 1. קונים דומיין, למשל `ai-workers.co.il`.
-2. ב־Render: Service → Settings → Custom Domains.
-3. מעדכנים `PUBLIC_BASE_URL=https://הדומיין-שלך`.
+2. מפנים את רשומת ה־DNS ל־public IPv4 של ה־VM.
+3. מעדכנים `AI_WORKERS_DOMAIN=הדומיין-שלך` ב־`.env` ומריצים שוב את deploy script.
 4. מעדכנים callbacks של OAuth, כתובות webhook ו־GitHub homepage.
 5. מריצים שוב `/ready` ואת ה־buyer flow אחרי שינוי הדומיין.
 
@@ -145,8 +144,8 @@ Meta עשויה לדרוש אימות עסקי. עד להשלמתו אפשר ל�
 
 | משימה | סטטוס נדרש לפני השקה |
 |--------|-----------------------|
-| `ADMIN_TOKEN` סודי ב־Render | [ ] |
-| `INTEGRATIONS_SECRET` סודי ב־Render | [ ] |
+| `ADMIN_TOKEN` סודי ב־`.env` ובמנהל הסיסמאות | [ ] |
+| `INTEGRATIONS_SECRET` סודי ב־`.env` ובמנהל הסיסמאות | [ ] |
 | דיסק אמיתי ב־`/app/data` | [ ] |
 | `/ready` מחזיר `200` | [ ] |
 | Vercel Production auto-deploy מ־`main` חסום | [ ] |
@@ -157,16 +156,16 @@ Vercel הוא preview בלבד: `/tmp` אקראי וזמני, ללא נתוני 
 
 ## 7. שחזור Railway מול fresh launch
 
-דיסק Render חדש מתחיל ריק. יש לבחור במפורש:
+תיקיית data חדשה ב־Oracle מתחילה ריקה. יש לבחור במפורש:
 
 - **Fresh launch:** אין לקוחות ישנים; מתחילים מאפס ומצהירים כך.
-- **Recovery:** משיגים export מאומת של `/app/data/earnings.db` ושל `/app/data/tenants/`, ומשמרים את `INTEGRATIONS_SECRET` הישן המדויק. אם הוא לא היה מוגדר, משמרים את `ADMIN_TOKEN` הישן ששימש fallback. משחזרים לדיסק Render, מגדירים את מפתח ההצפנה התואם, ובודקים tenant/worker וכל integration קיים לפני פתיחת תעבורה.
+- **Recovery:** משיגים export מאומת של `/app/data/earnings.db` ושל `/app/data/tenants/`, ומשמרים את `INTEGRATIONS_SECRET` הישן המדויק. אם הוא לא היה מוגדר, משמרים את `ADMIN_TOKEN` הישן ששימש fallback. משחזרים ל־`data/` ב־VM, מגדירים את מפתח ההצפנה התואם, ובודקים tenant/worker וכל integration קיים לפני פתיחת תעבורה.
 
 פריסה שעוברת `/ready` אינה לבדה הוכחת recovery. בלי export מאומת ומפתח הצפנה תואם אין לטעון שהלקוחות, העובדים, התשלומים, השיחות או החיבורים מ־Railway נשמרו. אם המפתח הישן אינו זמין, יש לחבר מחדש כל OAuth/webhook ולתעד זאת.
 
 ## 8. צ'קליסט קצר
 
-- [ ] Render Frankfurt נוצר ושולם רק לאחר אישור הסכום במסך החי.
+- [ ] Oracle A1 נוצר רק כ־Always Free Eligible עם estimate של `$0`.
 - [ ] דיסק `/app/data` מחובר ו־`/ready` ירוק.
 - [ ] הוחלט fresh launch או recovery, וההחלטה מתועדת.
 - [ ] AI אמיתי נבדק.
@@ -181,10 +180,10 @@ Vercel הוא preview בלבד: `/tmp` אקראי וזמני, ללא נתוני 
 
 | מה | איפה |
 |----|------|
-| יעד שירות | `https://YOUR_SERVICE.onrender.com` — עדיין לא הוקצה/אומת |
+| יעד שירות | `https://YOUR_DOMAIN` — עדיין לא הוקצה/אומת |
 | מרקטפלייס | `/marketplace` |
 | אדמין | `/marketplace#/admin` |
 | Liveness | `/health` |
 | Production readiness | `/ready` |
-| Render Dashboard | https://dashboard.render.com/ |
+| Oracle Console | https://cloud.oracle.com/ |
 | GitHub | https://github.com/razel369/ai-workers |

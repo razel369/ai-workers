@@ -2,16 +2,20 @@
 
 Track deployment and feature phases for AI Workers production launch.
 
-## Phase 1 — Render production migration
+## Phase 1 — Oracle Always Free production migration
 
-- [x] Dockerfile copies bootstrap-env, integrations, google-media, docs/legal
-- [x] `render.yaml` targets Frankfurt, one 512 MB service, service auto-deploys off, `/infra-ready`, and a 1 GB disk at `/app/data`
-- [x] README and `.env.production.example` document the Render configuration
-- [ ] Stop before `Deploy Blueprint` until the owner explicitly approves the live price; after creation set Blueprint Auto Sync to No separately
-- [ ] Create the paid Render service through **New → Blueprint** from `codex/revive-ai-workers-baseline` and verify it; no live production URL exists yet
+- [x] Dockerfile copies bootstrap-env, integrations, google-media, docs/legal and defaults `INSTALL_TUNNEL=0` for ARM64
+- [x] `compose.oci.yaml` keeps port 8765 private, binds persistent `./data` to `/app/data`, and terminates HTTPS with Caddy
+- [x] `.env.oci.example` and `deploy/oci/` document safe bootstrap, deployment, health gates, and off-VM backup
+- [x] The paid Render route was rejected; its project remains empty with zero services and the actionable `render.yaml` Blueprint was removed
+- [ ] Owner creates/logs into an Oracle Free Tier account and chooses the home region
+- [ ] Create only a `VM.Standard.A1.Flex` resource labelled **Always Free Eligible**, 1 OCPU / 4 GB, with a 50 GB boot volume and a zero estimate
+- [ ] Configure a free hostname, restrict SSH to the owner IP, and expose only 80/443
 - [ ] Decide between a fresh launch and a verified Railway data recovery
+- [ ] Configure real owner contact, two distinct secrets, a free-quota or otherwise approved LLM, and a real payment channel
+- [ ] Verify `/health`, `/infra-ready`, `/ready`, an off-VM backup/restore, and a real buyer flow
 - [ ] Disable Vercel production auto-deploys from `main` before merging the migration
-- [ ] Cut over durably: update `render.yaml`, the Blueprint linked branch, and the service branch to `main`, then run one Manual Sync with Auto Sync left off
+- [ ] Merge and cut over only after the deployed candidate passes every gate
 
 ## Phase 2 — Auto payment activation
 
