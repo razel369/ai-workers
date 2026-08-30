@@ -194,7 +194,14 @@ function runOciConfigSmoke() {
     throw new Error('OCI bootstrap must reject the wrong architecture or Ubuntu release before package installation');
   }
   for (const script of ['deploy/oci/bootstrap.sh', 'deploy/oci/deploy.sh', 'deploy/oci/backup.sh']) {
-    if ((fs.statSync(script).mode & 0o111) === 0) throw new Error(`${script} must be executable`);
+    if (!fs.readFileSync(script, 'utf8').startsWith('#!/usr/bin/env bash\n')) {
+      throw new Error(`${script} must declare Bash explicitly`);
+    }
+  }
+  for (const doc of ['README.md', 'deploy/oci/README.md', 'docs/LAUNCH-CHECKLIST.md']) {
+    if (/sudo \.\/deploy\/oci\/(?:bootstrap|deploy|backup)\.sh/.test(fs.readFileSync(doc, 'utf8'))) {
+      throw new Error(`${doc} must invoke web-uploaded Oracle scripts through sudo bash`);
+    }
   }
   for (const ignoreFile of ['.gitignore', '.dockerignore']) {
     if (!new RegExp('^backups/?$', 'm').test(fs.readFileSync(ignoreFile, 'utf8'))) {
