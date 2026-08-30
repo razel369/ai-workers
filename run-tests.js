@@ -32,6 +32,7 @@ function buildEnv(root, listenPort, publicUrl) {
     PADDLE_CLIENT_TOKEN: process.env.PADDLE_CLIENT_TOKEN ?? 'test_client_token',
     PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID ?? 'pri_test_monthly',
     PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET ?? 'test-paddle-webhook-secret',
+    BIT_WEBHOOK_SECRET: process.env.BIT_WEBHOOK_SECRET ?? 'test-bit-webhook-secret',
     PADDLE_ENVIRONMENT: 'sandbox',
   };
 }

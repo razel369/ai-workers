@@ -724,21 +724,20 @@ function embedCorsHeaders(req) {
   // Embed is a public widget: by default we reflect any origin. Operators can lock
   // it down with EMBED_ALLOWED_ORIGINS=<csv> or "*".
   const allowAll = EMBED_ALLOWED_ORIGINS.has('*');
-  const allowOrigin = allowAll || EMBED_ALLOWED_ORIGINS.has(origin);
+  const allowOrigin = allowAll || EMBED_ALLOWED_ORIGINS.has(origin.toLowerCase());
   if (!allowOrigin) {
-    // Explicit deny: echo a non-functional origin so the browser blocks the response.
+    // Explicit deny: omit Access-Control-Allow-Origin so the browser blocks it.
     return {
-      'access-control-allow-origin': 'null',
       'access-control-allow-headers': 'content-type, authorization',
       'access-control-allow-methods': 'GET, POST, OPTIONS',
       'vary': 'Origin',
     };
   }
   return {
-    'access-control-allow-origin': allowAll ? '*' : origin,
+    'access-control-allow-origin': origin,
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    ...(allowAll ? {} : { 'vary': 'Origin' }),
+    'vary': 'Origin',
   };
 }
 

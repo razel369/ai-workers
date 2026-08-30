@@ -7,6 +7,7 @@ import { buildOAuthReturnUrl } from './url-security.js';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:8765';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
+const BIT_WEBHOOK_SECRET = process.env.BIT_WEBHOOK_SECRET ?? process.env.PAYMENT_WEBHOOK_SECRET ?? '';
 let failures = 0;
 const ok = (l) => console.log(`OK    ${l}`);
 const fail = (l, d) => { failures++; console.log(`FAIL  ${l}${d ? ' \u2014 ' + d : ''}`); };
@@ -81,6 +82,7 @@ let tenantId = null;
   expect('  got stable tenant id', !!tenantId && tenantId.startsWith('ten_'));
 }
 const auth = (extra = {}) => ({ authorization: 'Bearer ' + tenantKey, 'content-type': 'application/json', ...extra });
+const primaryCustomerId = 'worker-tests-primary-customer';
 
 // 4. List workers (empty)
 {
@@ -146,7 +148,7 @@ let activationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}/chat`, {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ message: 'שלום', demoMode: true }),
+    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: true }),
   });
   expect('demoMode chat while pending -> 200', r.status === 200);
   expect('  has reply', typeof r.body.reply === 'string' && r.body.reply.length > 5);
@@ -188,7 +190,7 @@ let activationRequestId = null;
   const r = await fetch(BASE + `/api/workers/${firstWorkerId}/chat/stream`, {
     method: 'POST',
     headers: { ...auth(), accept: 'text/event-stream' },
-    body: JSON.stringify({ message: 'שלום', demoMode: true }),
+    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: true }),
   });
   const text = await r.text();
   expect('chat stream -> 200', r.status === 200);
@@ -422,7 +424,7 @@ let mismatchedActivationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}/chat`, {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ message: 'Who are you?' }),
+    body: JSON.stringify({ message: 'Who are you?', customerId: primaryCustomerId }),
   });
   expect('chat -> 200', r.status === 200);
   expect('  reply non-empty', r.body?.reply?.length > 20);
@@ -434,7 +436,9 @@ let mismatchedActivationRequestId = null;
 
 // 12. Messages list
 {
-  const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
+  const missingCustomer = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
+  expect('GET messages requires customerId', missingCustomer.status === 400 && missingCustomer.body.error === 'customerId_required');
+  const r = await req(`/api/workers/${firstWorkerId}/messages?customerId=${encodeURIComponent(primaryCustomerId)}`, { headers: auth() });
   expect('GET messages -> 200', r.status === 200);
   expect('  has 6 messages (demo + stream + paid chat)', r.body.messages?.length === 6);
   expect('  fifth role=user', r.body.messages?.[4]?.role === 'user');
@@ -445,7 +449,7 @@ let mismatchedActivationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}/chat`, {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ message: 'How much does it cost?' }),
+    body: JSON.stringify({ message: 'How much does it cost?', customerId: primaryCustomerId }),
   });
   expect('chat #2 -> 200', r.status === 200);
   expect('  pricing reply', /pricing|plan|quote|מחיר|quote/i.test(r.body.reply));
@@ -463,7 +467,7 @@ let mismatchedActivationRequestId = null;
   expect('  test-agent may save lead', leads.status === 200);
 }
 {
-  const r = await req(`/api/workers/${firstWorkerId}/messages`, { headers: auth() });
+  const r = await req(`/api/workers/${firstWorkerId}/messages?customerId=${encodeURIComponent(primaryCustomerId)}`, { headers: auth() });
   expect('  now 8 messages', r.body.messages?.length === 8);
 }
 
@@ -704,7 +708,7 @@ let integrationId = null;
 {
   const r = await req('/api/webhooks/bit', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': BIT_WEBHOOK_SECRET },
     body: JSON.stringify({ workerId: 'wk_nonexistent' }),
   });
   expect('bit webhook rejects missing worker', r.status === 400);

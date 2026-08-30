@@ -1,7 +1,10 @@
 # AI Workers — AI Employees for Israeli Businesses
 
-**Production:** https://paid-agent-demo-production.up.railway.app  
-**Marketplace:** https://paid-agent-demo-production.up.railway.app/marketplace
+**Production status (verified 2026-08-30): offline.** The previous Railway URL
+returns `404 Application not found`; redeploy and verify persistent storage before
+sharing it with customers.
+
+**Previous Railway URL:** https://paid-agent-demo-production.up.railway.app
 
 Hire AI employees — pick a template, customize it, deploy it. Your worker handles customers 24/7 on web chat. WhatsApp coming soon.
 
