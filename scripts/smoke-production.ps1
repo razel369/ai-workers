@@ -1,6 +1,6 @@
 # Smoke-test production liveness, infrastructure readiness, go-live readiness,
 # customer pages, and the templates API.
-# Usage: .\scripts\smoke-production.ps1 -BaseUrl "https://YOUR_SERVICE.onrender.com"
+# Usage: .\scripts\smoke-production.ps1 -BaseUrl "https://YOUR_DOMAIN"
 
 param(
     [Parameter(Mandatory = $true)]

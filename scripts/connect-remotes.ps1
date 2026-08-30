@@ -1,7 +1,7 @@
 # DEPRECATED AND DISABLED: historical Vercel production setup helper.
-# The supported managed-hosting path is New -> Blueprint in Render, using
-# render.yaml. This stub intentionally performs no login, linking, or deploy.
+# The supported free-hosting path is the owner-controlled Oracle Always Free
+# runbook in deploy/oci/README.md. This stub performs no login or deploy.
 
 Write-Host "DEPRECATED: this Vercel setup script is disabled and made no changes." -ForegroundColor Red
-Write-Host "Use Render New -> Blueprint with render.yaml after approving the paid plan and disk." -ForegroundColor Yellow
+Write-Host "Use deploy/oci/README.md for the Oracle Always Free path." -ForegroundColor Yellow
 exit 1
