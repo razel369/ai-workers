@@ -34,9 +34,9 @@
 - [ ] להגביל SSH/22 ל־IP הציבורי של הבעלים בלבד.
 - [ ] לא לפתוח את 8765; רק Caddy מגיע ל־app בתוך Docker.
 - [ ] ליצור hostname חינמי ב־DuckDNS ולהפנות אותו ל־public IPv4 של ה־VM.
-- [ ] להריץ `sudo ./deploy/oci/bootstrap.sh`; הסקריפט מתקין Docker אך לא מפעיל את האפליקציה.
+- [ ] להריץ `sudo bash ./deploy/oci/bootstrap.sh`; הסקריפט מתקין Docker אך לא מפעיל את האפליקציה.
 - [ ] לערוך `.env`, להחליף כל `REPLACE_ME`, ולוודא הרשאת `600`.
-- [ ] להריץ `sudo ./deploy/oci/deploy.sh` ולוודא ששני הקונטיינרים healthy/running.
+- [ ] להריץ `sudo bash ./deploy/oci/deploy.sh` ולוודא ששני הקונטיינרים healthy/running.
 - [ ] לוודא תעודת HTTPS תקינה ודומיין זהה ל־`AI_WORKERS_DOMAIN`.
 
 ## שער 2 — נתונים ושחזור
@@ -50,7 +50,7 @@ VM חדש מתחיל עם `data/` ריק. פריסה ירוקה אינה משח�
 - [ ] לשחזר רק כשה־app עצור ולפני תעבורת לקוחות.
 - [ ] לאמת SQLite integrity, ספירת tenants/workers, פענוח integrations ולקוח קיים.
 - [ ] אם אין export מאומת, להשיק כ־fresh launch ולא לטעון שהנתונים שוחזרו.
-- [ ] להריץ `sudo ./deploy/oci/backup.sh`, להעתיק את ה־archive לאחסון מוצפן מחוץ ל־VM, לאמת שם checksum ולבצע restore drill.
+- [ ] להריץ `sudo bash ./deploy/oci/backup.sh`, להעתיק את ה־archive לאחסון מוצפן מחוץ ל־VM, לאמת שם checksum ולבצע restore drill.
 - [ ] לשמור את `INTEGRATIONS_SECRET` ו־`ADMIN_TOKEN` בנפרד במנהל הסיסמאות של הבעלים; הם אינם נכללים בארכיון הנתונים.
 
 ## משתני סביבה לפרודקשן
