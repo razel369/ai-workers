@@ -134,7 +134,7 @@ creation, login, identity/card checks, home-region choice, and the final Oracle
 After DNS and `.env` are configured:
 
 ```bash
-sudo ./deploy/oci/deploy.sh
+sudo bash ./deploy/oci/deploy.sh
 curl -i https://YOUR_DUCKDNS_HOST/health
 curl -i https://YOUR_DUCKDNS_HOST/infra-ready
 curl -i https://YOUR_DUCKDNS_HOST/ready
