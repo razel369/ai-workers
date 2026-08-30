@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 if [ "${EUID}" -ne 0 ]; then
-  echo "Run this once as root: sudo ./deploy/oci/bootstrap.sh" >&2
+  echo "Run this once as root: sudo bash ./deploy/oci/bootstrap.sh" >&2
   exit 1
 fi
 
@@ -61,4 +61,4 @@ echo
 echo "Bootstrap complete; nothing has been deployed yet."
 echo "Next: edit ${repo_root}/.env, replace every REPLACE_ME value, then run:"
 echo "  cd ${repo_root}"
-echo "  sudo ./deploy/oci/deploy.sh"
+echo "  sudo bash ./deploy/oci/deploy.sh"

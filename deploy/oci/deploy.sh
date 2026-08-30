@@ -8,7 +8,7 @@ env_file="${repo_root}/.env"
 compose_file="${repo_root}/compose.oci.yaml"
 
 if [ ! -f "${env_file}" ]; then
-  echo "Missing .env. Run sudo ./deploy/oci/bootstrap.sh first." >&2
+  echo "Missing .env. Run sudo bash ./deploy/oci/bootstrap.sh first." >&2
   exit 1
 fi
 

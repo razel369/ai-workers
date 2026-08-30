@@ -40,7 +40,7 @@ sudo apt-get install -y git
 git clone https://github.com/razel369/ai-workers.git
 cd ai-workers
 git checkout codex/revive-ai-workers-baseline
-sudo ./deploy/oci/bootstrap.sh
+sudo bash ./deploy/oci/bootstrap.sh
 ```
 
 Edit `.env`, replace every `REPLACE_ME`, and keep it private:
@@ -58,7 +58,7 @@ quota/model if the entire stack must stay at $0.
 ## 4. Deploy and verify
 
 ```bash
-sudo ./deploy/oci/deploy.sh
+sudo bash ./deploy/oci/deploy.sh
 sudo docker compose --env-file .env -f compose.oci.yaml ps
 ```
 
@@ -80,7 +80,7 @@ until `/ready` returns HTTP 200 with `ok:true` and a real LLM buyer flow passes.
 Create a consistent archive while briefly stopping the app container:
 
 ```bash
-sudo ./deploy/oci/backup.sh
+sudo bash ./deploy/oci/backup.sh
 ```
 
 Copy both files from `backups/` to a different machine. Test a restore before
