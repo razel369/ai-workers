@@ -10,7 +10,7 @@ Optional pilot positioning, three vertical scripts, cold outreach, and LinkedIn 
 
 ### Headline (landing / WhatsApp)
 
-**[TRIAL_DAYS] ימי פיילוט — עובד AI שעונה ללקוחות 24/7**
+**[TRIAL_DAYS] ימי פיילוט — עובד AI שמקבל פניות גם מחוץ לשעות, כשהשירות מחובר וזמין**
 
 ### Subhead
 

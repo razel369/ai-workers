@@ -35,8 +35,14 @@ export function activationSlaTextHe() {
 }
 
 function timingSafeEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const left = Buffer.from(String(a ?? ''), 'utf8');
+  const right = Buffer.from(String(b ?? ''), 'utf8');
+  if (!left.length || left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
 }
 
 function verifySharedSecret(req, expected) {
@@ -70,10 +76,28 @@ export function autoActivateWorker({ workerId, tenantId, channel, reference, day
     amountIls: amountIls ?? 0,
   });
   if (!res.ok) return res;
+  const pendingSetup = res.activationPendingSetup === true;
   return {
     ...res,
-    autoActivated: !w.isActive && !res.alreadyRecorded,
-    autoRenewed: w.isActive && !res.alreadyRecorded,
+    autoActivated: !pendingSetup && !w.isActive && !res.alreadyRecorded,
+    autoRenewed: !pendingSetup && w.isActive && !res.alreadyRecorded,
+    activationPendingSetup: pendingSetup,
+  };
+}
+
+function existingEntitlementResult({ workerId, tenantId }) {
+  const worker = workers.getWorker(tenantId, workerId);
+  if (!worker) return { ok: false, error: 'worker_not_found' };
+  const readiness = workers.getWorkerReadiness(worker);
+  return {
+    ok: true,
+    alreadyRecorded: true,
+    paidUntil: worker.paidUntil ?? null,
+    paused: !!worker.paused,
+    activationPendingSetup: !readiness.ready,
+    readiness,
+    autoActivated: false,
+    autoRenewed: false,
   };
 }
 
@@ -119,7 +143,15 @@ export function tryAutoVerifyActivationProof({ reference, channel }) {
 /**
  * @returns {Promise<boolean>} true if handled
  */
-export async function handlePaymentWebhooks(req, res, url, { send, readBody, markActivationRequestReviewed, recordAdminAudit, findPendingActivation }) {
+export async function handlePaymentWebhooks(req, res, url, {
+  send,
+  readBody,
+  markActivationRequestReviewed,
+  recordAdminAudit,
+  findPendingActivation,
+  claimPaymentReference,
+  markPaymentReferenceEntitled,
+}) {
   if (url.pathname === '/api/webhooks/bit' && req.method === 'POST') {
     const bitSecret = BIT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET;
     if (!bitSecret) {
@@ -158,13 +190,39 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       send(res, 400, verifiedAmount);
       return true;
     }
-    const result = autoActivateWorker({
-      workerId: target.workerId,
-      tenantId: target.tenantId,
-      channel: 'bit',
+    if (typeof claimPaymentReference !== 'function') {
+      send(res, 503, { error: 'payment_ledger_unavailable' });
+      return true;
+    }
+    const ledger = claimPaymentReference({
+      provider: 'bit',
       reference,
-      amountIls,
-      source: 'bit-webhook',
+      tenantId: target.tenantId,
+      workerId: target.workerId,
+    });
+    if (!ledger.ok) {
+      recordAdminAudit?.(req, {
+        action: 'webhook_bit_payment',
+        targetType: 'worker',
+        targetId: target.workerId,
+        status: 'failed',
+        metadata: { tenantId: target.tenantId, reference, error: ledger.error },
+      });
+      send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+      return true;
+    }
+    const result = ledger.replay && ledger.entitled
+      ? existingEntitlementResult(target)
+      : autoActivateWorker({
+        workerId: target.workerId,
+        tenantId: target.tenantId,
+        channel: 'bit',
+        reference,
+        amountIls,
+        source: 'bit-webhook',
+      });
+    if (result.ok) markPaymentReferenceEntitled?.({
+      provider: 'bit', reference, tenantId: target.tenantId, workerId: target.workerId,
     });
     if (result.ok && findPendingActivation) {
       const pending = findPendingActivation({ tenantId: target.tenantId, workerId: target.workerId, reference });
@@ -174,7 +232,7 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       action: 'webhook_bit_payment',
       targetType: 'worker',
       targetId: target.workerId,
-      metadata: { tenantId: target.tenantId, reference, result: result.ok ? 'activated' : result.error },
+      metadata: { tenantId: target.tenantId, reference, replay: ledger.replay, result: result.ok ? 'activated' : result.error },
     });
     send(res, result.ok ? 200 : 400, { ok: result.ok, ...result, stub: !secretOk });
     return true;
@@ -238,13 +296,39 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       send(res, 400, verifiedAmount);
       return true;
     }
-    const result = autoActivateWorker({
-      workerId: target.workerId,
-      tenantId: target.tenantId,
-      channel: 'paypal',
+    if (typeof claimPaymentReference !== 'function') {
+      send(res, 503, { error: 'payment_ledger_unavailable' });
+      return true;
+    }
+    const ledger = claimPaymentReference({
+      provider: 'paypal',
       reference,
-      amountIls,
-      source: 'paypal-webhook',
+      tenantId: target.tenantId,
+      workerId: target.workerId,
+    });
+    if (!ledger.ok) {
+      recordAdminAudit?.(req, {
+        action: 'webhook_paypal_payment',
+        targetType: 'worker',
+        targetId: target.workerId,
+        status: 'failed',
+        metadata: { tenantId: target.tenantId, reference, error: ledger.error },
+      });
+      send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+      return true;
+    }
+    const result = ledger.replay && ledger.entitled
+      ? existingEntitlementResult(target)
+      : autoActivateWorker({
+        workerId: target.workerId,
+        tenantId: target.tenantId,
+        channel: 'paypal',
+        reference,
+        amountIls,
+        source: 'paypal-webhook',
+      });
+    if (result.ok) markPaymentReferenceEntitled?.({
+      provider: 'paypal', reference, tenantId: target.tenantId, workerId: target.workerId,
     });
     if (result.ok && findPendingActivation) {
       const pending = findPendingActivation({ tenantId: target.tenantId, workerId: target.workerId, reference });
@@ -254,7 +338,7 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       action: 'webhook_paypal_payment',
       targetType: 'worker',
       targetId: target.workerId,
-      metadata: { tenantId: target.tenantId, reference, status, result: result.ok ? 'activated' : result.error },
+      metadata: { tenantId: target.tenantId, reference, status, replay: ledger.replay, result: result.ok ? 'activated' : result.error },
     });
     send(res, result.ok ? 200 : 400, { ok: result.ok, ...result, stub: !secretOk });
     return true;

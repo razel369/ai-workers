@@ -370,7 +370,10 @@ export function handleLegalRoutes(req, res, url, send) {
   const page = LEGAL_PAGES[url.pathname];
   if (!page) return false;
   try {
-    const md = loadLegalMarkdown(page.file);
+    const ownerContact = String(process.env.AGENT_OWNER_CONTACT ?? '').trim() || 'דרך פרטי התמיכה בדף /invoice';
+    const md = loadLegalMarkdown(page.file)
+      .replaceAll('{{OWNER_CONTACT}}', ownerContact)
+      .replaceAll('`AGENT_OWNER_CONTACT`', ownerContact);
     send(res, 200, wrapLegalPage(page.title, legalMarkdownToHtml(md)), { 'content-type': 'text/html; charset=utf-8' });
     return true;
   } catch (err) {

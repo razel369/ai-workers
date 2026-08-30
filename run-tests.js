@@ -6,12 +6,15 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { parseWhatsAppPayloads, verifyMetaSignature, verifyTwilioSignature } from './whatsapp-webhook.js';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
 
 runDockerContextSmoke();
 runOciConfigSmoke();
+runWhatsAppSignatureSmoke();
 await runLegacyMigrationSmoke();
 await runReadinessSafetySmoke();
 await runShopifyOAuthBoundarySmoke();
@@ -19,6 +22,7 @@ await runPaypalWebhookFailClosedSmoke();
 await runLlmTrustBoundarySmoke();
 await runMediaTrustBoundarySmoke();
 
+const paddleApiStub = await startPaddleApiStub();
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-test-'));
 let port = await getFreePort();
 let baseUrl = `http://localhost:${port}`;
@@ -32,6 +36,7 @@ function buildEnv(root, listenPort, publicUrl) {
     PORT: String(listenPort),
     PUBLIC_BASE_URL: publicUrl,
     ADMIN_TOKEN,
+    AGENT_OWNER_CONTACT: 'support@ai-workers.test',
     DB_PATH: path.join(root, 'earnings.db'),
     DATA_DIR: root,
     TENANTS_DIR: path.join(root, 'tenants'),
@@ -42,7 +47,13 @@ function buildEnv(root, listenPort, publicUrl) {
     TRUST_PROXY_HEADERS: '',
     RATE_LIMIT_PER_MIN: String(Number(process.env.RATE_LIMIT_PER_MIN ?? 120) * 5),
     PADDLE_CLIENT_TOKEN: process.env.PADDLE_CLIENT_TOKEN ?? 'test_client_token',
+    PADDLE_API_KEY: 'test-paddle-api-key',
+    PADDLE_API_BASE_URL: paddleApiStub.baseUrl,
     PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID ?? 'pri_test_monthly',
+    PADDLE_PRICE_MAP: process.env.PADDLE_PRICE_MAP ?? JSON.stringify({
+      'data-entry': 'pri_test_data_entry',
+      'sales-leads-il': 'pri_test_sales_leads',
+    }),
     PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET ?? 'test-paddle-webhook-secret',
     BIT_WEBHOOK_SECRET: process.env.BIT_WEBHOOK_SECRET ?? 'test-bit-webhook-secret',
     PAYPAL_WEBHOOK_SECRET: 'test-paypal-webhook-secret',
@@ -50,6 +61,13 @@ function buildEnv(root, listenPort, publicUrl) {
     SHOPIFY_CLIENT_ID: 'test-shopify-client-id',
     SHOPIFY_CLIENT_SECRET: 'test-shopify-client-secret',
     PADDLE_ENVIRONMENT: 'sandbox',
+    EMBED_ALLOW_PUBLIC: '1',
+    EMBED_ALLOWED_ORIGINS: 'https://customer-site.example',
+    EMBED_SESSION_IP_WORKER_HOURLY: '3',
+    EMBED_SESSION_WORKER_HOURLY: '4',
+    EMBED_CHAT_SESSION_HOURLY: '2',
+    EMBED_CHAT_IP_WORKER_HOURLY: '3',
+    EMBED_CHAT_WORKER_HOURLY: '5',
   };
 }
 
@@ -81,6 +99,7 @@ try {
   await waitForHealth(baseUrl);
   await runSuite('test.js');
   await runSuite('worker-tests.js');
+  await runSuite('data-lifecycle-api-tests.js');
   await stopServer();
   const browserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-browser-'));
   port = await getFreePort();
@@ -91,12 +110,63 @@ try {
   await runSuite('browser-flow-test.js');
   await stopServer();
   fs.rmSync(browserRoot, { recursive: true, force: true });
-  // AI eval harness runs standalone (mock mode, no server needed)
+  // Engine policy, retention and eval suites run standalone against isolated tenant data.
+  await runSuite('engine-hardening-tests.js');
+  await runSuite('data-lifecycle-tests.js');
+  await runSuite('csv-security-tests.js');
+  await runSuite('paddle-production-boundary-tests.js');
+  await runSuite('whatsapp-router-tests.js');
+  await runSuite('eval-harness-tests.js');
   await runSuite('eval-harness.js');
   console.log('\nALL SUITES PASSED');
 } finally {
   await stopServer();
+  await paddleApiStub.close();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
+}
+
+async function startPaddleApiStub() {
+  let transactionCounter = 0;
+  const stub = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/transactions') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: { type: 'not_found' } }));
+    }
+    if (req.headers.authorization !== 'Bearer test-paddle-api-key') {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: { type: 'authentication_failed' } }));
+    }
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      let body;
+      try { body = JSON.parse(raw); } catch {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { type: 'invalid_json' } }));
+      }
+      if (!Array.isArray(body.items) || body.items.length !== 1
+        || body.items[0]?.quantity !== 1
+        || !String(body.items[0]?.price_id ?? '').startsWith('pri_')
+        || !String(body.custom_data?.checkout_target_id ?? '').startsWith('pct_')) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { type: 'invalid_transaction' } }));
+      }
+      transactionCounter += 1;
+      const id = `txn_test_server_created_${transactionCounter}`;
+      res.writeHead(201, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ data: { id, ...body } }));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    stub.once('error', reject);
+    stub.listen(0, '127.0.0.1', resolve);
+  });
+  const address = stub.address();
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve) => stub.close(resolve)),
+  };
 }
 
 function runDockerContextSmoke() {
@@ -153,7 +223,8 @@ function runOciConfigSmoke() {
     'ALLOW_PRIVATE_NETWORK_URLS: "0"',
     'PAYMENT_AUTO_VERIFY: "0"',
     'TRIAL_DAYS: "0"',
-    'EMBED_ALLOW_PUBLIC: "0"',
+    'EMBED_ALLOW_PUBLIC: ${EMBED_ALLOW_PUBLIC:-0}',
+    'EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}',
     './data:/app/data',
   ];
   const missing = requiredAppSettings.filter((entry) => !appBlock.includes(entry));
@@ -193,10 +264,27 @@ function runOciConfigSmoke() {
   if (!bootstrap.includes('$(uname -m)') || !bootstrap.includes('aarch64') || !bootstrap.includes('VERSION_ID:-') || !bootstrap.includes('24.04')) {
     throw new Error('OCI bootstrap must reject the wrong architecture or Ubuntu release before package installation');
   }
-  for (const script of ['deploy/oci/bootstrap.sh', 'deploy/oci/deploy.sh', 'deploy/oci/backup.sh']) {
+  for (const script of ['deploy/oci/bootstrap.sh', 'deploy/oci/deploy.sh', 'deploy/oci/backup.sh', 'deploy/oci/restore-drill.sh', 'deploy/oci/monitor.sh']) {
     if (!fs.readFileSync(script, 'utf8').startsWith('#!/usr/bin/env bash\n')) {
       throw new Error(`${script} must declare Bash explicitly`);
     }
+  }
+  const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
+  if (!dockerfile.includes('COPY deploy/oci/verify-restore.mjs')) {
+    throw new Error('Docker image must include the isolated restore verifier');
+  }
+  const backupScript = fs.readFileSync('deploy/oci/backup.sh', 'utf8');
+  if (!backupScript.includes('rclone check') || !backupScript.includes('offsite_verified')) {
+    throw new Error('OCI backup must verify an optional off-VM copy before marking it verified');
+  }
+  const restoreScript = fs.readFileSync('deploy/oci/restore-drill.sh', 'utf8');
+  const manifestVerify = restoreScript.indexOf('node "${manifest_tool}" verify');
+  const decrypt = restoreScript.indexOf('openssl enc -d');
+  const safeExtract = restoreScript.indexOf('python3 "${extractor}"');
+  const sqliteVerify = restoreScript.indexOf('verify-restore.mjs');
+  if ([manifestVerify, decrypt, safeExtract, sqliteVerify].some((position) => position < 0)
+      || !(manifestVerify < decrypt && decrypt < safeExtract && safeExtract < sqliteVerify)) {
+    throw new Error('Restore drill must authenticate the signed ciphertext before decrypting, extract safely, then verify every SQLite database');
   }
   for (const doc of ['README.md', 'deploy/oci/README.md', 'docs/LAUNCH-CHECKLIST.md']) {
     if (/sudo \.\/deploy\/oci\/(?:bootstrap|deploy|backup)\.sh/.test(fs.readFileSync(doc, 'utf8'))) {
@@ -210,6 +298,37 @@ function runOciConfigSmoke() {
   }
 
   console.log('OK    OCI free-tier stack binds host data, keeps app private, proxies HTTPS, and leaves launch settings fail-closed');
+}
+
+function runWhatsAppSignatureSmoke() {
+  console.log('--- whatsapp-signature-smoke ---');
+  const metaSecret = 'meta-test-secret';
+  const metaBody = JSON.stringify({
+    entry: [{ changes: [{ value: {
+      metadata: { phone_number_id: 'phone_1' },
+      messages: [
+        { id: 'wamid.1', from: '972501111111', timestamp: '1', text: { body: 'שלום' } },
+        { id: 'wamid.2', from: '972502222222', timestamp: '2', text: { body: 'היי' } },
+      ],
+    } }] }],
+  });
+  const metaSignature = 'sha256=' + crypto.createHmac('sha256', metaSecret).update(metaBody).digest('hex');
+  if (!verifyMetaSignature(metaBody, metaSignature, metaSecret).ok) throw new Error('Valid Meta signature rejected');
+  if (verifyMetaSignature(metaBody + 'x', metaSignature, metaSecret).ok) throw new Error('Tampered Meta body accepted');
+  if (parseWhatsAppPayloads(metaBody, 'application/json', 'meta').length !== 2) throw new Error('Meta webhook batch was not fully parsed');
+
+  const twilioToken = 'twilio-test-token';
+  const twilioUrl = 'https://workers.example/api/webhooks/whatsapp';
+  const twilioBody = 'Body=hello&From=whatsapp%3A%2B972501111111&MessageSid=SM123&To=whatsapp%3A%2B14155238886';
+  const twilioParams = new URLSearchParams(twilioBody);
+  let signed = twilioUrl;
+  for (const key of [...new Set([...twilioParams.keys()])].sort()) {
+    for (const value of twilioParams.getAll(key)) signed += key + value;
+  }
+  const twilioSignature = crypto.createHmac('sha1', twilioToken).update(signed).digest('base64');
+  if (!verifyTwilioSignature(twilioBody, twilioSignature, twilioUrl, twilioToken).ok) throw new Error('Valid Twilio signature rejected');
+  if (verifyTwilioSignature(twilioBody + 'x', twilioSignature, twilioUrl, twilioToken).ok) throw new Error('Tampered Twilio body accepted');
+  console.log('OK    WhatsApp validates Meta/Twilio signatures and parses full Meta batches');
 }
 
 async function runLegacyMigrationSmoke() {
@@ -498,6 +617,8 @@ async function runShopifyOAuthBoundarySmoke() {
   };
   const originalFetch = globalThis.fetch;
   const outbound = [];
+  const ownerSessionHash = 'a'.repeat(64);
+  const differentSessionHash = 'b'.repeat(64);
 
   try {
     const oauth = await import('./integrations/oauth.js');
@@ -542,20 +663,59 @@ async function runShopifyOAuthBoundarySmoke() {
 
     const stateCountBefore = mainDb.prepare('SELECT COUNT(*) AS count FROM oauth_states').get().count;
     for (const shop of invalidHosts) {
-      const rejected = oauth.createOAuthStart('ten_shopify_start', { type: 'shopify', extra: { shop } });
+      const rejected = oauth.createOAuthStart('ten_shopify_start', {
+        type: 'shopify',
+        extra: { shop },
+        sessionTokenHash: ownerSessionHash,
+      });
       if (rejected.ok || rejected.error !== 'invalid_shop_domain') {
         throw new Error(`OAuth start accepted a malformed/custom host ${shop}: ${JSON.stringify(rejected)}`);
       }
     }
-    const missing = oauth.createOAuthStart('ten_shopify_start', { type: 'shopify', extra: {} });
+    const missing = oauth.createOAuthStart('ten_shopify_start', {
+      type: 'shopify',
+      extra: {},
+      sessionTokenHash: ownerSessionHash,
+    });
     if (missing.ok || missing.error !== 'shop_required') throw new Error(`OAuth start accepted a missing shop: ${JSON.stringify(missing)}`);
+    const unbound = oauth.createOAuthStart('ten_shopify_start', {
+      type: 'shopify',
+      extra: { shop: 'valid-store.myshopify.com' },
+    });
+    if (unbound.ok || unbound.error !== 'owner_session_required') {
+      throw new Error(`OAuth start without an owner-session binding was accepted: ${JSON.stringify(unbound)}`);
+    }
+    const unsafeReturnPaths = [
+      'https://attacker.example/steal',
+      '//attacker.example/steal',
+      '/marketplace\\@attacker.example',
+      '/marketplace/../admin',
+      '/marketplace%23/workers/connect/wk_safe',
+      '/marketplace#/workers/connect/wk_safe/../../admin',
+      '/marketplace#/workers/connect/wk_safe?next=https://attacker.example',
+      '/builder#/workers/connect/wk_safe',
+      '/marketplace#/admin',
+      '/marketplace#/workers/connect/wk_safe\nnext',
+    ];
+    for (const returnPath of unsafeReturnPaths) {
+      const rejected = oauth.createOAuthStart('ten_shopify_start', {
+        type: 'shopify',
+        returnPath,
+        extra: { shop: 'valid-store.myshopify.com' },
+        sessionTokenHash: ownerSessionHash,
+      });
+      if (rejected.ok || rejected.error !== 'invalid_return_path') {
+        throw new Error(`OAuth start accepted an unsafe return path ${JSON.stringify(returnPath)}: ${JSON.stringify(rejected)}`);
+      }
+    }
     const stateCountAfter = mainDb.prepare('SELECT COUNT(*) AS count FROM oauth_states').get().count;
     if (stateCountAfter !== stateCountBefore) throw new Error('Rejected Shopify OAuth start persisted an OAuth state');
 
     const started = oauth.createOAuthStart('ten_shopify_oauth', {
       type: 'shopify',
-      returnPath: '/marketplace',
+      returnPath: '/marketplace#/workers/connect/wk_shopify',
       extra: { shop: ' HTTPS://OAuth-Store.MyShopify.com/ ' },
+      sessionTokenHash: ownerSessionHash,
     });
     if (!started.ok) throw new Error(`Valid Shopify OAuth start failed: ${JSON.stringify(started)}`);
     const authorizeUrl = new URL(started.redirectUrl);
@@ -564,9 +724,12 @@ async function runShopifyOAuthBoundarySmoke() {
         || authorizeUrl.pathname !== '/admin/oauth/authorize') {
       throw new Error(`Shopify OAuth start escaped the canonical host: ${started.redirectUrl}`);
     }
-    const persisted = JSON.parse(mainDb.prepare('SELECT extra_json FROM oauth_states WHERE state = ?').get(started.state).extra_json);
-    if (persisted.shop !== 'oauth-store.myshopify.com') {
-      throw new Error(`OAuth state did not persist the canonical Shopify host: ${JSON.stringify(persisted)}`);
+    const stateRow = mainDb.prepare('SELECT extra_json, return_path, session_token_hash FROM oauth_states WHERE state = ?').get(started.state);
+    const persisted = JSON.parse(stateRow.extra_json);
+    if (persisted.shop !== 'oauth-store.myshopify.com'
+        || stateRow.return_path !== '/marketplace#/workers/connect/wk_shopify'
+        || stateRow.session_token_hash !== ownerSessionHash) {
+      throw new Error(`OAuth state did not persist the canonical host, return path, and session binding: ${JSON.stringify({ persisted, stateRow })}`);
     }
 
     globalThis.fetch = async (url, init = {}) => {
@@ -576,8 +739,46 @@ async function runShopifyOAuthBoundarySmoke() {
         headers: { 'content-type': 'application/json' },
       });
     };
-    const callback = await oauth.handleOAuthCallback({ code: 'shopify-code', state: started.state });
+    const noSession = await oauth.handleOAuthCallback({ code: 'shopify-code', state: started.state });
+    if (noSession.ok || noSession.error !== 'owner_session_required') {
+      throw new Error(`OAuth callback without owner session was accepted: ${JSON.stringify(noSession)}`);
+    }
+    const mismatchedSession = await oauth.handleOAuthCallback({
+      code: 'shopify-code',
+      state: started.state,
+      tenantId: 'ten_shopify_oauth',
+      sessionTokenHash: differentSessionHash,
+    });
+    if (mismatchedSession.ok || mismatchedSession.error !== 'invalid_or_expired_state') {
+      throw new Error(`OAuth callback from a different owner session was accepted: ${JSON.stringify(mismatchedSession)}`);
+    }
+    if (outbound.length !== 0
+        || store.listIntegrations('ten_shopify_oauth').length !== 0
+        || !mainDb.prepare('SELECT 1 FROM oauth_states WHERE state = ?').get(started.state)) {
+      throw new Error('Rejected OAuth callbacks exchanged credentials, stored tokens, or consumed the legitimate state');
+    }
+
+    const [callback, concurrentReplay] = await Promise.all([
+      oauth.handleOAuthCallback({
+        code: 'shopify-code',
+        state: started.state,
+        tenantId: 'ten_shopify_oauth',
+        sessionTokenHash: ownerSessionHash,
+      }),
+      oauth.handleOAuthCallback({
+        code: 'concurrent-code',
+        state: started.state,
+        tenantId: 'ten_shopify_oauth',
+        sessionTokenHash: ownerSessionHash,
+      }),
+    ]);
     if (!callback.ok) throw new Error(`Valid Shopify callback failed: ${JSON.stringify(callback)}`);
+    if (concurrentReplay.ok || concurrentReplay.error !== 'invalid_or_expired_state') {
+      throw new Error(`Concurrent OAuth callback was not rejected: ${JSON.stringify(concurrentReplay)}`);
+    }
+    if (callback.redirectTo !== '/marketplace?oauth=success&type=shopify#/workers/connect/wk_shopify') {
+      throw new Error(`OAuth callback returned an unexpected marketplace path: ${callback.redirectTo}`);
+    }
     if (outbound.length !== 1 || outbound[0].url !== 'https://oauth-store.myshopify.com/admin/oauth/access_token') {
       throw new Error(`Shopify credentials were sent outside the canonical host: ${JSON.stringify(outbound)}`);
     }
@@ -587,22 +788,38 @@ async function runShopifyOAuthBoundarySmoke() {
         || exchangeBody.client_secret !== 'operator-shopify-client-secret') {
       throw new Error(`Shopify callback did not use the expected operator credentials: ${outbound[0].body}`);
     }
+    const replay = await oauth.handleOAuthCallback({
+      code: 'replayed-code',
+      state: started.state,
+      tenantId: 'ten_shopify_oauth',
+      sessionTokenHash: ownerSessionHash,
+    });
+    if (replay.ok || replay.error !== 'invalid_or_expired_state' || outbound.length !== 1) {
+      throw new Error(`Consumed OAuth state was replayable: ${JSON.stringify({ replay, outbound })}`);
+    }
 
     const tamperedState = 'tampered_shopify_state';
     const now = new Date();
-    mainDb.prepare(`INSERT INTO oauth_states (state, tenant_id, integration_type, provider_id, return_path, extra_json, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    mainDb.prepare(`INSERT INTO oauth_states
+        (state, tenant_id, integration_type, provider_id, session_token_hash, return_path, extra_json, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       tamperedState,
       'ten_shopify_oauth',
       'shopify',
       'shopify',
+      ownerSessionHash,
       '/marketplace',
       JSON.stringify({ shop: 'attacker.example' }),
       now.toISOString(),
       new Date(now.getTime() + 60_000).toISOString(),
     );
     const outboundBeforeTamperedCallback = outbound.length;
-    const tampered = await oauth.handleOAuthCallback({ code: 'attacker-code', state: tamperedState });
+    const tampered = await oauth.handleOAuthCallback({
+      code: 'attacker-code',
+      state: tamperedState,
+      tenantId: 'ten_shopify_oauth',
+      sessionTokenHash: ownerSessionHash,
+    });
     if (tampered.ok || tampered.error !== 'invalid_shop_domain') {
       throw new Error(`Tampered Shopify callback was not rejected: ${JSON.stringify(tampered)}`);
     }
@@ -612,7 +829,7 @@ async function runShopifyOAuthBoundarySmoke() {
     if (mainDb.prepare('SELECT 1 FROM oauth_states WHERE state = ?').get(tamperedState)) {
       throw new Error('Tampered Shopify OAuth state was not consumed');
     }
-    console.log('OK    Shopify connect/start/callback normalize valid shops and reject malformed or custom hosts before credential use');
+    console.log('OK    OAuth state is owner-session bound, one-time, and limited to safe marketplace return paths before credential use');
   } finally {
     globalThis.fetch = originalFetch;
     for (const db of tenantDbs.values()) db.close();
@@ -726,9 +943,18 @@ async function runLlmTrustBoundarySmoke() {
         anthropicKey: req.headers['x-api-key'] || '',
         body,
       });
+      const firstOperatorStep = sink === operatorRequests && sink.length === 1;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
-        choices: [{ message: { role: 'assistant', content: 'זו תשובה בטוחה מהמודל שהוגדר על ידי מפעיל הפלטפורמה.' } }],
+        choices: [{ message: firstOperatorStep ? {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call_provider_budget_step_1',
+            type: 'function',
+            function: { name: 'save_lead', arguments: JSON.stringify({ fullName: 'בדיקת תקציב ספק' }) },
+          }],
+        } : { role: 'assistant', content: 'זו תשובה בטוחה מהמודל שהוגדר על ידי מפעיל הפלטפורמה.' } }],
       }));
     });
   });
@@ -767,6 +993,7 @@ async function runLlmTrustBoundarySmoke() {
     LLM_PROVIDER: 'openai_compatible',
     LLM_MODEL: operatorModel,
     LLM_BASE_URL: operator.baseUrl,
+    MONTHLY_PROVIDER_CALL_LIMIT: '2',
   };
   const child = spawn(process.execPath, ['--experimental-sqlite', '--no-warnings', 'server.js'], {
     env: appEnv,
@@ -797,6 +1024,16 @@ async function runLlmTrustBoundarySmoke() {
     });
     assertBoundary(issued.status === 200 && issued.body.key && issued.body.tenantId, 'Could not issue the LLM boundary tenant key');
     const tenantHeaders = { authorization: `Bearer ${issued.body.key}`, 'content-type': 'application/json' };
+    const providerLimit = await api('/api/admin/set-tenant-provider-limit', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ tenantId: issued.body.tenantId, limit: 2 }),
+    });
+    assertBoundary(providerLimit.status === 200
+      && providerLimit.body.limit === 2
+      && providerLimit.body.used === 0
+      && providerLimit.body.remaining === 2,
+    `Could not configure the tenant provider-call limit: ${JSON.stringify(providerLimit.body)}`);
     const maliciousLlm = {
       provider: 'anthropic',
       model: 'tenant-controlled-model',
@@ -810,7 +1047,8 @@ async function runLlmTrustBoundarySmoke() {
         templateId: 'sales-leads-il',
         name: 'Boundary Worker',
         persona: 'Legitimate tenant persona from create.',
-        knowledge: 'Legitimate tenant knowledge from create.',
+        knowledge: 'Legitimate tenant knowledge from create, verified by the tenant owner for this boundary test.',
+        knowledgeReviewed: true,
         tasks: ['Answer safely'],
         tools: ['save_lead'],
         agentMode: 'agent',
@@ -821,7 +1059,7 @@ async function runLlmTrustBoundarySmoke() {
     const workerId = created.body.workerId;
     const afterCreate = await api(`/api/workers/${workerId}`, { headers: tenantHeaders });
     assertBoundary(afterCreate.body.worker?.persona === 'Legitimate tenant persona from create.', 'Create did not preserve tenant persona');
-    assertBoundary(afterCreate.body.worker?.knowledge === 'Legitimate tenant knowledge from create.', 'Create did not preserve tenant knowledge');
+    assertBoundary(afterCreate.body.worker?.knowledge === 'Legitimate tenant knowledge from create, verified by the tenant owner for this boundary test.', 'Create did not preserve tenant knowledge');
     assertBoundary(afterCreate.body.worker?.llm?.provider === 'openai_compatible', 'Create overrode the platform LLM provider');
     assertBoundary(afterCreate.body.worker?.llm?.model === operatorModel, 'Create overrode the platform LLM model');
     assertBoundary(afterCreate.body.worker?.llm?.baseUrl === operator.baseUrl, 'Create overrode the platform LLM base URL');
@@ -831,14 +1069,15 @@ async function runLlmTrustBoundarySmoke() {
       headers: tenantHeaders,
       body: JSON.stringify({
         persona: 'Legitimate tenant persona from PATCH.',
-        knowledge: 'Legitimate tenant knowledge from PATCH.',
+        knowledge: 'Legitimate tenant knowledge from PATCH, verified by the tenant owner for this boundary test.',
+        knowledgeReviewed: true,
         llm: maliciousLlm,
       }),
     });
     assertBoundary(patched.status === 200, `PATCH failed: ${JSON.stringify(patched.body)}`);
     const afterPatch = await api(`/api/workers/${workerId}`, { headers: tenantHeaders });
     assertBoundary(afterPatch.body.worker?.persona === 'Legitimate tenant persona from PATCH.', 'PATCH did not preserve tenant persona');
-    assertBoundary(afterPatch.body.worker?.knowledge === 'Legitimate tenant knowledge from PATCH.', 'PATCH did not preserve tenant knowledge');
+    assertBoundary(afterPatch.body.worker?.knowledge === 'Legitimate tenant knowledge from PATCH, verified by the tenant owner for this boundary test.', 'PATCH did not preserve tenant knowledge');
     assertBoundary(afterPatch.body.worker?.llm?.provider === 'openai_compatible', 'PATCH overrode the platform LLM provider');
     assertBoundary(afterPatch.body.worker?.llm?.model === operatorModel, 'PATCH overrode the platform LLM model');
     assertBoundary(afterPatch.body.worker?.llm?.baseUrl === operator.baseUrl, 'PATCH overrode the platform LLM base URL');
@@ -858,7 +1097,7 @@ async function runLlmTrustBoundarySmoke() {
     const pendingDemoChat = await api(`/api/workers/${workerId}/chat`, {
       method: 'POST', headers: tenantHeaders, body: JSON.stringify({ message: 'בדיקת דמו', demoMode: true, customerId: 'boundary-demo' }),
     });
-    assertBoundary(pendingDemoChat.status === 200 && /^mock/.test(pendingDemoChat.body.runtime), `pending demo chat was not mock-only: ${JSON.stringify(pendingDemoChat.body)}`);
+    assertBoundary(pendingDemoChat.status === 402, `client demoMode bypassed payment: ${JSON.stringify(pendingDemoChat.body)}`);
 
     const pendingLiveChat = await api(`/api/workers/${workerId}/chat`, {
       method: 'POST', headers: tenantHeaders, body: JSON.stringify({ message: 'בדיקת צאט', customerId: 'boundary-live' }),
@@ -898,20 +1137,35 @@ async function runLlmTrustBoundarySmoke() {
     const activeTestAgent = await api(`/api/workers/${workerId}/test-agent`, {
       method: 'POST', headers: tenantHeaders, body: JSON.stringify({ message: 'בדיקת סוכן פעיל' }),
     });
-    assertBoundary(activeTestAgent.status === 200 && activeTestAgent.body.runtime === 'openai_compatible', `active test-agent failed: ${JSON.stringify(activeTestAgent.body)}`);
+    assertBoundary(activeTestAgent.status === 200 && /^mock/.test(activeTestAgent.body.runtime), `active test-agent was not local/mock-only: ${JSON.stringify(activeTestAgent.body)}`);
 
     const activeDemoChat = await api(`/api/workers/${workerId}/chat`, {
       method: 'POST', headers: tenantHeaders, body: JSON.stringify({ message: 'בדיקת דמו פעיל', demoMode: true, customerId: 'boundary-active-demo' }),
     });
     assertBoundary(activeDemoChat.status === 200 && activeDemoChat.body.runtime === 'openai_compatible', `active demo chat failed: ${JSON.stringify(activeDemoChat.body)}`);
+    assertBoundary(activeDemoChat.body.stepsUsed >= 3, `The active agent did not complete a provider-backed tool step: ${JSON.stringify(activeDemoChat.body)}`);
+    const accountAfterAgent = await api('/api/account', { headers: tenantHeaders });
+    assertBoundary(accountAfterAgent.status === 200
+      && accountAfterAgent.body.providerCallsUsed === 2
+      && accountAfterAgent.body.providerCallsLimit === 2
+      && accountAfterAgent.body.providerCallsRemaining === 0,
+    `Provider-call usage is not observable after a multi-step run: ${JSON.stringify(accountAfterAgent.body)}`);
 
     const activeLiveChat = await api(`/api/workers/${workerId}/chat`, {
-      method: 'POST', headers: tenantHeaders, body: JSON.stringify({ message: 'בדיקת צאט פעיל', customerId: 'boundary-active-live' }),
+      method: 'POST', headers: tenantHeaders, body: JSON.stringify({
+        message: 'בדיקת צאט פעיל',
+        customerId: 'boundary-active-live',
+        demoMode: true,
+        testMode: true,
+      }),
     });
-    assertBoundary(activeLiveChat.status === 200 && activeLiveChat.body.runtime === 'openai_compatible', `active live chat failed: ${JSON.stringify(activeLiveChat.body)}`);
+    assertBoundary(activeLiveChat.status === 429
+      && activeLiveChat.body.error === 'provider_budget_exhausted'
+      && activeLiveChat.body.providerUsage?.remaining === 0,
+    `Provider budget exhaustion was not enforced: ${JSON.stringify(activeLiveChat.body)}`);
 
     assertBoundary(tenantEndpointRequests.length === 0, 'Platform LLM credential was sent to a tenant-controlled endpoint');
-    assertBoundary(operatorRequests.length === 3, `Expected three operator LLM calls, got ${operatorRequests.length}`);
+    assertBoundary(operatorRequests.length === 2, `Expected two operator LLM calls, got ${operatorRequests.length}`);
     assertBoundary(operatorRequests.every((request) => request.url === '/v1/chat/completions'), 'LLM request escaped the operator-configured path');
     assertBoundary(operatorRequests.every((request) => request.authorization === `Bearer ${platformSecret}`), 'Operator endpoint did not receive the platform credential as expected');
     assertBoundary(operatorRequests.every((request) => request.body?.model === operatorModel), 'A tenant-controlled model reached the operator endpoint');
@@ -922,7 +1176,8 @@ async function runLlmTrustBoundarySmoke() {
         && tool.function?.parameters?.type === 'object')),
     'OpenAI-compatible requests did not receive provider-formatted tool schemas');
     console.log('OK    create/PATCH ignore tenant LLM routing while preserving persona and knowledge');
-    console.log('OK    pending test-agent/demo are mock-only; active calls use only the operator endpoint/model with formatted tools');
+    console.log('OK    preview stays mock-only; client flags cannot bypass payment or the provider-call cost guard');
+    console.log('OK    a two-step agent reserves two provider calls atomically, exposes zero remaining, and blocks before a third request');
   } catch (err) {
     throw new Error(`LLM trust-boundary smoke failed: ${err.message}\n${logs.trim()}`);
   } finally {
@@ -1083,7 +1338,7 @@ async function runSuite(file) {
 }
 
 async function waitForHealth(url) {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url + '/health');

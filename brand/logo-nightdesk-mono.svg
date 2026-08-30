@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Nightdesk monochrome mark">
-  <title>Nightdesk mono mark</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI Workers monochrome mark">
+  <title>AI Workers monochrome mark</title>
   <defs>
     <!-- Single warm-gold gradient  no background, no stroke -->
     <linearGradient id="mono-gold" x1="0" y1="0" x2="1" y2="1">

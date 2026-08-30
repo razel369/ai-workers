@@ -11,6 +11,7 @@ COPY analytics-client.js ./
 COPY bootstrap-env.js ./
 COPY server.js ./
 COPY workers.js ./
+COPY csv-security.js ./
 COPY google-media.js ./
 COPY media-tools.js ./
 COPY templates-media.js ./
@@ -26,8 +27,11 @@ COPY integrations/ ./integrations/
 COPY payment-webhooks.js ./
 COPY paddle-billing.js ./
 COPY embed-widget.js ./
+COPY embed-sessions.js ./
+COPY owner-sessions.js ./
 COPY whatsapp-webhook.js ./
 COPY whatsapp-router.js ./
+COPY deploy/oci/verify-restore.mjs ./deploy/oci/
 
 # Optional local-only tunnel helper. Managed hosts already provide HTTPS, so
 # production images skip this unpinned external download by default.

@@ -102,7 +102,7 @@ Host: YOUR_DOMAIN
 | `paymentChannelConfigured` | `true` | להגדיר ערוץ אמיתי; מספר/חשבון placeholder או Paddle sandbox אינם עוברים |
 | `ownerContactConfigured` | `true` | להגדיר אימייל, מספר ישראלי או URL תמיכה אמיתי ב־`AGENT_OWNER_CONTACT` |
 | `publicBaseUrlConfigured` | `true` | ב־OCI להגדיר `AI_WORKERS_DOMAIN`; Compose קובע `PUBLIC_BASE_URL=https://...` |
-| `embedOriginsConfigured` | `true` | ב־safe launch להגדיר `EMBED_ALLOW_PUBLIC=0`; אם מפעילים embed חיצוני, להגדיר HTTPS origins אמיתיים (`*` רק בהחלטה מודעת) |
+| `embedOriginsConfigured` | `true` | ב־safe launch להגדיר `EMBED_ALLOW_PUBLIC=0`; אם מפעילים embed חיצוני, להגדיר HTTPS origins מדויקים. `*` אינו נתמך |
 | `privateNetworkFetchDisabled` | `true` | להשאיר `ALLOW_PRIVATE_NETWORK_URLS=0`; הערך `1` מיועד רק למעבדה מקומית מבודדת ולעולם לא לפרודקשן |
 | `paymentAutoVerifyDisabled` | `true` | להשאיר `PAYMENT_AUTO_VERIFY=0`; מצב ה־stub מיועד לבדיקות בלבד ואסור בפרודקשן |
 | `persistence.pathsAligned` | `true` | `DATA_DIR`, `DB_PATH` ו־`TENANTS_DIR` חייבים להיות תחת `/app/data` |

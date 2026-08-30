@@ -1,5 +1,6 @@
 // E2E tests for the Workers feature (v0.5.0).
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { normalizeShopifyShopHost, validateConfig } from './integrations/registry.js';
@@ -86,6 +87,12 @@ let tenantId = null;
 }
 const auth = (extra = {}) => ({ authorization: 'Bearer ' + tenantKey, 'content-type': 'application/json', ...extra });
 const primaryCustomerId = 'worker-tests-primary-customer';
+const REVIEWED_SALES_KNOWLEDGE = `שם העסק: אקמי פתרונות בעמ
+שירות: מערכת ניהול פניות ולידים לעסקים בישראל
+שעות מכירות: ימים א עד ה משמונה בבוקר עד חמש אחר הצהריים
+טלפון: 035551234
+מחירים: הצעה מאושרת נמסרת רק על ידי נציג לאחר אפיון
+הסלמה: בקשות משפטיות והחזרים עוברים לנציג אנושי`;
 
 // 4. List workers (empty)
 {
@@ -113,6 +120,9 @@ const primaryCustomerId = 'worker-tests-primary-customer';
 let firstWorkerId = null;
 let paddleWorkerId = null;
 let activationRequestId = null;
+let crossTenantId = null;
+let crossTenantKey = null;
+let crossTenantWorkerId = null;
 {
   const r = await req('/api/workers/buy', {
     method: 'POST', headers: auth(),
@@ -144,16 +154,16 @@ let activationRequestId = null;
     body: JSON.stringify({ message: 'hello' }),
   });
   expect('chat while pending -> 402', r.status === 402);
-  expect('  error=payment_required', r.body.error === 'payment_required');
+  expect('  error=not_paid_or_paused', r.body.error === 'not_paid_or_paused');
 }
 
-// 6a. demoMode bypasses payment gate for owner try-before-pay
+// 6a. Preview uses a dedicated server-owned planning route.
 {
-  const r = await req(`/api/workers/${firstWorkerId}/chat`, {
+  const r = await req(`/api/workers/${firstWorkerId}/test-agent`, {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: true }),
+    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: false, testMode: false }),
   });
-  expect('demoMode chat while pending -> 200', r.status === 200);
+  expect('dedicated preview while pending -> 200', r.status === 200);
   expect('  has reply', typeof r.body.reply === 'string' && r.body.reply.length > 5);
   expect('  qualityScore present', !!r.body.qualityScore?.labelHe);
 }
@@ -193,12 +203,11 @@ let activationRequestId = null;
   const r = await fetch(BASE + `/api/workers/${firstWorkerId}/chat/stream`, {
     method: 'POST',
     headers: { ...auth(), accept: 'text/event-stream' },
-    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: true }),
+    body: JSON.stringify({ message: 'שלום', customerId: primaryCustomerId, demoMode: true, testMode: true }),
   });
   const text = await r.text();
-  expect('chat stream -> 200', r.status === 200);
-  expect('  SSE token events', text.includes('event: token'));
-  expect('  SSE done event', text.includes('event: done'));
+  expect('pending stream ignores client mode flags -> 402', r.status === 402);
+  expect('  pending stream never starts SSE', !text.includes('event: token') && !text.includes('event: done'));
 }
 {
   // Weekly digest endpoint: returns KPIs + topics + recent activity
@@ -228,6 +237,13 @@ let activationRequestId = null;
 
 // 6b. Customer submits payment/activation proof
 {
+  const reviewed = await req(`/api/workers/${firstWorkerId}`, {
+    method: 'PATCH', headers: auth(),
+    body: JSON.stringify({ knowledge: REVIEWED_SALES_KNOWLEDGE, knowledgeReviewed: true }),
+  });
+  expect('review business knowledge before activation', reviewed.status === 200 && reviewed.body.ok === true);
+}
+{
   const r = await req(`/api/workers/${firstWorkerId}/activation-request`, {
     method: 'POST', headers: auth(),
     body: JSON.stringify({ channel: 'paypal', reference: 'PP-X1-PAID', contact: 'buyer@example.com', note: 'Paid for first worker' }),
@@ -249,11 +265,55 @@ let mismatchedActivationRequestId = null;
     method: 'POST', headers: adminAuth,
     body: JSON.stringify({ channel: 'manual', reference: 'MISMATCH-REQ', label: 'Mismatched activation request tenant' }),
   });
+  crossTenantId = otherTenant.body.tenantId;
+  crossTenantKey = otherTenant.body.key;
   const otherAuth = { authorization: 'Bearer ' + otherTenant.body.key, 'content-type': 'application/json' };
   const otherBuy = await req('/api/workers/buy', {
     method: 'POST', headers: otherAuth,
     body: JSON.stringify({ templateId: 'support-he' }),
   });
+  crossTenantWorkerId = otherBuy.body.workerId;
+  const tenantClaim = await req(`/api/workers/${firstWorkerId}/whatsapp-route`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ provider: 'meta', phoneNumberId: 'meta-route-ownership-test' }),
+  });
+  expect('tenant cannot self-claim an unverified inbound WhatsApp route', tenantClaim.status === 403
+    && tenantClaim.body.error === 'admin_provisioning_required');
+  const firstRoute = await req('/api/admin/whatsapp-route', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({
+      tenantId,
+      workerId: firstWorkerId,
+      provider: 'meta',
+      phoneNumberId: 'meta-route-ownership-test',
+    }),
+  });
+  expect('admin can provision a verified WhatsApp route', firstRoute.status === 200
+    && firstRoute.body.ok === true
+    && firstRoute.body.idempotent === false);
+  const repeatedRoute = await req('/api/admin/whatsapp-route', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({
+      tenantId,
+      workerId: firstWorkerId,
+      provider: 'meta',
+      phoneNumberId: 'meta-route-ownership-test',
+    }),
+  });
+  expect('same tenant and worker route provisioning is idempotent', repeatedRoute.status === 200
+    && repeatedRoute.body.ok === true
+    && repeatedRoute.body.idempotent === true);
+  const takeover = await req('/api/admin/whatsapp-route', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({
+      tenantId: otherTenant.body.tenantId,
+      workerId: otherBuy.body.workerId,
+      provider: 'meta',
+      phoneNumberId: 'meta-route-ownership-test',
+    }),
+  });
+  expect('cross-tenant WhatsApp route claim is rejected without replacing the owner', takeover.status === 409
+    && takeover.body.error === 'route_already_claimed');
   const otherReq = await req(`/api/workers/${otherBuy.body.workerId}/activation-request`, {
     method: 'POST', headers: otherAuth,
     body: JSON.stringify({ channel: 'paypal', reference: 'OTHER-PAID', contact: 'other@example.com' }),
@@ -285,6 +345,7 @@ let mismatchedActivationRequestId = null;
   expect('admin mark-paid correct tenant -> ok', r.status === 200 && r.body?.ok === true);
   expect('  paidUntil set', !!r.body?.paidUntil);
   expect('  paidUntil is in future', new Date(r.body.paidUntil) > new Date());
+  expect('  ready worker is not held for setup', r.body.activationPendingSetup === false && r.body.readiness?.ready === true);
 }
 {
   const r = await req('/api/admin/activation-requests?status=pending', { headers: adminAuth });
@@ -306,20 +367,105 @@ let mismatchedActivationRequestId = null;
     body: JSON.stringify({ templateId: 'data-entry' }),
   });
   paddleWorkerId = buy.body.workerId;
+  const blockedCfg = await req('/api/paddle/checkout', {
+    method: 'POST', headers: auth(), body: JSON.stringify({ workerId: paddleWorkerId }),
+  });
+  expect('Paddle checkout blocks unreviewed placeholder knowledge', blockedCfg.status === 409
+    && blockedCfg.body.error === 'worker_not_ready_for_checkout');
+  const reviewed = await req(`/api/workers/${paddleWorkerId}`, {
+    method: 'PATCH', headers: auth(),
+    body: JSON.stringify({
+      knowledge: 'מסמכי קלט נתמכים: חשבוניות, כרטיסי ביקור וטפסים. הפלט כולל JSON ושורת CSV, ושדות חסרים מסומנים כ-null.',
+      knowledgeReviewed: true,
+    }),
+  });
+  expect('review Paddle worker knowledge before checkout', reviewed.status === 200 && reviewed.body.ok === true);
   const cfg = await req('/api/paddle/checkout', {
     method: 'POST',
     headers: auth(),
     body: JSON.stringify({ workerId: paddleWorkerId }),
   });
   expect('POST /api/paddle/checkout -> 200', cfg.status === 200 && cfg.body.ok === true);
-  expect('  returns client token + priceId', !!cfg.body.clientToken && !!cfg.body.priceId);
-  expect('  customData has worker + tenant', cfg.body.customData?.worker_id === paddleWorkerId && cfg.body.customData?.tenant_id === tenantId);
+  expect('  returns client token + server-created transactionId', !!cfg.body.clientToken && cfg.body.transactionId?.startsWith('txn_'));
+  expect('  checkout response exposes no tenant/worker customData authority', cfg.body.customData === undefined
+    && cfg.body.priceId === undefined
+    && !JSON.stringify(cfg.body).includes(tenantId));
+  const invoice = await req(`/invoice/${paddleWorkerId}`);
+  expect('  public worker invoice does not leak tenant id', invoice.status === 200 && !String(invoice.body).includes(tenantId));
+  let dataEntryPriceId = 'pri_test_data_entry';
+  try { dataEntryPriceId = JSON.parse(process.env.PADDLE_PRICE_MAP ?? '{}')['data-entry'] || dataEntryPriceId; } catch {}
   const secret = process.env.PADDLE_WEBHOOK_SECRET ?? '';
   if (secret) {
+    const signedPaddleEvent = async (event, timestamp = Math.floor(Date.now() / 1000)) => {
+      const body = JSON.stringify(event);
+      const sig = crypto.createHmac('sha256', secret).update(`${timestamp}:${body}`).digest('hex');
+      return req('/api/webhooks/paddle', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${timestamp};h1=${sig}` },
+        body,
+      });
+    };
+    const victimAuth = {
+      authorization: 'Bearer ' + crossTenantKey,
+      'content-type': 'application/json',
+    };
+    const victimBefore = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+    expect('cross-tenant Paddle victim starts unchanged', victimBefore.status === 200
+      && victimBefore.body.worker?.isActive === false
+      && victimBefore.body.worker?.paused === false);
+
+    const forgedTransaction = await signedPaddleEvent({
+      event_id: 'evt_paddle_forged_transaction',
+      event_type: 'transaction.completed',
+      data: {
+        id: 'txn_forged_unmapped',
+        status: 'completed',
+        currency_code: 'ILS',
+        items: [{ price: { id: dataEntryPriceId }, quantity: 1 }],
+        details: { totals: { total: '19900' } },
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
+      },
+    });
+    expect('forged Paddle custom_data cannot activate an unmapped cross-tenant worker', forgedTransaction.status === 400
+      && forgedTransaction.body.error === 'paddle_target_unmapped');
+
+    const forgedPause = await signedPaddleEvent({
+      event_id: 'evt_paddle_forged_pause',
+      event_type: 'subscription.paused',
+      data: {
+        id: 'sub_forged_unmapped',
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
+      },
+    });
+    expect('forged Paddle custom_data cannot suspend an unmapped cross-tenant worker', forgedPause.status === 400
+      && forgedPause.body.error === 'paddle_target_unmapped');
+
+    const forgedRefund = await signedPaddleEvent({
+      event_id: 'evt_paddle_forged_refund',
+      event_type: 'adjustment.updated',
+      data: {
+        id: 'adj_forged',
+        action: 'refund',
+        status: 'approved',
+        transaction_id: 'txn_forged_unmapped',
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
+      },
+    });
+    expect('forged refund cannot suspend an unmapped cross-tenant worker', forgedRefund.status === 400
+      && forgedRefund.body.error === 'paddle_target_unmapped');
+    const victimAfterForgeries = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+    expect('  forged Paddle lifecycle events leave victim tenant untouched', victimAfterForgeries.body.worker?.isActive === false
+      && victimAfterForgeries.body.worker?.paused === false);
+
     const subscriptionBody = JSON.stringify({
       event_id: 'evt_paddle_subscription_test',
       event_type: 'subscription.created',
-      data: { id: 'sub_test_1', custom_data: { worker_id: paddleWorkerId, tenant_id: tenantId } },
+      data: {
+        id: 'sub_test_1',
+        transaction_id: cfg.body.transactionId,
+        customer_id: 'ctm_test_authoritative',
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
+      },
     });
     const ts = Math.floor(Date.now() / 1000);
     const subscriptionSig = crypto.createHmac('sha256', secret).update(`${ts}:${subscriptionBody}`).digest('hex');
@@ -338,10 +484,14 @@ let mismatchedActivationRequestId = null;
       event_id: 'evt_paddle_transaction_test',
       event_type: 'transaction.completed',
       data: {
-        id: 'txn_test_1',
+        id: cfg.body.transactionId,
+        status: 'completed',
+        subscription_id: 'sub_test_1',
+        customer_id: 'ctm_test_authoritative',
         currency_code: 'ILS',
+        items: [{ price: { id: dataEntryPriceId }, quantity: 1 }],
         details: { totals: { total: '19900' } },
-        custom_data: { worker_id: paddleWorkerId, tenant_id: tenantId },
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
       },
     });
     const transactionSig = crypto.createHmac('sha256', secret).update(`${ts}:${transactionBody}`).digest('hex');
@@ -354,6 +504,9 @@ let mismatchedActivationRequestId = null;
     expect('  completed exact-price transaction auto-activates worker', wh.body.autoActivated === true);
     const w = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
     expect('  worker active after paddle', w.body.worker?.isActive === true);
+    const victimAfterActivation = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+    expect('  forged custom_data on mapped transaction cannot redirect activation', victimAfterActivation.body.worker?.isActive === false
+      && victimAfterActivation.body.worker?.paused === false);
     const paidUntil = w.body.worker?.paidUntil;
 
     const replay = await req('/api/webhooks/paddle', {
@@ -365,6 +518,22 @@ let mismatchedActivationRequestId = null;
     expect('  replayed Paddle transaction is idempotent', replay.status === 200
       && replay.body.alreadyRecorded === true
       && afterReplay.body.worker?.paidUntil === paidUntil);
+
+    const mappedPause = await signedPaddleEvent({
+      event_id: 'evt_paddle_mapped_pause',
+      event_type: 'subscription.paused',
+      data: {
+        id: 'sub_test_1',
+        customer_id: 'ctm_test_authoritative',
+        custom_data: { worker_id: crossTenantWorkerId, tenant_id: crossTenantId },
+      },
+    });
+    const pausedPaddleWorker = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
+    const victimAfterMappedPause = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+    expect('mapped subscription pause suspends only its server-mapped worker', mappedPause.status === 200
+      && mappedPause.body.suspended === true
+      && pausedPaddleWorker.body.worker?.paused === true
+      && victimAfterMappedPause.body.worker?.paused === false);
   }
 }
 
@@ -407,7 +576,7 @@ let mismatchedActivationRequestId = null;
 // 8. List now shows active
 {
   const r = await req('/api/workers', { headers: auth() });
-  const w = r.body.workers?.[0];
+  const w = r.body.workers?.find((worker) => worker.id === firstWorkerId);
   expect('worker status=active after payment', w?.status === 'active');
   expect('worker isActive=true', w?.isActive === true);
 }
@@ -420,7 +589,7 @@ let mismatchedActivationRequestId = null;
   expect('  tasks array non-empty', r.body.worker?.tasks?.length >= 3);
   expect('  starter worker name is Hebrew-first', /מוקדן|ישראלי/.test(r.body.worker?.name ?? ''));
   expect('  starter tasks are business-owner friendly Hebrew', /עברית|לאסוף/.test(r.body.worker?.tasks?.[0] ?? ''));
-  expect('  starter knowledge asks for business basics', /שם (העסק|החברה)/.test(r.body.worker?.knowledge ?? ''));
+  expect('  reviewed business knowledge is present', String(r.body.worker?.knowledge).includes('אקמי פתרונות'));
   expect('  llm.provider = mock by default', r.body.worker?.llm?.provider === 'mock');
   expect('  llm.hasApiKey = false', r.body.worker?.llm?.hasApiKey === false);
   expect('  never returns apiKey value', r.body.worker?.llm?.apiKey === undefined);
@@ -432,7 +601,12 @@ let mismatchedActivationRequestId = null;
 {
   const r = await req(`/api/workers/${firstWorkerId}`, {
     method: 'PATCH', headers: auth(),
-    body: JSON.stringify({ name: 'Daniel - Acme Corp', knowledge: 'Acme Corp sells widgets in Israel. Pricing starts at 1000 ILS/month.', tasks: ['Greet', 'Qualify', 'Book meeting'] }),
+    body: JSON.stringify({
+      name: 'Daniel - Acme Corp',
+      knowledge: 'Acme Corp sells verified workflow software in Israel. Pricing is confirmed by a representative after requirements review. Support contact: help@acme.co.il.',
+      knowledgeReviewed: true,
+      tasks: ['Greet', 'Qualify', 'Book meeting'],
+    }),
   });
   expect('PATCH worker -> 200', r.status === 200 && r.body.ok === true);
 }
@@ -476,9 +650,9 @@ let mismatchedActivationRequestId = null;
   expect('GET messages requires customerId', missingCustomer.status === 400 && missingCustomer.body.error === 'customerId_required');
   const r = await req(`/api/workers/${firstWorkerId}/messages?customerId=${encodeURIComponent(primaryCustomerId)}`, { headers: auth() });
   expect('GET messages -> 200', r.status === 200);
-  expect('  has 6 messages (demo + stream + paid chat)', r.body.messages?.length === 6);
-  expect('  fifth role=user', r.body.messages?.[4]?.role === 'user');
-  expect('  sixth role=assistant', r.body.messages?.[5]?.role === 'assistant');
+  expect('  has only 2 persisted messages (demo/stream are planning-only)', r.body.messages?.length === 2);
+  expect('  first role=user', r.body.messages?.[0]?.role === 'user');
+  expect('  second role=assistant', r.body.messages?.[1]?.role === 'assistant');
 }
 
 // 13. Second chat — context preserved
@@ -489,6 +663,17 @@ let mismatchedActivationRequestId = null;
   });
   expect('chat #2 -> 200', r.status === 200);
   expect('  pricing reply', /pricing|plan|quote|מחיר|quote/i.test(r.body.reply));
+}
+{
+  const r = await fetch(BASE + `/api/workers/${firstWorkerId}/chat/stream`, {
+    method: 'POST',
+    headers: { ...auth(), accept: 'text/event-stream' },
+    body: JSON.stringify({ message: 'בדיקת סטרים פעילה', customerId: 'live-sse-customer' }),
+  });
+  const text = await r.text();
+  expect('active chat stream -> 200', r.status === 200);
+  expect('  active SSE token events', text.includes('event: token'));
+  expect('  active SSE done event', text.includes('event: done'));
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}/test-agent`, {
@@ -504,7 +689,13 @@ let mismatchedActivationRequestId = null;
 }
 {
   const r = await req(`/api/workers/${firstWorkerId}/messages?customerId=${encodeURIComponent(primaryCustomerId)}`, { headers: auth() });
-  expect('  now 8 messages', r.body.messages?.length === 8);
+  expect('  now 4 messages (test-agent is planning-only)', r.body.messages?.length === 4);
+}
+{
+  const account = await req('/api/account', { headers: auth() });
+  expect('monthly quota counts live and preview calls', account.status === 200
+    && account.body.callsUsed === 5
+    && account.body.callsRemaining === account.body.callsLimit - 5);
 }
 
 // 14. Per-tenant isolation: another tenant cannot see this worker
@@ -614,6 +805,8 @@ let mediaWorkerId = null;
       name: 'Social Test',
       tools: ['generate_image', 'generate_video'],
       agentMode: 'agent',
+      knowledge: 'שם המותג: Social Test. קהל היעד: עסקים בישראל. קול המותג: מקצועי וידידותי. כל פרסום דורש אישור מפורש של בעל העסק.',
+      knowledgeReviewed: true,
     }),
   });
   expect('POST social-media-creator-he -> 200', r.status === 200);
@@ -632,8 +825,10 @@ let mediaWorkerId = null;
     body: JSON.stringify({ message: 'צור תמונה לפוסט אינסטגרם על קפה בתל אביב', customerId: 'media-test' }),
   });
   expect('test-agent image request -> 200', r.status === 200);
-  expect('  mock image tool used', (r.body.toolCalls ?? []).some((t) => t.name === 'generate_image'));
-  expect('  reply mentions mock or image', /mock|תמונה|image|!\[/i.test(r.body.reply ?? '') || (r.body.toolCalls ?? []).some((t) => /mock|תמונה/i.test(t.result ?? '')));
+  expect('  image tool is planned without execution', (r.body.toolCalls ?? []).some((t) => (
+    t.name === 'generate_image' && t.planned === true && t.meta?.dryRun === true
+  )));
+  expect('  customer reply hides dry-run traces', !/dry-run|planned agent actions|trace|mock/i.test(r.body.reply ?? ''));
 }
 {
   const r = await req('/api/workers/buy', {
@@ -651,7 +846,8 @@ let mediaWorkerId = null;
     body: JSON.stringify({ message: 'generate nude nsfw image', customerId: 'nsfw-test' }),
   });
   const toolRes = (blocked.body.toolCalls ?? []).find((t) => t.name === 'generate_image');
-  expect('NSFW prompt blocked or not generated', blocked.status === 200 && (!toolRes || /נחסמה|blocked/i.test(toolRes.result ?? '')));
+  const blockedStep = (blocked.body.agentSteps ?? []).find((step) => step.phase === 'blocked' && step.reason === 'unsafe_media_request');
+  expect('NSFW prompt blocked with no generation plan', blocked.status === 200 && !toolRes && !!blockedStep);
 }
 {
   const { generateImage, isMediaMockMode } = await import('./google-media.js');
@@ -732,34 +928,12 @@ let integrationId = null;
   expect('POST Shopify connect accepts canonical myshopify.com host', (r.status === 200 || r.status === 201) && r.body.integration?.config?.shopDomain === 'manual-store.myshopify.com');
 }
 {
-  const valid = await req('/api/integrations/oauth/start', {
+  const apiKeyStart = await req('/api/integrations/oauth/start', {
     method: 'POST', headers: auth(),
     body: JSON.stringify({ type: 'shopify', extra: { shop: ' HTTPS://OAuth-Store.MyShopify.com/ ' } }),
   });
-  let redirect = null;
-  try { redirect = new URL(valid.body.redirectUrl); } catch {}
-  expect('POST Shopify OAuth start uses normalized Shopify host', valid.status === 200
-    && redirect?.protocol === 'https:'
-    && redirect?.hostname === 'oauth-store.myshopify.com'
-    && redirect?.pathname === '/admin/oauth/authorize');
-
-  for (const shop of [
-    'attacker.example',
-    'store.myshopify.com.attacker.example',
-    'store.myshopify.com@attacker.example',
-    'store.myshopify.com:444',
-    'store.myshopify.com/admin',
-  ]) {
-    const rejected = await req('/api/integrations/oauth/start', {
-      method: 'POST', headers: auth(),
-      body: JSON.stringify({ type: 'shopify', extra: { shop } }),
-    });
-    expect(`  Shopify OAuth start rejects ${shop}`, rejected.status === 400 && rejected.body.error === 'invalid_shop_domain');
-  }
-  const missing = await req('/api/integrations/oauth/start', {
-    method: 'POST', headers: auth(), body: JSON.stringify({ type: 'shopify', extra: {} }),
-  });
-  expect('  Shopify OAuth start rejects missing shop', missing.status === 400 && missing.body.error === 'shop_required');
+  expect('tenant API key cannot initiate browser OAuth account linking', apiKeyStart.status === 401
+    && apiKeyStart.body.error === 'owner_session_required');
 }
 {
   const r = await req('/api/integrations/catalog');
@@ -771,6 +945,70 @@ let integrationId = null;
     body: JSON.stringify({ type: 'webhook', config: { url: 'http://127.0.0.1/hook' } }),
   });
   expect('POST webhook blocks private URL', r.status === 400 && (r.body.error === 'unsafe_url' || r.body.reason));
+}
+{
+  const cases = [
+    {
+      name: 'metadata webhook URL',
+      path: '/api/integrations/connect',
+      type: 'webhook',
+      config: { url: 'http://169.254.169.254/latest/meta-data' },
+      field: 'url',
+    },
+    {
+      name: 'WooCommerce siteUrl',
+      path: '/api/integrations/connect',
+      type: 'woocommerce',
+      config: { siteUrl: 'http://127.0.0.1:8080', consumerKey: 'ck_test', consumerSecret: 'cs_test' },
+      field: 'siteUrl',
+    },
+    {
+      name: 'IPv6 unique-local bookingLink',
+      path: '/api/integrations/connect',
+      type: 'google_calendar',
+      config: { bookingLink: 'http://[fc00::1]/book' },
+      field: 'bookingLink',
+    },
+    {
+      name: 'IPv6 link-local bookingLink',
+      path: '/api/integrations',
+      type: 'google_calendar',
+      config: { bookingLink: 'http://[fe80::1]/book' },
+      field: 'bookingLink',
+    },
+    {
+      name: 'Bit notifyUrl alias',
+      path: '/api/integrations',
+      type: 'bit_notify',
+      config: { notifyUrl: 'http://169.254.169.254/notify', bitPhone: '972501234567' },
+      field: 'notifyUrl',
+    },
+    {
+      name: 'Google Sheets exportWebhook runtime alias',
+      path: '/api/integrations',
+      type: 'google_sheets',
+      config: { exportWebhook: 'http://127.0.0.1/export' },
+      field: 'exportWebhook',
+    },
+    {
+      name: 'provider baseUrl alias',
+      path: '/api/integrations/connect',
+      type: 'mcp',
+      config: { authMethod: 'oauth', baseUrl: 'http://127.0.0.1/base' },
+      field: 'baseUrl',
+    },
+  ];
+  for (const item of cases) {
+    const r = await req(item.path, {
+      method: 'POST', headers: auth(),
+      body: JSON.stringify({ type: item.type, config: item.config }),
+    });
+    expect(
+      `POST integration rejects ${item.name} before persistence`,
+      r.status === 400 && r.body.error === 'unsafe_url' && r.body.field === item.field,
+      JSON.stringify(r.body),
+    );
+  }
 }
 {
   const r = await req(`/api/integrations/${integrationId}`, { method: 'DELETE', headers: auth() });
@@ -793,13 +1031,70 @@ let integrationId = null;
 {
   const r = await req('/embed.js');
   expect('GET /embed.js -> 200 js', r.status === 200 && String(r.body).includes('aiw-embed-root'));
+  expect('  embed script never reads a tenant data-key', !String(r.body).includes("getAttribute('data-key')") && !String(r.body).includes("'Bearer ' + apiKey"));
 }
 {
+  const origin = 'https://customer-site.example';
   const cfg = await req(`/api/embed/config?workerId=${mediaWorkerId}`, {
-    headers: { origin: 'https://customer-site.example' },
+    headers: { origin },
   });
   expect('GET /api/embed/config -> 200', cfg.status === 200 && cfg.body.workerId === mediaWorkerId);
-  expect('  embed config reflects Origin CORS', cfg.headers.get('access-control-allow-origin') === 'https://customer-site.example');
+  expect('  embed config reflects Origin CORS', cfg.headers.get('access-control-allow-origin') === origin);
+  const deniedOrigin = await req(`/api/embed/config?workerId=${mediaWorkerId}`, { headers: { origin: 'https://evil.example' } });
+  expect('  embed config rejects unlisted origin', deniedOrigin.status === 403);
+
+  const session = await req('/api/embed/session', {
+    method: 'POST',
+    headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ workerId: mediaWorkerId }),
+  });
+  expect('POST /api/embed/session -> scoped token', session.status === 201 && session.body?.sessionToken?.startsWith('emb_'));
+  const noSession = await req('/api/embed/chat', {
+    method: 'POST',
+    headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'שלום', customerId: 'wa:0500000000' }),
+  });
+  expect('  embed chat rejects missing scoped session', noSession.status === 401);
+  const chat = await req('/api/embed/chat', {
+    method: 'POST',
+    headers: { origin, authorization: 'Embed ' + session.body.sessionToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'שלום', customerId: 'wa:0500000000', workerId: 'wk_wrong' }),
+  });
+  expect('  scoped embed chat ignores caller identity/scope fields', chat.status === 200 && typeof chat.body?.reply === 'string');
+  expect('  public embed response omits internal trace and customer id', !chat.body?.customerId && !chat.body?.agentSteps && !chat.body?.toolCalls);
+  const wrongOrigin = await req('/api/embed/chat', {
+    method: 'POST',
+    headers: { origin: 'https://evil.example', authorization: 'Embed ' + session.body.sessionToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'שלום' }),
+  });
+  expect('  scoped embed token is origin-bound', wrongOrigin.status === 403);
+
+  const secondChat = await req('/api/embed/chat', {
+    method: 'POST',
+    headers: { origin, authorization: 'Embed ' + session.body.sessionToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'בדיקת שימוש שנייה' }),
+  });
+  const sessionCapped = await req('/api/embed/chat', {
+    method: 'POST',
+    headers: { origin, authorization: 'Embed ' + session.body.sessionToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'ניסיון לרוקן מכסה' }),
+  });
+  expect('  embed session has a separate hourly abuse budget', secondChat.status === 200
+    && sessionCapped.status === 429
+    && sessionCapped.body.error === 'embed_abuse_limited');
+
+  const moreSessions = [];
+  for (let index = 0; index < 3; index++) {
+    moreSessions.push(await req('/api/embed/session', {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ workerId: mediaWorkerId }),
+    }));
+  }
+  expect('  forged allowed Origin cannot issue unlimited sessions', moreSessions[0].status === 201
+    && moreSessions[1].status === 201
+    && moreSessions[2].status === 429
+    && moreSessions[2].body.error === 'embed_abuse_limited');
 }
 {
   const r = await req('/api/webhooks/bit', {
@@ -814,7 +1109,13 @@ let paypalFirstPaidUntil = null;
 {
   const created = await req('/api/workers', {
     method: 'POST', headers: auth(),
-    body: JSON.stringify({ templateId: 'sales-leads-il', name: 'PayPal Signature Worker', tools: [] }),
+    body: JSON.stringify({
+      templateId: 'sales-leads-il',
+      name: 'PayPal Signature Worker',
+      tools: [],
+      knowledge: REVIEWED_SALES_KNOWLEDGE,
+      knowledgeReviewed: true,
+    }),
   });
   paypalWebhookWorkerId = created.body.workerId;
   expect('create pending PayPal webhook worker', created.status === 200 && !!paypalWebhookWorkerId);
@@ -906,6 +1207,23 @@ let paypalFirstPaidUntil = null;
   expect('  replayed transaction is idempotent', replay.status === 200
     && replay.body.alreadyRecorded === true
     && afterReplay.body.worker?.paidUntil === renewedPaidUntil);
+
+  const adminReplay = await req('/api/admin/mark-worker-paid', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({
+      workerId: paypalWebhookWorkerId,
+      tenantId,
+      days: 30,
+      paymentChannel: 'PayPal',
+      paymentReference: 'VERIFIED-PAYPAL-RENEWAL',
+      amountIls: 249,
+    }),
+  });
+  const afterAdminReplay = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  same PayPal reference stays idempotent across admin/webhook paths and channel casing',
+    adminReplay.status === 200
+      && adminReplay.body.alreadyRecorded === true
+      && afterAdminReplay.body.worker?.paidUntil === renewedPaidUntil);
 }
 {
   const created = await req('/api/workers', {
@@ -940,6 +1258,83 @@ let paypalFirstPaidUntil = null;
   expect('  failed webhook keeps activation request pending', !!pending.body.requests?.find((x) => x.id === duplicateRequestId));
   const worker = await req(`/api/workers/${duplicateReferenceWorkerId}`, { headers: auth() });
   expect('  failed webhook cannot activate duplicate-reference worker', worker.body.worker?.isActive === false);
+}
+{
+  const victimAuth = { authorization: 'Bearer ' + crossTenantKey, 'content-type': 'application/json' };
+  const before = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+  const beforePaidUntil = before.body.worker?.paidUntil;
+  const rejected = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: crossTenantWorkerId,
+      tenantId: crossTenantId,
+      payment_status: 'Completed',
+      txn_id: 'VERIFIED-PAYPAL',
+      mc_gross: '249.00',
+      mc_currency: 'ILS',
+    }),
+  });
+  expect('global PayPal ledger rejects cross-tenant reuse', rejected.status === 400
+    && rejected.body.error === 'payment_reference_already_used');
+  const after = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+  expect('  cross-tenant PayPal replay cannot change entitlement', after.body.worker?.paidUntil === beforePaidUntil);
+}
+{
+  const created = await req('/api/workers', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      templateId: 'sales-leads-il',
+      name: 'Bit Ledger Worker',
+      tools: [],
+      knowledge: REVIEWED_SALES_KNOWLEDGE,
+      knowledgeReviewed: true,
+    }),
+  });
+  const bitWorkerId = created.body.workerId;
+  expect('create pending Bit ledger worker', created.status === 200 && !!bitWorkerId);
+  const paid = await req('/api/webhooks/bit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': BIT_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: bitWorkerId,
+      tenantId,
+      reference: 'GLOBAL-BIT-REFERENCE',
+      amount: 249,
+    }),
+  });
+  expect('verified Bit reference activates its bound target', paid.status === 200 && paid.body.ok === true);
+  const replay = await req('/api/webhooks/bit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': BIT_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: bitWorkerId,
+      tenantId,
+      reference: 'GLOBAL-BIT-REFERENCE',
+      amount: 249,
+    }),
+  });
+  expect('same-target Bit replay is idempotent', replay.status === 200
+    && replay.body.ok === true
+    && replay.body.alreadyRecorded === true);
+
+  const victimAuth = { authorization: 'Bearer ' + crossTenantKey, 'content-type': 'application/json' };
+  const before = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+  const beforePaidUntil = before.body.worker?.paidUntil;
+  const rejected = await req('/api/webhooks/bit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': BIT_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: crossTenantWorkerId,
+      tenantId: crossTenantId,
+      reference: 'GLOBAL-BIT-REFERENCE',
+      amount: 249,
+    }),
+  });
+  expect('global Bit ledger rejects cross-tenant reuse', rejected.status === 400
+    && rejected.body.error === 'payment_reference_already_used');
+  const after = await req(`/api/workers/${crossTenantWorkerId}`, { headers: victimAuth });
+  expect('  cross-tenant Bit replay cannot change entitlement', after.body.worker?.paidUntil === beforePaidUntil);
 }
 {
   const workerBefore = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
@@ -980,12 +1375,54 @@ let paypalFirstPaidUntil = null;
   }
 }
 
+// Monthly allowance is enforced on live and preview chat routes. Admin can set
+// a tenant-specific cap without making dashboard reads consume that cap.
+{
+  const before = await req('/api/account', { headers: auth() });
+  const used = Number(before.body?.callsUsed ?? 0);
+  expect('live chat usage is tracked per tenant/month', before.status === 200 && used >= 4);
+  const setLimit = await req('/api/admin/set-tenant-chat-limit', {
+    method: 'POST', headers: adminAuth,
+    body: JSON.stringify({ tenantId, limit: used }),
+  });
+  expect('admin can set a finite tenant chat limit', setLimit.status === 200
+    && setLimit.body.limit === used
+    && setLimit.body.remaining === 0);
+  const blocked = await req(`/api/workers/${paypalWebhookWorkerId}/chat`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'הודעה מעבר למכסה', customerId: 'quota-boundary', demoMode: true, testMode: true }),
+  });
+  expect('client mode flags cannot bypass the monthly limit', blocked.status === 402
+    && blocked.body.error === 'quota_exceeded'
+    && blocked.body.used === used
+    && blocked.body.limit === used);
+  const previewBlocked = await req(`/api/workers/${paypalWebhookWorkerId}/test-agent`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ message: 'ניסיון דמו מעבר למכסה', customerId: 'quota-preview-boundary' }),
+  });
+  expect('dedicated preview route is also quota-bound', previewBlocked.status === 402
+    && previewBlocked.body.error === 'quota_exceeded');
+}
+
 {
   expect('OAuth return URL puts query before hash',
     buildOAuthReturnUrl('/marketplace#/workers/connect/wk_abc', 'oauth=success&type=google_calendar')
     === '/marketplace?oauth=success&type=google_calendar#/workers/connect/wk_abc');
   const wa = validateConfig('whatsapp', { ownerNotifyPhone: '0501234567' });
   expect('whatsapp connect accepts phone-only config', wa.ok === true && wa.config.provider === 'meta');
+}
+
+// Public hook/media misses must never create tenant directories or databases.
+{
+  const unknownTenant = 'ten_unknown_public_lookup_123456';
+  const unknownDir = path.join(process.env.TENANTS_DIR ?? 'data/tenants', unknownTenant);
+  fs.rmSync(unknownDir, { recursive: true, force: true });
+  const hook = await req(`/api/hooks/${unknownTenant}/abcdef0123456789`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  });
+  const media = await req(`/api/media/public/${unknownTenant}/med_abcdef0123456789.png`);
+  expect('unknown public hook is rejected without tenant DB creation', hook.status === 403 && !fs.existsSync(unknownDir));
+  expect('unknown public media is 404 without tenant directory creation', media.status === 404 && !fs.existsSync(unknownDir));
 }
 {
   const r = await req('/api/integrations/connect', {

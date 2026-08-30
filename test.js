@@ -8,6 +8,8 @@ const ok = (l) => console.log(`OK    ${l}`);
 const fail = (l, d) => { failures++; console.log(`FAIL  ${l}${d ? ' \u2014 ' + d : ''}`); };
 const expect = (l, c, d) => c ? ok(l) : fail(l, d);
 const adminAuth = { authorization: 'Bearer ' + ADMIN_TOKEN, 'content-type': 'application/json' };
+let oauthOwnerCookie = '';
+let oauthOtherCookie = '';
 
 async function req(path, init = {}) {
   const r = await fetch(BASE + path, init);
@@ -25,6 +27,8 @@ console.log(`Testing ${BASE}\n`);
   expect('  reports adminEnabled', typeof r.body.adminEnabled === 'boolean');
   expect('  channels array present', Array.isArray(r.body.channels));
   expect('  statusHe in Hebrew', r.body.statusHe === 'מוכן לעבודה' || r.body.statusHe === 'צריך הגדרה');
+  expect('  exposes finite monthly chat limit', Number.isInteger(r.body.monthlyChatLimit) && r.body.monthlyChatLimit > 0);
+  expect('  product analytics are aggregate-only', r.body.productAnalytics?.privacy === 'aggregate_counts_only');
 }
 {
   const r = await req('/health', {
@@ -67,7 +71,9 @@ console.log(`Testing ${BASE}\n`);
   const privacy = await req('/privacy');
   expect('GET /terms and /privacy -> 200', terms.status === 200 && privacy.status === 200);
   expect('  terms distinguish manual and verified automatic activation', String(terms.body).includes('תשלום ידני דורש בדיקה') && String(terms.body).includes('סליקה אוטומטית'));
-  expect('  privacy does not claim a fixed payment provider', String(privacy.body).includes('בערוצים שמוצגים בפועל') && !String(privacy.body).includes('תשלומים מתבצעים ישירות ביניכם לבין PayPal'));
+  expect('  privacy accurately describes hashed account secrets', String(privacy.body).includes('גיבוב חד-כיווני') && !String(privacy.body).includes('מפתח API (מוצפן)'));
+  expect('  privacy names retention and aggregate-only metrics', String(privacy.body).includes('180 יום') && String(privacy.body).includes('ספירות מצטברות'));
+  expect('  privacy renders a real contact instead of an env placeholder', String(privacy.body).includes('support@ai-workers.test') && !String(privacy.body).includes('AGENT_OWNER_CONTACT'));
 }
 
 // 4. Admin issue key (with token)
@@ -102,24 +108,58 @@ console.log(`Testing ${BASE}\n`);
   expect('spoofed forwarded IP invalid admin -> 401', r.status === 401);
 }
 
-// 5b. Self-serve signup issues a tenant key without admin access
+// 5b. Self-serve signup issues an HttpOnly owner session, not a browser API key
 {
   const r = await req('/api/signup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ businessName: 'Self Serve Test', contact: 'buyer@example.com' }),
   });
-  expect('POST /api/signup -> 200', r.status === 200);
-  expect('  signup returns tenant key', r.body?.key?.startsWith('sk_'));
+  const sessionCookie = String(r.headers.get('set-cookie') ?? '').split(';')[0];
+  expect('POST /api/signup -> 201', r.status === 201);
+  expect('  signup does not expose tenant key', !r.body?.key);
+  expect('  signup returns one-time recovery code', r.body?.recoveryCode?.startsWith('rcv_'));
+  expect('  signup sets HttpOnly SameSite cookie', /aiw_owner_session=/.test(sessionCookie)
+    && String(r.headers.get('set-cookie')).includes('HttpOnly')
+    && String(r.headers.get('set-cookie')).includes('SameSite=Lax'));
   expect('  signup returns stable tenant id', r.body?.tenantId?.startsWith('ten_'));
-  const account = await req('/api/account', { headers: { authorization: 'Bearer ' + r.body.key } });
+  const session = await req('/api/session', { headers: { cookie: sessionCookie } });
+  expect('GET /api/session -> 200', session.status === 200 && session.body?.authMethod === 'session');
+  const account = await req('/api/account', { headers: { cookie: sessionCookie } });
   expect('GET /api/account -> 200', account.status === 200);
   expect('  account tenant matches signup', account.body?.tenantId === r.body.tenantId);
-  const rotated = await req('/api/account/rotate-key', { method: 'POST', headers: { authorization: 'Bearer ' + r.body.key } });
+  expect('  account exposes monthly chat allowance', account.body?.callsUsed === 0
+    && account.body?.callsRemaining === account.body?.callsLimit
+    && /^\d{4}-\d{2}$/.test(account.body?.usagePeriod ?? ''));
+  expect('  account exposes the separate provider-call cost guard', account.body?.providerCallsUsed === 0
+    && account.body?.providerCallsLimit > 0
+    && account.body?.providerCallsRemaining === account.body?.providerCallsLimit
+    && /^\d{4}-\d{2}$/.test(account.body?.providerUsagePeriod ?? ''));
+  const csrfBlocked = await req('/api/account/rotate-key', { method: 'POST', headers: { cookie: sessionCookie } });
+  expect('  cookie mutations require CSRF header', csrfBlocked.status === 401);
+  const rotated = await req('/api/account/rotate-key', {
+    method: 'POST',
+    headers: { cookie: sessionCookie, 'x-aiw-csrf': '1' },
+  });
   expect('POST /api/account/rotate-key -> 200', rotated.status === 200 && rotated.body?.ok === true);
   expect('  rotated key keeps tenant id', rotated.body?.tenantId === r.body.tenantId);
-  const oldKeyCheck = await req('/api/account', { headers: { authorization: 'Bearer ' + r.body.key } });
-  expect('  old key revoked after rotation', oldKeyCheck.status === 401);
+  expect('  explicit rotation returns API key once', rotated.body?.key?.startsWith('sk_'));
+  const apiKeyCheck = await req('/api/account', { headers: { authorization: 'Bearer ' + rotated.body.key } });
+  expect('  rotated API key authenticates', apiKeyCheck.status === 200);
+  const sessionStillWorks = await req('/api/session', { headers: { cookie: sessionCookie } });
+  expect('  API key rotation does not revoke owner session', sessionStillWorks.status === 200);
+
+  const recovered = await req('/api/account/recover', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'buyer@example.com', recoveryCode: r.body.recoveryCode }),
+  });
+  const recoveredCookie = String(recovered.headers.get('set-cookie') ?? '').split(';')[0];
+  expect('POST /api/account/recover -> 200', recovered.status === 200 && recovered.body?.recoveryCode?.startsWith('rcv_'));
+  const oldSession = await req('/api/session', { headers: { cookie: sessionCookie } });
+  const recoveredSession = await req('/api/session', { headers: { cookie: recoveredCookie } });
+  expect('  recovery revokes old sessions and opens a new one', oldSession.status === 401 && recoveredSession.status === 200);
+  oauthOwnerCookie = recoveredCookie;
 }
 {
   const r = await req('/api/signup', {
@@ -128,6 +168,71 @@ console.log(`Testing ${BASE}\n`);
     body: JSON.stringify({ businessName: '', contact: '' }),
   });
   expect('signup validates required fields -> 400', r.status === 400);
+}
+
+// 5c. OAuth linking is bound to the exact initiating browser-owner session.
+{
+  const secondOwner = await req('/api/signup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ businessName: 'Other OAuth Owner', contact: 'oauth-other@example.com' }),
+  });
+  oauthOtherCookie = String(secondOwner.headers.get('set-cookie') ?? '').split(';')[0];
+  expect('second owner session created for OAuth isolation test', secondOwner.status === 201 && /aiw_owner_session=/.test(oauthOtherCookie));
+
+  const noCsrf = await req('/api/integrations/oauth/start', {
+    method: 'POST',
+    headers: { cookie: oauthOwnerCookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'shopify', extra: { shop: 'oauth-owner.myshopify.com' } }),
+  });
+  expect('OAuth start requires first-party CSRF header', noCsrf.status === 401 && noCsrf.body?.error === 'owner_session_required');
+
+  const externalReturn = await req('/api/integrations/oauth/start', {
+    method: 'POST',
+    headers: { cookie: oauthOwnerCookie, 'content-type': 'application/json', 'x-aiw-csrf': '1' },
+    body: JSON.stringify({
+      type: 'shopify',
+      returnPath: 'https://attacker.example/collect',
+      extra: { shop: 'oauth-owner.myshopify.com' },
+    }),
+  });
+  expect('OAuth start rejects external returnPath', externalReturn.status === 400 && externalReturn.body?.error === 'invalid_return_path');
+
+  const started = await req('/api/integrations/oauth/start', {
+    method: 'POST',
+    headers: { cookie: oauthOwnerCookie, 'content-type': 'application/json', 'x-aiw-csrf': '1' },
+    body: JSON.stringify({
+      type: 'shopify',
+      returnPath: '/marketplace#/workers/connect/wk_oauth_test',
+      extra: { shop: 'oauth-owner.myshopify.com' },
+    }),
+  });
+  expect('OAuth start accepts a safe marketplace integration return path', started.status === 200 && started.body?.state);
+
+  const noSessionCallback = await req(`/api/integrations/oauth/callback?state=${encodeURIComponent(started.body?.state ?? '')}&error=access_denied`, {
+    redirect: 'manual',
+  });
+  expect('OAuth callback without owner session fails closed', noSessionCallback.status === 302
+    && String(noSessionCallback.headers.get('location') ?? '').startsWith('/marketplace?oauth=error'));
+
+  const otherSessionCallback = await req(`/api/integrations/oauth/callback?state=${encodeURIComponent(started.body?.state ?? '')}&error=access_denied`, {
+    headers: { cookie: oauthOtherCookie },
+    redirect: 'manual',
+  });
+  expect('OAuth callback from another owner session fails closed', otherSessionCallback.status === 302
+    && String(otherSessionCallback.headers.get('location') ?? '').startsWith('/marketplace?oauth=error'));
+
+  const ownerCallback = await req(`/api/integrations/oauth/callback?state=${encodeURIComponent(started.body?.state ?? '')}&error=access_denied`, {
+    headers: { cookie: oauthOwnerCookie },
+    redirect: 'manual',
+  });
+  const replay = await req(`/api/integrations/oauth/callback?state=${encodeURIComponent(started.body?.state ?? '')}&code=replayed`, {
+    headers: { cookie: oauthOwnerCookie },
+    redirect: 'manual',
+  });
+  expect('initiating owner can consume a denied callback exactly once', ownerCallback.status === 302
+    && replay.status === 302
+    && decodeURIComponent(String(replay.headers.get('location') ?? '')).includes('פג תוקף החיבור'));
 }
 
 // 6. Admin list keys
@@ -218,6 +323,34 @@ console.log(`Testing ${BASE}\n`);
   expect('  serves Hebrew HTML', String(r.body).includes('שוק העובדים'));
   expect('  template badges avoid unsupported social proof', !String(r.body).includes('בחירת עסקים'));
   expect('  WhatsApp capability is explicitly configuration-gated', String(r.body).includes('WhatsApp רק לאחר חיבור מאומת') && !String(r.body).includes('תוך פחות מדקה יהיה לכם עובד שעונה ללקוחות בוואטסאפ'));
+}
+{
+  const invalidEvent = await req('/api/public/product-event', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'email_or_message_payload' }),
+  });
+  expect('product analytics reject arbitrary event payloads', invalidEvent.status === 400);
+  const magicEvent = await req('/api/public/product-event', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'magic_started', email: 'must-not-be-stored@example.com' }),
+  });
+  expect('product analytics accept an allow-listed aggregate event', magicEvent.status === 202);
+  const denied = await req('/api/admin/product-metrics');
+  expect('product metrics require admin -> 401', denied.status === 401);
+  const r = await req('/api/admin/product-metrics?days=30', { headers: adminAuth });
+  expect('GET /api/admin/product-metrics -> 200', r.status === 200);
+  expect('  metrics contain aggregate counts only', r.body.metrics?.privacy === 'aggregate_counts_only'
+    && r.body.metrics?.approximate === true
+    && r.body.metrics?.totals?.landing_view >= 1
+    && r.body.metrics?.totals?.marketplace_view >= 1
+    && r.body.metrics?.totals?.magic_started >= 1
+    && !JSON.stringify(r.body).includes('buyer@example.com')
+    && !JSON.stringify(r.body).includes('must-not-be-stored@example.com'));
+  const operations = await req('/api/admin/operations', { headers: adminAuth });
+  expect('GET /api/admin/operations -> 200', operations.status === 200
+    && typeof operations.body?.readiness === 'object'
+    && operations.body?.backup?.present === false
+    && operations.body?.limits?.monthlyChat > 0);
 }
 
 // 11. Templates API

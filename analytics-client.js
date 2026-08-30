@@ -9,6 +9,23 @@ export function shouldEnableAnalytics() {
 }
 
 export async function initAnalytics(options = {}) {
+  if (typeof window === 'undefined') return;
+  if (options.spa) {
+    const reportProductRoute = () => {
+      if (!location.hash.startsWith('#/magic')) return;
+      const key = 'aiw_product_event_magic_started';
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+      void fetch('/api/public/product-event', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'magic_started' }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    reportProductRoute();
+    window.addEventListener('hashchange', reportProductRoute);
+  }
   if (!shouldEnableAnalytics()) return;
   try {
     const { inject, pageview } = await import('/vendor/vercel-analytics.mjs');

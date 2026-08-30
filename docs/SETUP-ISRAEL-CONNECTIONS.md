@@ -40,7 +40,7 @@ curl -i https://YOUR_DOMAIN/ready         # חובה 200 ו-ok:true לפני ל�
 |--------|------|
 | `PADDLE_API_KEY` | secret של Paddle ליצירת/אימות פעולות שרת |
 | `PADDLE_CLIENT_TOKEN` | מ־Paddle Dashboard |
-| `PADDLE_PRICE_ID` | מחיר מנוי חודשי |
+| `PADDLE_PRICE_MAP` | JSON של template id אל Paddle price id; נדרש לכל תבנית שנמכרת |
 | `PADDLE_WEBHOOK_SECRET` | מ־Notifications |
 | `PADDLE_ENVIRONMENT` | `sandbox` עד שכל הזרימה נבדקה |
 

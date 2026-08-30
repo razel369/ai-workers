@@ -16,4 +16,8 @@ _check.cjs
 .gh-auth.log
 .vercel-auth.log
 
+# Local agent/security-scan state
+.claude/
+.claude-flow/
+
 .vercel

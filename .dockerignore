@@ -12,6 +12,8 @@ backups
 *.log
 .DS_Store
 coverage
+.claude
+.claude-flow
 test.js
 worker-tests.js
 browser-flow-test.js

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>AI Workers — עובדי AI לעסקים בישראל</title>
+<title>AI Workers Israel — עובדים דיגיטליים לעסקים בישראל</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Secular+One&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/material3-theme.css?v=nightdesk10">
+<link rel="stylesheet" href="/assets/material3-theme.css?v=aiworkers11">
 <link rel="stylesheet" href="/assets/workers-list.css?v=wl1">
-<style>.icon-spin{animation:spin 1s linear infinite;color:var(--lamp)}@keyframes spin{to{transform:rotate(360deg)}}</style>
+<style>.icon-spin{animation:spin 1s linear infinite;color:var(--lamp)}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}@keyframes spin{to{transform:rotate(360deg)}}</style>
 </head>
 <body class="night-desk">
 <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden" xmlns="http://www.w3.org/2000/svg">
@@ -174,17 +174,18 @@
 
 <header>
   <a href="#/" class="logo">
-    <img src="/brand/logo-nightdesk-icon.svg" alt="Nightdesk" class="logo-img" width="36" height="36">
+    <img src="/brand/logo-nightdesk-icon.svg" alt="AI Workers" class="logo-img" width="36" height="36">
     <span class="logo-text">
-      <span class="logo-main">Nightdesk</span>
-      <span class="logo-sub">עובדים דיגיטליים 24/7</span>
+      <span class="logo-main">AI Workers Israel</span>
+      <span class="logo-sub">עובדים דיגיטליים לעסק</span>
     </span>
   </a>
   <nav id="nav">
     <a href="#/" data-route="marketplace">שוק העובדים</a>
     <a href="#/workers" data-route="workers">העובדים שלי</a>
     <a href="#/admin" data-route="admin" id="nav-admin" hidden>ניהול</a>
-    <a href="/" target="_blank" class="header-cta">לוח בקרה ↗</a>
+    <a href="#/recover" data-route="recover">כניסה / שחזור</a>
+    <a href="/" target="_blank" rel="noopener" class="header-cta">דף הבית ↗</a>
   </nav>
 </header>
 <main id="app">
@@ -192,8 +193,8 @@
 </main>
 <footer class="site-footer" id="site-footer" aria-label="תחתית אתר">
   <div class="site-footer-brand">
-    <img src="/brand/logo-nightdesk-mono.svg" alt="Nightdesk" width="32" height="32" />
-    <span class="site-footer-brand-name">Nightdesk</span>
+    <img src="/brand/logo-nightdesk-mono.svg" alt="AI Workers" width="32" height="32" />
+    <span class="site-footer-brand-name">AI Workers Israel</span>
   </div>
   <nav class="site-footer-nav">
     <a href="/">דף הבית</a>
@@ -212,7 +213,9 @@ const APP = (() => {
   const ONBOARDING_LS = 'paid-agent.onboardingDone';
   const MAGIC_LS = 'paid-agent.magicState';
   const ADVANCED_LS = 'paid-agent.advancedMode';
+  const LEGACY_KEY_LS = 'paid-agent.workerKey';
   let routeSeq = 0;
+  let ownerSession = null;
 
   function isAdvancedMode() { return localStorage.getItem(ADVANCED_LS) === '1'; }
   function setAdvancedMode(on) { localStorage.setItem(ADVANCED_LS, on ? '1' : '0'); }
@@ -221,35 +224,83 @@ const APP = (() => {
   }
   function timedTrialEnabled() { return configuredTrialDays() > 0; }
 
-  async function ensureSession(businessName) {
-    const existing = getKey();
-    if (existing) {
-      try {
-        const chk = await fetch('/api/account', { headers: { authorization: 'Bearer ' + existing } });
-        if (chk.ok) return true;
-        if (chk.status === 401) {
-          setKey('');
-        } else {
-          toast('בעיית תקשורת עם השרת — נסו שוב בעוד רגע', 'error');
-          return false;
-        }
-      } catch {
-        toast('אין חיבור לשרת — בדקו אינטרנט ונסו שוב', 'error');
-        return false;
+  async function readOwnerSession() {
+    try {
+      // Cookie first: a stale browser-readable migration key must not mask a
+      // valid HttpOnly owner session.
+      let r = await fetch('/api/session', {
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+      });
+      let body = await r.json().catch(() => ({}));
+      if (r.status === 401 && getKey()) {
+        r = await fetch('/api/session', {
+          credentials: 'same-origin',
+          headers: { authorization: 'Bearer ' + getKey(), 'content-type': 'application/json' },
+        });
+        body = await r.json().catch(() => ({}));
       }
+      if (!r.ok || !body.authenticated) {
+        ownerSession = null;
+        if (r.status === 401 && getKey()) setLegacyKey('');
+        return null;
+      }
+      ownerSession = body;
+      // Once the server recognizes the HttpOnly owner session, retire the
+      // browser-readable migration key instead of keeping two credentials.
+      if (body.authMethod === 'session' && getKey()) setLegacyKey('');
+      return body;
+    } catch {
+      return null;
     }
-    const r = await fetch('/api/signup', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ businessName: businessName || 'העסק שלי', contact: 'owner@local' }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.ok && j.key) {
-      setKey(j.key);
-      return true;
+  }
+
+  function validOwnerEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+  }
+
+  function showRecoveryCodeOnce(code, title = 'קוד השחזור שלך') {
+    if (!code) return;
+    const overlay = openModal(`
+      <div class="modal-hdr">
+        <span class="icon-big">${icon('shield', 24)}</span>
+        <h3>${escapeHtml(title)}</h3>
+        <button type="button" class="modal-close" id="recovery-code-close" aria-label="סגור">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <p><strong>זהו קוד חד־פעמי לשחזור החשבון.</strong> שמרו אותו כעת במנהל סיסמאות. הוא לא יוצג שוב.</p>
+        <label for="recovery-code-value">קוד שחזור</label>
+        <textarea id="recovery-code-value" readonly dir="ltr" style="min-height:72px;font-family:monospace">${escapeHtml(code)}</textarea>
+        <button type="button" class="btn btn-primary" id="recovery-code-copy">${icon('copy', 14)} העתק קוד</button>
+      </div>`);
+    overlay.querySelector('#recovery-code-close').onclick = () => closeModal(overlay);
+    overlay.querySelector('#recovery-code-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(code); toast('קוד השחזור הועתק', 'success'); }
+      catch { overlay.querySelector('#recovery-code-value').select(); toast('העתיקו ידנית', 'info'); }
+    };
+  }
+
+  async function ensureSession(businessName, contact = '') {
+    const session = await readOwnerSession();
+    if (session) return true;
+    if (!validOwnerEmail(contact)) return false;
+    try {
+      const r = await api('/api/signup', {
+        method: 'POST',
+        body: JSON.stringify({ businessName: businessName || 'העסק שלי', contact: contact.trim() }),
+      });
+      if (r.ok && r.body.authenticated) {
+        const { recoveryCode, ...sessionBody } = r.body;
+        ownerSession = { ...sessionBody, authMethod: 'session' };
+        showRecoveryCodeOnce(recoveryCode);
+        return true;
+      }
+      toast(friendlyApiError(r.body, 'לא הצלחנו לפתוח חשבון — נסו שוב'), 'error');
+      return false;
+    } catch {
+      toast('אין חיבור לשרת — בדקו אינטרנט ונסו שוב', 'error');
+      return false;
     }
-    toast('לא הצלחנו להתחיל — נסה שוב בעוד רגע', 'error');
-    return false;
   }
 
   function friendlyApiError(body, fallback = 'משהו השתבש — נסו שוב') {
@@ -328,22 +379,98 @@ const APP = (() => {
   }
 
   // ---- API key ----
-  const KEY_LS = 'paid-agent.workerKey';
-  function getKey() { return localStorage.getItem(KEY_LS) || ''; }
-  function setKey(k) {
-    if (k) localStorage.setItem(KEY_LS, k);
-    else localStorage.removeItem(KEY_LS);
+  function getKey() { return localStorage.getItem(LEGACY_KEY_LS) || ''; }
+  function setLegacyKey(k) {
+    if (k) localStorage.setItem(LEGACY_KEY_LS, k);
+    else localStorage.removeItem(LEGACY_KEY_LS);
     renderKeyBar();
   }
-  function authHeaders() {
+  function authHeaders(method = 'GET') {
     const k = getKey();
-    return k ? { 'authorization': 'Bearer ' + k, 'content-type': 'application/json' } : { 'content-type': 'application/json' };
+    const headers = k ? { 'authorization': 'Bearer ' + k, 'content-type': 'application/json' } : { 'content-type': 'application/json' };
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(String(method).toUpperCase())) headers['x-aiw-csrf'] = '1';
+    return headers;
+  }
+  function newIdempotencyKey(prefix = 'ui') {
+    const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `${prefix}-${id}`;
   }
   async function api(path, opts = {}) {
-    const r = await fetch(path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+    const method = String(opts.method || 'GET').toUpperCase();
+    const r = await fetch(path, {
+      credentials: 'same-origin',
+      ...opts,
+      headers: { ...authHeaders(method), ...(opts.headers || {}) },
+    });
     const ct = r.headers.get('content-type') || '';
     const body = ct.includes('application/json') ? await r.json() : await r.text();
     return { status: r.status, body, ok: r.ok };
+  }
+
+  function ownerChatCustomerId(workerId) {
+    return `owner:${workerId}`;
+  }
+
+  function ownerAccessGate() {
+    app.innerHTML = `<div class="empty" role="status">
+      <h2>נדרשת כניסה לחשבון</h2>
+      <p>התחברו עם קוד השחזור, או צרו חשבון ועובד ראשון.</p>
+      <p><a class="btn btn-primary" href="#/recover">כניסה / שחזור</a> <a class="btn btn-outline" href="#/magic">יצירת עובד ראשון</a></p>
+    </div>`;
+  }
+
+  function planLabel(plan) {
+    return ({ trial: 'ניסיון', 'worker-tenant': 'חשבון עסקי', active: 'פעיל' })[plan] || plan || 'חשבון עסקי';
+  }
+
+  async function fetchAuthenticatedResource(path) {
+    const r = await fetch(path, {
+      credentials: 'same-origin',
+      headers: authHeaders('GET'),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(friendlyApiError(body, 'לא הצלחנו לטעון את הקובץ'));
+    }
+    return r;
+  }
+
+  async function downloadAuthenticated(path, filename, trigger) {
+    if (trigger) trigger.disabled = true;
+    try {
+      const r = await fetchAuthenticatedResource(path);
+      const blobUrl = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      toast('הקובץ הורד', 'success');
+    } catch (e) {
+      toast(e.message || 'ההורדה נכשלה', 'error');
+    } finally {
+      if (trigger) trigger.disabled = false;
+    }
+  }
+
+  async function openAuthenticatedHtml(path, trigger) {
+    const popup = window.open('', '_blank');
+    if (popup) popup.opener = null;
+    if (trigger) trigger.disabled = true;
+    try {
+      const r = await fetchAuthenticatedResource(path);
+      const blobUrl = URL.createObjectURL(await r.blob());
+      if (popup) popup.location.replace(blobUrl);
+      else toast('הדפדפן חסם את התצוגה — אפשרו חלונות קופצים ונסו שוב', 'error');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (e) {
+      if (popup) popup.close();
+      toast(e.message || 'התצוגה נכשלה', 'error');
+    } finally {
+      if (trigger) trigger.disabled = false;
+    }
   }
 
   function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -542,10 +669,13 @@ const APP = (() => {
     duration = duration || 4000;
     const container = document.getElementById('toast-container') || (() => {
       const c = document.createElement('div'); c.id = 'toast-container'; c.className = 'toast-container';
+      c.setAttribute('aria-live', 'polite');
+      c.setAttribute('aria-atomic', 'false');
       document.body.appendChild(c); return c;
     })();
     const t = document.createElement('div');
     t.className = 'toast toast-' + type;
+    t.setAttribute('role', type === 'error' ? 'alert' : 'status');
     t.textContent = msg;
     container.appendChild(t);
     requestAnimationFrame(() => t.classList.add('show'));
@@ -557,25 +687,60 @@ const APP = (() => {
 
   // ---- Modal helpers ----
   let modalHandler = null;
+  let modalReturnFocus = null;
   function openModal(html) {
     const existing = document.querySelector('.modal-overlay');
-    if (existing) existing.remove();
+    if (existing) {
+      if (modalHandler) document.removeEventListener('keydown', modalHandler);
+      existing.remove();
+      modalHandler = null;
+    }
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML = `<div class="modal">${html}</div>`;
+    overlay.innerHTML = `<div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
+    modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.appendChild(overlay);
+    const dialog = overlay.querySelector('.modal');
+    const heading = dialog.querySelector('h1,h2,h3');
+    if (heading) {
+      heading.id ||= 'modal-title-' + Math.random().toString(36).slice(2, 9);
+      dialog.setAttribute('aria-labelledby', heading.id);
+    } else {
+      dialog.setAttribute('aria-label', 'חלון דו־שיח');
+    }
     overlay.onclick = (e) => { if (e.target === overlay) closeModal(overlay); };
-    modalHandler = (e) => { if (e.key === 'Escape') closeModal(overlay); };
+    modalHandler = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeModal(overlay); return; }
+      if (e.key !== 'Tab') return;
+      const focusable = [...dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+        .filter((el) => !el.hidden && el.offsetParent !== null);
+      if (!focusable.length) { e.preventDefault(); dialog.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener('keydown', modalHandler);
+    requestAnimationFrame(() => {
+      const first = dialog.querySelector('input:not([disabled]),textarea:not([disabled]),select:not([disabled]),button:not([disabled]),a[href]');
+      (first || dialog).focus();
+    });
     return overlay;
   }
   function closeModal(overlay) {
+    if (!overlay || !overlay.isConnected) return;
     overlay.classList.add('closing');
     if (modalHandler) document.removeEventListener('keydown', modalHandler);
-    setTimeout(() => overlay.remove(), 250);
+    const returnFocus = modalReturnFocus;
+    modalHandler = null;
+    modalReturnFocus = null;
+    setTimeout(() => {
+      overlay.remove();
+      if (returnFocus?.isConnected) returnFocus.focus();
+    }, 250);
   }
 
-  // ---- Key bar (hidden — session stored silently in localStorage) ----
+  // ---- Legacy key migration (new owner sessions live only in HttpOnly cookies) ----
   function renderKeyBar() {
     let bar = document.getElementById('key-bar');
     if (!bar) {
@@ -609,33 +774,72 @@ const APP = (() => {
 
   async function renderMagicWizard(alive = () => true) {
     setActive('marketplace');
-    const tr = await fetch('/api/workers/templates');
-    const templates = tr.ok ? (await tr.json()).templates : [];
+    let templates = [];
+    try {
+      const tr = await fetch('/api/workers/templates', { credentials: 'same-origin' });
+      const body = await tr.json().catch(() => ({}));
+      if (!tr.ok || !Array.isArray(body.templates)) throw new Error('templates_unavailable');
+      templates = body.templates;
+    } catch {
+      if (!alive()) return;
+      app.innerHTML = `<div class="empty err" role="alert">
+        <h2>לא הצלחנו לטעון את התפקידים</h2>
+        <p>המידע שלך לא אבד. בדקו את החיבור ונסו שוב.</p>
+        <button type="button" class="btn btn-primary" id="magic-retry-templates">${icon('refresh', 14)} נסו שוב</button>
+      </div>`;
+      document.getElementById('magic-retry-templates').onclick = () => renderMagicWizard(alive);
+      return;
+    }
+    if (!alive()) return;
     let state = loadMagicState();
     let step = Number(state.step) || 0;
-    if (step < 0 || step > 2) step = 0;
+    if (step < 0 || step > 3) step = 0;
 
     function progressHtml() {
-      return '<div class="magic-progress" aria-hidden="true">' +
-        [0, 1, 2].map((i) => `<span class="${i <= step ? 'on' : ''}"></span>`).join('') +
+      return '<div class="magic-progress" role="progressbar" aria-label="התקדמות בהקמת העובד" aria-valuemin="1" aria-valuemax="4" aria-valuenow="' + (step + 1) + '">' +
+        [0, 1, 2, 3].map((i) => `<span class="${i <= step ? 'on' : ''}"></span>`).join('') +
         '</div>';
+    }
+
+    async function loadKnowledgeDraft() {
+      if (state.knowledge && state.knowledgeTemplateId === state.templateId) return true;
+      app.innerHTML = `<div class="magic-wrap"><div class="empty" role="status" aria-live="polite">${icon('loading', 32, 'icon-spin')} מכין טיוטת מידע לבדיקה...</div></div>`;
+      try {
+        const params = new URLSearchParams({ templateId: state.templateId, businessName: state.businessName || 'העסק שלי' });
+        const r = await fetch('/api/workers/smart-knowledge?' + params, { credentials: 'same-origin' });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok || typeof body.knowledge !== 'string') throw new Error('knowledge_unavailable');
+        state.knowledge = body.knowledge;
+        state.knowledgeTemplateId = state.templateId;
+        state.knowledgeReviewed = false;
+        saveMagicState({ knowledge: state.knowledge, knowledgeTemplateId: state.templateId, knowledgeReviewed: false });
+        return true;
+      } catch {
+        app.innerHTML = `<div class="empty err" role="alert"><h2>לא הצלחנו להכין את טיוטת המידע</h2><p>לא ניצור עובד לפני שתאשרו מידע אמיתי.</p><button type="button" class="btn btn-primary" id="magic-retry-knowledge">נסו שוב</button></div>`;
+        document.getElementById('magic-retry-knowledge').onclick = async () => { if (await loadKnowledgeDraft()) paint(); };
+        return false;
+      }
     }
 
     async function paint() {
       if (step === 0) {
         app.innerHTML = `<div class="magic-wrap page-enter">
           ${progressHtml()}
-          <div class="magic-step-label">שלב 1 מתוך 3</div>
+          <div class="magic-step-label">שלב 1 מתוך 4</div>
           <h1 class="magic-title">איך קוראים לעסק?</h1>
-          <p class="magic-sub">רק שם אחד — בלי הרשמה מסובכת. אנחנו נזכור את זה בשבילך.</p>
-          <input id="magic-business" class="magic-input" placeholder="לדוגמה: קפה השכונה" value="${escapeHtml(state.businessName || '')}" autofocus />
+          <p class="magic-sub">נפתח חשבון מוגן לעסק ונשלח הנחיות שחזור שיש לשמור.</p>
+          <div class="fld"><label for="magic-business">שם העסק</label><input id="magic-business" class="magic-input" autocomplete="organization" placeholder="לדוגמה: קפה השכונה" value="${escapeHtml(state.businessName || '')}" autofocus /></div>
+          <div class="fld" style="margin-top:12px"><label for="magic-contact">אימייל בעלי העסק</label><input id="magic-contact" class="magic-input" type="email" inputmode="email" autocomplete="email" dir="ltr" placeholder="owner@business.co.il" value="${escapeHtml(state.contact || '')}" /></div>
           <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px">${icon('arrow-right', 16)} המשך</button>
         </div>`;
         document.getElementById('magic-next').onclick = () => {
           const name = document.getElementById('magic-business').value.trim();
-          if (!name) { toast('כתוב שם עסק קצר', 'error'); return; }
+          const contact = document.getElementById('magic-contact').value.trim();
+          if (!name) { toast('כתבו שם עסק קצר', 'error'); return; }
+          if (!validOwnerEmail(contact)) { toast('הכניסו כתובת אימייל תקינה של בעלי העסק', 'error'); return; }
           state.businessName = name;
-          saveMagicState({ businessName: name, step: 1 });
+          state.contact = contact;
+          saveMagicState({ businessName: name, contact, step: 1 });
           step = 1;
           paint();
         };
@@ -654,59 +858,94 @@ const APP = (() => {
         }).join('');
         app.innerHTML = `<div class="magic-wrap page-enter">
           ${progressHtml()}
-          <div class="magic-step-label">שלב 2 מתוך 3</div>
+          <div class="magic-step-label">שלב 2 מתוך 4</div>
           <h1 class="magic-title">מה העובד צריך לעשות?</h1>
           <p class="magic-sub">בחרו תפקיד אחד — אפשר לשנות אחר כך.</p>
           <div class="tpl-pick">${picks}</div>
-          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} המשך</button>
-          <button class="btn btn-outline btn-hero" id="magic-skip-to-chat" style="margin-top:10px" ${state.templateId ? '' : 'disabled'}>${icon('zap', 14)} דלג — צור עובד ודבר עכשיו</button>
+          <button class="btn btn-primary btn-hero" id="magic-next" style="margin-top:20px" ${state.templateId ? '' : 'disabled'}>${icon('chat', 16)} המשך לבדיקת המידע</button>
         </div>`;
         app.querySelectorAll('.tpl-pick-btn').forEach((btn) => {
           btn.onclick = () => {
+            const changed = state.templateId !== btn.dataset.tpl;
             state.templateId = btn.dataset.tpl;
-            saveMagicState({ templateId: state.templateId });
+            if (changed) {
+              state.workerId = null;
+              state.knowledge = '';
+              state.knowledgeTemplateId = '';
+              state.knowledgeReviewed = false;
+            }
+            saveMagicState({ templateId: state.templateId, workerId: state.workerId, knowledge: state.knowledge, knowledgeTemplateId: state.knowledgeTemplateId, knowledgeReviewed: state.knowledgeReviewed });
             app.querySelectorAll('.tpl-pick-btn').forEach((b) => b.classList.toggle('selected', b.dataset.tpl === state.templateId));
             document.getElementById('magic-next').disabled = false;
-            const skipBtn = document.getElementById('magic-skip-to-chat');
-            if (skipBtn) skipBtn.disabled = false;
           };
         });
         document.getElementById('magic-next').onclick = async () => {
           if (!state.templateId) return;
           saveMagicState({ step: 2 });
           step = 2;
-          paint();
-        };
-        const skipChat = document.getElementById('magic-skip-to-chat');
-        if (skipChat) skipChat.onclick = async () => {
-          if (!state.templateId) return;
-          await finishMagic();
+          if (await loadKnowledgeDraft()) paint();
         };
         return;
       }
 
       if (step === 2) {
+        if (!(await loadKnowledgeDraft())) return;
         app.innerHTML = `<div class="magic-wrap page-enter">
           ${progressHtml()}
-          <div class="magic-step-label">שלב 3 מתוך 3 · אופציונלי</div>
-          <h1 class="magic-title">רוצים שניידיע לכם כשמישהו כותב?</h1>
+          <div class="magic-step-label">שלב 3 מתוך 4 · חובה</div>
+          <h1 class="magic-title">בדקו מה העובד יודע</h1>
+          <p class="magic-sub">זו טיוטה בלבד. החליפו כל סוגריים, שמות, מחירים, שעות, כתובות ומדיניות במידע אמיתי של העסק.</p>
+          <div class="fld"><label for="magic-knowledge">מידע מאושר לעובד</label><textarea id="magic-knowledge" rows="13" aria-describedby="magic-knowledge-warning">${escapeHtml(state.knowledge || '')}</textarea></div>
+          <p id="magic-knowledge-warning" class="err" style="font-size:12px">אל תאשרו פרטים לדוגמה. העובד עלול להשתמש בהם בשיחה עם לקוח.</p>
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer"><input type="checkbox" id="magic-knowledge-confirm" ${state.knowledgeReviewed ? 'checked' : ''} /><span>קראתי וערכתי את המידע, ואני מאשר/ת שהוא נכון לפרסום ללקוחות.</span></label>
+          <button class="btn btn-primary btn-hero" id="magic-review-next" style="margin-top:20px" ${state.knowledgeReviewed ? '' : 'disabled'}>${icon('check', 16)} אישרתי — המשך</button>
+        </div>`;
+        const knowledge = document.getElementById('magic-knowledge');
+        const confirm = document.getElementById('magic-knowledge-confirm');
+        const next = document.getElementById('magic-review-next');
+        knowledge.oninput = () => {
+          state.knowledge = knowledge.value;
+          state.knowledgeReviewed = false;
+          confirm.checked = false;
+          next.disabled = true;
+          saveMagicState({ knowledge: state.knowledge, knowledgeReviewed: false });
+        };
+        confirm.onchange = () => {
+          state.knowledgeReviewed = confirm.checked;
+          next.disabled = !confirm.checked;
+          saveMagicState({ knowledge: knowledge.value, knowledgeReviewed: state.knowledgeReviewed });
+        };
+        next.onclick = () => {
+          if (!state.knowledgeReviewed || !String(state.knowledge || '').trim()) return;
+          step = 3;
+          saveMagicState({ step: 3 });
+          paint();
+        };
+        return;
+      }
+
+      if (step === 3) {
+        app.innerHTML = `<div class="magic-wrap page-enter">
+          ${progressHtml()}
+          <div class="magic-step-label">שלב 4 מתוך 4 · אופציונלי</div>
+          <h1 class="magic-title">רוצים שנודיע לכם כשמישהו כותב?</h1>
           <p class="magic-sub">אפשר לדלג — תמיד אפשר למלא אחר כך.</p>
           <div class="magic-connect">
             <h4>${icon('chat', 14)} הטלפון שלכם — לקבלת התראה</h4>
             <div class="fld">
-              <label>כשלקוח כותב, נשלח לכם הודעה למספר הזה</label>
+              <label for="magic-wa-phone">כשלקוח כותב, נשלח לכם הודעה למספר הזה</label>
               <input id="magic-wa-phone" class="magic-input" type="tel" placeholder="05X-XXXXXXX" dir="ltr" value="${escapeHtml(state.notifyPhone || '')}" />
             </div>
           </div>
           <div class="magic-connect" style="margin-top:12px">
             <h4>${icon('clock', 14)} קישור לקביעת תורים</h4>
             <div class="fld">
-              <label>אם יש לכם יומן אונליין — הדביקו כאן את הקישור</label>
+              <label for="magic-cal-link">אם יש לכם יומן אונליין — הדביקו כאן את הקישור</label>
               <input id="magic-cal-link" class="magic-input" type="url" placeholder="https://cal.com/..." dir="ltr" value="${escapeHtml(state.bookingLink || '')}" />
             </div>
           </div>
           <div class="row" style="margin-top:20px;gap:10px">
-            <button class="btn btn-primary btn-hero" id="magic-finish">${icon('zap', 16)} צור את העובד!</button>
+            <button class="btn btn-primary btn-hero" id="magic-finish">${icon('zap', 16)} צור עובד ופתח צ׳אט</button>
             <button class="btn btn-outline btn-hero" id="magic-skip">דלג — אחר כך</button>
           </div>
         </div>`;
@@ -730,10 +969,20 @@ const APP = (() => {
         step = 1;
         return paint();
       }
-      app.innerHTML = `<div class="magic-wrap"><div class="empty">${icon('loading', 32, 'icon-spin')} מכין את העובד שלך...</div></div>`;
+      if (!state.knowledgeReviewed || !String(state.knowledge || '').trim()) {
+        toast('לפני יצירת העובד צריך לעבור על המידע ולאשר אותו', 'error');
+        step = 2;
+        return paint();
+      }
+      if (!validOwnerEmail(state.contact)) {
+        toast('חסר אימייל תקין לחשבון', 'error');
+        step = 0;
+        return paint();
+      }
+      app.innerHTML = `<div class="magic-wrap"><div class="empty" role="status" aria-live="polite">${icon('loading', 32, 'icon-spin')} מכין את העובד שלך...</div></div>`;
       try {
         const businessName = state.businessName || 'העסק שלי';
-        if (!(await ensureSession(businessName))) { step = 0; return paint(); }
+        if (!(await ensureSession(businessName, state.contact))) { step = 0; return paint(); }
         let workerId = state.workerId;
         if (!workerId) {
           const buy = await api('/api/workers/buy', { method: 'POST', body: JSON.stringify({ templateId: state.templateId }) });
@@ -746,13 +995,12 @@ const APP = (() => {
           saveMagicState({ workerId });
         }
         const tpl = templates.find((t) => t.id === state.templateId);
-        const knRes = await fetch('/api/workers/smart-knowledge?' + new URLSearchParams({ templateId: state.templateId, businessName }));
-        const smartKnowledge = knRes.ok ? (await knRes.json()).knowledge : `שם העסק: ${businessName}\nשעות פעילות: א-ה 09:00-18:00`;
         const patchRes = await api('/api/workers/' + workerId, {
           method: 'PATCH',
           body: JSON.stringify({
             name: (tpl?.nameHe || 'העובד שלי') + ' — ' + businessName,
-            knowledge: smartKnowledge,
+            knowledge: state.knowledge,
+            knowledgeReviewed: true,
           }),
         });
         if (!patchRes.ok) {
@@ -778,19 +1026,18 @@ const APP = (() => {
       } catch (e) {
         console.error('[magic]', e);
         toast('משהו השתבש בדרך — נסו שוב', 'error');
-        step = 2;
+        step = 3;
         return paint();
       }
     }
 
-    if (step === 2) await paint();
-    else await paint();
+    await paint();
   }
 
   async function renderWorkerInsights(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
-    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען נתונים...</div>`;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
+    app.innerHTML = `<div class="empty" role="status" aria-live="polite">${icon('loading', 32, 'icon-spin')} טוען נתונים...</div>`;
     const r = await api('/api/workers/' + workerId + '/insights');
     if (!alive()) return;
     if (!r.ok) {
@@ -824,14 +1071,14 @@ const APP = (() => {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <h3 style="margin:0;flex:1">${icon('users', 16)} לידים אחרונים</h3>
-          <a class="btn btn-outline btn-sm" href="/api/workers/${encodeURIComponent(workerId)}/leads.csv" download>${icon('download', 14)} ייצוא CSV</a>
+          <button type="button" class="btn btn-outline btn-sm" id="leads-csv-download">${icon('download', 14)} ייצוא CSV</button>
         </div>
         <table class="insights-table"><thead><tr><th>שם</th><th>טלפון</th><th>ציון</th><th>תאריך</th></tr></thead><tbody>${leadRows}</tbody></table>
       </div>
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <h3 style="margin:0;flex:1">${icon('alert', 16)} Escalations</h3>
-          <a class="btn btn-outline btn-sm" href="/api/workers/${encodeURIComponent(workerId)}/escalations.csv" download>${icon('download', 14)} ייצוא CSV</a>
+          <button type="button" class="btn btn-outline btn-sm" id="escalations-csv-download">${icon('download', 14)} ייצוא CSV</button>
         </div>
         <table class="insights-table"><thead><tr><th>סיבה</th><th>סטטוס</th><th>תאריך</th></tr></thead><tbody>${escRows}</tbody></table>
       </div>
@@ -840,6 +1087,10 @@ const APP = (() => {
         <table class="insights-table"><thead><tr><th>כלי</th><th>תוצאה</th><th>תאריך</th></tr></thead><tbody>${actionRows}</tbody></table>
       </div>
     `;
+    const leadsDownload = document.getElementById('leads-csv-download');
+    const escalationsDownload = document.getElementById('escalations-csv-download');
+    leadsDownload.onclick = () => downloadAuthenticated(`/api/workers/${encodeURIComponent(workerId)}/leads.csv`, `leads-${workerId}.csv`, leadsDownload);
+    escalationsDownload.onclick = () => downloadAuthenticated(`/api/workers/${encodeURIComponent(workerId)}/escalations.csv`, `escalations-${workerId}.csv`, escalationsDownload);
   }
 
   const DIGEST_TOPIC_HE = {
@@ -855,8 +1106,8 @@ const APP = (() => {
 
   async function renderWeeklyDigest(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
-    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען סיכום שבועי...</div>`;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
+    app.innerHTML = `<div class="empty" role="status" aria-live="polite">${icon('loading', 32, 'icon-spin')} טוען סיכום שבועי...</div>`;
     const r = await api('/api/workers/' + workerId + '/weekly-digest');
     if (!alive()) return;
     if (!r.ok) {
@@ -884,7 +1135,7 @@ const APP = (() => {
         <span class="muted">${escapeHtml(d.worker.name)}</span>
         ${sentHtml}
         <button id="digest-send-webhook" class="btn btn-primary btn-sm" style="margin-right:auto">${icon('send', 14)} שלח ל-Webhook</button>
-        <a href="/api/workers/${encodeURIComponent(workerId)}/weekly-digest.html" target="_blank" rel="noopener" class="btn btn-outline btn-sm">${icon('eye', 14)} תצוגה</a>
+        <button type="button" id="digest-preview-auth" class="btn btn-outline btn-sm">${icon('eye', 14)} תצוגה</button>
         <a href="#/workers/insights/${workerId}" class="btn btn-outline btn-sm">${icon('arrow-right', 14)} חזרה</a>
       </div>
       <div class="digest-hero">
@@ -913,6 +1164,8 @@ const APP = (() => {
       </div>
     `;
     const sendBtn = document.getElementById('digest-send-webhook');
+    const previewBtn = document.getElementById('digest-preview-auth');
+    previewBtn.onclick = () => openAuthenticatedHtml(`/api/workers/${encodeURIComponent(workerId)}/weekly-digest.html`, previewBtn);
     if (sendBtn) {
       sendBtn.onclick = async () => {
         sendBtn.disabled = true;
@@ -973,7 +1226,12 @@ const OUTCOME_LABELS = {
 function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
   // ---- Routing ----
   function setActive(route) {
-    navLinks.forEach((a) => a.classList.toggle('active', a.dataset.route === route));
+    navLinks.forEach((a) => {
+      const active = a.dataset.route === route;
+      a.classList.toggle('active', active);
+      if (active) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
   }
   function syncM3Fab(section, rest) {
     let fab = document.getElementById('m3-fab');
@@ -1008,6 +1266,7 @@ function catIcon(cat) { return icon(CAT_ICONS[cat] || 'zap', 22); }
     if (section === 'workers' && rest[0] === 'insights') return renderWorkerInsights(routeId(rest[1]), alive);
     if (section === 'workers' && rest[0] === 'digest') return renderWeeklyDigest(routeId(rest[1]), alive);
     if (section === 'account') return renderAccount(alive);
+    if (section === 'recover') return renderRecovery(alive);
     if (section === 'admin') return renderAdmin(alive);
     return renderMarketplace(alive);
   }
@@ -1057,7 +1316,7 @@ async function renderMarketplace(alive = () => true) {
     return `<div class="monitor-wrap"><aside class="shift-board" aria-label="דוח משמרת">
       <div class="sb-header">
         <div>
-          <div class="sb-title">דוח משמרת · הלילה</div>
+        <div class="sb-title">דוח משמרת · הדגמה</div>
           <span class="sb-status"><span class="sb-dot"></span> נועה · קבלה</span>
         </div>
         <span class="sb-clock" id="sb-clock">23:14</span>
@@ -1121,7 +1380,7 @@ async function renderMarketplace(alive = () => true) {
     });
     app.querySelectorAll('button[data-buy]').forEach((b) => {
       b.onclick = async () => {
-        if (!(await ensureSession('העסק שלי'))) return;
+        if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
         await buyWorker(b.dataset.buy);
       };
     });
@@ -1143,14 +1402,29 @@ async function renderMarketplace(alive = () => true) {
     if (countEl) countEl.textContent = `${filtered.length} מתוך ${allTpls.length} תבניות`;
     return filtered;
   }
-  const tr = await fetch('/api/workers/templates');
-  const allTpls = tr.ok ? (await tr.json()).templates : [];
+  let allTpls;
+  try {
+    const tr = await fetch('/api/workers/templates', { credentials: 'same-origin' });
+    const body = await tr.json().catch(() => ({}));
+    if (!tr.ok || !Array.isArray(body.templates)) throw new Error('templates_unavailable');
+    allTpls = body.templates;
+  } catch {
+    if (!alive()) return;
+    app.innerHTML = `<div class="empty err" role="alert">
+      <h2>לא הצלחנו לטעון את שוק העובדים</h2>
+      <p>זו תקלה זמנית בטעינת התבניות — הנתונים שלכם לא נמחקו.</p>
+      <button type="button" class="btn btn-primary" id="marketplace-retry">${icon('refresh', 14)} נסו שוב</button>
+    </div>`;
+    document.getElementById('marketplace-retry').onclick = () => renderMarketplace(alive);
+    return;
+  }
+  if (!alive()) return;
   const cats = ['all', ...new Set(allTpls.map((t) => t.category).filter(Boolean))];
   const filtered = filterMarketplaceTemplates(allTpls);
   app.innerHTML = `
       <div class="mkt-hero">
       <div class="hero-copy">
-        <div class="hero-badge">${icon('zap', 14)} משמרת לילה · עובדים חיים</div>
+        <div class="hero-badge">${icon('zap', 14)} הדמיית משמרת לילה</div>
         <h1>העסק <em>לא ישן</em> — גם כשאתה כן</h1>
         <p>עובד AI שמקבל פניות, עונה ללקוחות ומעביר רק מה שדחוף. בלי מונחים טכניים, ואפשר לבדוק דמו לפני הפעלה.</p>
         <div class="hero-actions">
@@ -1163,7 +1437,7 @@ async function renderMarketplace(alive = () => true) {
       <div class="trust-strip">
         <div class="trust-item"><div class="sn">${icon('copy', 18)} ${allTpls.length}</div><div class="sl">תבניות שניתן להתאים לעסק</div></div>
         <div class="trust-item"><div class="sn">₪199+</div><div class="sl">מחיר חודשי התחלתי ברור</div></div>
-        <div class="trust-item"><div class="sn">${icon('clock', 18)} 24/7</div><div class="sl">זמין לשיחות גם מחוץ לשעות עבודה</div></div>
+        <div class="trust-item"><div class="sn">${icon('clock', 18)} מחוץ לשעות</div><div class="sl">מקבל פניות כשהשירות המקוון פעיל</div></div>
         <div class="trust-item"><div class="sn">${icon('shield', 18)} IL</div><div class="sl">עברית, תשלומים מקומיים ואישור ידני</div></div>
       </div>
       <div class="market-heading">
@@ -1201,7 +1475,7 @@ async function renderMarketplace(alive = () => true) {
 
   function showOnboardingModal() {
     if (localStorage.getItem(ONBOARDING_LS)) return;
-    if (!getKey()) return;
+    if (!ownerSession?.authenticated && !getKey()) return;
     const steps = [
       { title: 'בוחרים תבנית לפי תפקיד', body: 'מרפאה, נדל״ן, מסעדה או מכירות — כל תבנית מגיעה עם משימות וידע התחלתי בעברית.' },
       { title: 'מתאימים ידע ושעות', body: 'בבונה תכתבו שאלות נפוצות, מחירים ומדיניות. אפשר גם לייבא מאתר העסק.' },
@@ -1212,12 +1486,23 @@ async function renderMarketplace(alive = () => true) {
     let step = 0;
     const overlay = document.createElement('div');
     overlay.className = 'onboard-overlay';
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const keyHandler = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+      if (event.key !== 'Tab') return;
+      const controls = [...overlay.querySelectorAll('button:not([disabled]),a[href]')];
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     function render() {
       const s = steps[step];
-      overlay.innerHTML = `<div class="onboard-card" role="dialog" aria-modal="true">
-        <div class="onboard-steps">${steps.map((_, i) => `<div class="onboard-step ${i <= step ? 'active' : ''}"></div>`).join('')}</div>
+      overlay.innerHTML = `<div class="onboard-card" role="dialog" aria-modal="true" aria-labelledby="onboard-title">
+        <div class="onboard-steps" aria-hidden="true">${steps.map((_, i) => `<div class="onboard-step ${i <= step ? 'active' : ''}"></div>`).join('')}</div>
         <div class="muted" style="font-size:12px">שלב ${step + 1} מתוך 3</div>
-        <h2>${escapeHtml(s.title)}</h2>
+        <h2 id="onboard-title">${escapeHtml(s.title)}</h2>
         <p class="muted" style="margin:0;line-height:1.6">${escapeHtml(s.body)}</p>
         <div class="onboard-actions">
           <button type="button" class="btn btn-outline" id="onboard-skip">דלג</button>
@@ -1226,16 +1511,20 @@ async function renderMarketplace(alive = () => true) {
       </div>`;
       overlay.querySelector('#onboard-skip').onclick = close;
       overlay.querySelector('#onboard-next').onclick = () => {
-        if (step < 2) { step++; render(); }
+        if (step < 2) { step++; render(); overlay.querySelector('#onboard-next').focus(); }
         else { close(); location.hash = '#/magic'; }
       };
     }
     function close() {
       localStorage.setItem(ONBOARDING_LS, '1');
+      document.removeEventListener('keydown', keyHandler);
       overlay.remove();
+      if (returnFocus?.isConnected) returnFocus.focus();
     }
     render();
     document.body.appendChild(overlay);
+    document.addEventListener('keydown', keyHandler);
+    requestAnimationFrame(() => overlay.querySelector('#onboard-next')?.focus());
   }
 
   // ---- Template preview modal ----
@@ -1244,10 +1533,10 @@ async function renderMarketplace(alive = () => true) {
       { role: 'user', content: 'היי, אני מתעניין בשירותים שלכם' },
       { role: 'assistant', content: 'היי! תודה על הפנייה. אוכל לשאול — מה גודל החברה שלך וכמה לידים אתם מייצרים בחודש?' },
       { role: 'user', content: 'חברה קטנה, בערך 10 לידים בחודש' },
-      { role: 'assistant', content: 'מעולה. אנחנו יכולים לעזור לך להכפיל את המספר הזה תוך חודש. אשמח לתאם שיחה עם המומחה שלנו — מתי נוח לך?' },
+      { role: 'assistant', content: 'מעולה. אוכל לאסוף עוד כמה פרטים ולהעביר למומחה עם סיכום מסודר. מתי נוח לך לשיחה?' },
     ],
     'support-he': [
-      { role: 'user', content: 'היי, יש לי שאלה לגבי הזמנה שהיו צריכה להגיע' },
+      { role: 'user', content: 'היי, יש לי שאלה לגבי הזמנה שהייתה צריכה להגיע' },
       { role: 'assistant', content: 'היי! אשמח לעזור. יש לך מספר הזמנה? אני יכול לבדוק את הסטטוס העדכני.' },
     ],
     'content-he': [
@@ -1260,7 +1549,7 @@ async function renderMarketplace(alive = () => true) {
     ],
     'real-estate-il': [
       { role: 'user', content: 'אני מחפש דירת 3 חדרים בתל אביב' },
-      { role: 'assistant', content: 'מעולה! יש לי מספר אפשרויות זמינות. מה התקציב שלך ואיזה אזור ספציפי מעניין אותך?' },
+      { role: 'assistant', content: 'מעולה. מה התקציב שלך ואיזה אזור ספציפי מעניין אותך? אאסוף את הדרישות ואעביר אותן לסוכן.' },
     ],
     'clinic-receptionist-he': [
       { role: 'user', content: 'אני רוצה לקבוע תור לרופא בשבוע הבא' },
@@ -1276,7 +1565,7 @@ async function renderMarketplace(alive = () => true) {
     ],
     'property-manager-he': [
       { role: 'user', content: 'יש נזילה בדירה שלי, צריך לשלוח מישהו בדחיפות' },
-      { role: 'assistant', content: 'מצטער לשמוע! אפנה את האינסטלטור הקבוע שלנו. באיזה שעה נוח לך שיגיע?' },
+      { role: 'assistant', content: 'מצטער לשמוע. מה הכתובת והאם יש כרגע הצפה פעילה? אעביר את הפרטים בדחיפות לאחראי.' },
     ],
   };
   function showTemplatePreview(tpl) {
@@ -1285,16 +1574,16 @@ async function renderMarketplace(alive = () => true) {
       <div class="modal-hdr">
         <span class="icon-big" style="font-size:28px">${em}</span>
         <h3>${escapeHtml(tpl.nameHe || tpl.name)} — נסה דוגמה</h3>
-        <button class="modal-close" id="preview-close">${icon('x', 16)}</button>
+        <button type="button" class="modal-close" id="preview-close" aria-label="סגור תצוגה מקדימה">${icon('x', 16)}</button>
       </div>
       <div class="modal-body preview-chat">
         <p class="muted" style="margin-bottom:10px">${escapeHtml(TEMPLATE_PLAIN[tpl.id] || tpl.description)}</p>
-        <div id="preview-win" class="chat-window" style="height:280px"></div>
+        <div id="preview-win" class="chat-window" role="log" aria-live="polite" aria-label="שיחת הדגמה" style="height:280px"></div>
         <div class="composer" style="margin-top:10px">
-          <textarea id="preview-input" placeholder="כתוב הודעה... (למשל: שלום, מה אתה עושה?)" rows="2"></textarea>
-          <button class="btn btn-primary" id="preview-send">${icon('send', 16)} שלח</button>
+          <label for="preview-input" class="sr-only">הודעה לשיחת ההדגמה</label><textarea id="preview-input" aria-label="הודעה לשיחת ההדגמה" placeholder="כתבו הודעה... (למשל: שלום, מה אתה עושה?)" rows="2"></textarea>
+          <button type="button" class="btn btn-primary" id="preview-send">${icon('send', 16)} שלח</button>
         </div>
-        <button class="btn btn-primary btn-hero" id="preview-own" style="margin-top:14px;width:100%">${icon('zap', 16)} צור כזה לעסק שלי</button>
+        <button type="button" class="btn btn-primary btn-hero" id="preview-own" style="margin-top:14px;width:100%">${icon('zap', 16)} צור כזה לעסק שלי</button>
       </div>
     `);
     const win = overlay.querySelector('#preview-win');
@@ -1358,16 +1647,79 @@ function fmtRelative(iso) {
   return fmtDate(iso);
 }
 
+async function renderRecovery(alive = () => true) {
+    setActive('recover');
+    app.innerHTML = `<div class="empty" role="status" aria-live="polite">${icon('loading', 28, 'icon-spin')} בודק את החשבון...</div>`;
+    const session = await readOwnerSession();
+    if (!alive()) return;
+    if (session) {
+      app.innerHTML = `<div class="magic-wrap page-enter">
+        <h1 class="magic-title">החשבון מחובר</h1>
+        <p class="magic-sub">${escapeHtml(session.label || 'העסק שלי')}${session.email ? ' · ' + escapeHtml(session.email) : ''}</p>
+        <div class="row" style="justify-content:center;gap:10px">
+          <a class="btn btn-primary" href="#/workers">לעובדים שלי</a>
+          <button type="button" class="btn btn-outline" id="owner-logout">${icon('x', 14)} התנתקות</button>
+        </div>
+      </div>`;
+      document.getElementById('owner-logout').onclick = async () => {
+        const r = await api('/api/logout', { method: 'POST', body: '{}' });
+        if (r.ok) {
+          ownerSession = null;
+          setLegacyKey('');
+          toast('התנתקתם מהחשבון', 'success');
+          renderRecovery(alive);
+        } else toast('ההתנתקות נכשלה — נסו שוב', 'error');
+      };
+      return;
+    }
+    app.innerHTML = `<div class="magic-wrap page-enter">
+      <h1 class="magic-title">שחזור חשבון</h1>
+      <p class="magic-sub">הכניסו את האימייל וקוד השחזור ששמרתם בפתיחת החשבון.</p>
+      <form id="recover-form" novalidate>
+        <div class="fld"><label for="recover-email">אימייל</label><input id="recover-email" class="magic-input" type="email" autocomplete="email" inputmode="email" dir="ltr" required /></div>
+        <div class="fld" style="margin-top:12px"><label for="recover-code">קוד שחזור</label><input id="recover-code" class="magic-input" autocomplete="one-time-code" dir="ltr" required /></div>
+        <button class="btn btn-primary btn-hero" id="recover-submit" style="margin-top:20px" type="submit">${icon('shield', 16)} שחזר את החשבון</button>
+        <div id="recover-status" class="muted" role="status" aria-live="polite" style="margin-top:10px"></div>
+      </form>
+      <p class="muted" style="margin-top:18px">אין לכם חשבון? <a href="#/magic">צרו עובד ראשון</a>.</p>
+    </div>`;
+    document.getElementById('recover-form').onsubmit = async (event) => {
+      event.preventDefault();
+      const email = document.getElementById('recover-email').value.trim();
+      const recoveryCode = document.getElementById('recover-code').value.trim();
+      const button = document.getElementById('recover-submit');
+      const status = document.getElementById('recover-status');
+      if (!validOwnerEmail(email) || !recoveryCode) { status.textContent = 'הכניסו אימייל וקוד שחזור תקינים.'; return; }
+      button.disabled = true;
+      status.textContent = 'משחזר חשבון...';
+      try {
+        const r = await api('/api/account/recover', { method: 'POST', body: JSON.stringify({ email, recoveryCode }) });
+        if (!r.ok || !r.body.authenticated) {
+          status.textContent = friendlyApiError(r.body, 'פרטי השחזור לא זוהו. בדקו אותם ונסו שוב.');
+          button.disabled = false;
+          return;
+        }
+        const { recoveryCode: newRecoveryCode, ...sessionBody } = r.body;
+        ownerSession = { ...sessionBody, authMethod: 'session' };
+        setLegacyKey('');
+        showRecoveryCodeOnce(newRecoveryCode, 'קוד שחזור חדש');
+        location.hash = '#/workers';
+      } catch {
+        status.textContent = 'אין חיבור לשרת — נסו שוב.';
+        button.disabled = false;
+      }
+    };
+  }
+
 async function renderAccount(alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
-    app.innerHTML = `<div class="empty">${icon('loading', 32, 'icon-spin')} טוען...</div>`;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
+    app.innerHTML = `<div class="empty" role="status" aria-live="polite">${icon('loading', 32, 'icon-spin')} טוען...</div>`;
     const acc = await api('/api/account');
     if (!alive()) return;
     if (!acc.ok) { app.innerHTML = `<div class="empty err"><h2>לא הצלחנו לטעון</h2><p>${escapeHtml(friendlyApiError(acc.body))}</p></div>`; return; }
     const a = acc.body;
     const pct = a.callsLimit ? Math.min(100, Math.round((a.callsUsed / a.callsLimit) * 100)) : 0;
-    const rotateRow = await api('/api/account/rotate-key', { method: 'POST' }).catch(() => null);
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('shield', 20)} החשבון שלי</h2>
@@ -1376,7 +1728,7 @@ async function renderAccount(alive = () => true) {
       <div class="account-page">
         <section class="card">
           <h3>${icon('shield', 16)} חבילה</h3>
-          <div class="ap-row"><span>תוכנית</span><strong>${escapeHtml(a.plan || 'trial')}</strong></div>
+          <div class="ap-row"><span>תוכנית</span><strong>${escapeHtml(planLabel(a.plan))}</strong></div>
           <div class="ap-row"><span>שימוש החודש</span>
             <div style="flex:1;min-width:120px">
               <div class="ab-bar"><div class="ab-bar-fill" style="width:${pct}%"></div></div>
@@ -1397,27 +1749,41 @@ async function renderAccount(alive = () => true) {
         </section>` : ''}
         <section class="card" style="margin-top:14px">
           <h3>${icon('key', 16)} API key</h3>
-          <p class="muted">מפתח זה מזהה את העסק שלך. שמור עליו בסוד. אפשר להחליף אותו בכל עת.</p>
-          <div class="ap-row"><span>key id</span><code>${escapeHtml(a.keyId || '')}</code></div>
+          <p class="muted">מפתח API נועד לחיבור CLI או מערכת חיצונית. האתר נשאר מחובר באמצעות session מוגן, והמפתח לעולם לא נשמר בדפדפן.</p>
           <div class="ap-row"><span>tenant id</span><code>${escapeHtml(a.tenantId || '')}</code></div>
           <div class="ap-row"><span>label</span><strong>${escapeHtml(a.label || '')}</strong></div>
-          <button type="button" class="btn btn-outline btn-sm" id="rotate-key-btn" style="margin-top:10px">${icon('refresh', 14)} החלף key (הקודם לא יעבוד יותר)</button>
-          <div id="rotate-status" class="muted" style="margin-top:8px;font-size:12px"></div>
+          ${a.authMethod === 'session'
+            ? `<button type="button" class="btn btn-outline btn-sm" id="create-api-key-btn" style="margin-top:10px">${icon('key', 14)} צור API key חדש לשימוש חיצוני</button>`
+            : `<p class="muted" role="note">אתם מחוברים זמנית באמצעות מפתח ישן. <a href="#/recover">שחזרו את החשבון</a> כדי לעבור ל־session מוגן ולנהל מפתחות.</p>`}
+          <div id="api-key-status" class="muted" role="status" aria-live="polite" style="margin-top:8px;font-size:12px"></div>
         </section>
       </div>`;
-    const rotateBtn = document.getElementById('rotate-key-btn');
-    if (rotateBtn) rotateBtn.onclick = async () => {
-      if (!confirm('להחליף את ה-key? הקודם יפסיק לעבוד מיידית.')) return;
-      rotateBtn.disabled = true;
+    const createKeyBtn = document.getElementById('create-api-key-btn');
+    if (createKeyBtn) createKeyBtn.onclick = async () => {
+      if (!confirm('ליצור API key חדש? מפתחות API קיימים של העסק עשויים להפסיק לעבוד. המפתח החדש יוצג פעם אחת בלבד ולא יישמר בדפדפן.')) return;
+      createKeyBtn.disabled = true;
+      const status = document.getElementById('api-key-status');
+      status.textContent = 'יוצר מפתח...';
       const r = await api('/api/account/rotate-key', { method: 'POST' });
-      if (r.ok) {
-        setKey(r.body.key);
-        document.getElementById('rotate-status').innerHTML = `${icon('check', 12)} key חדש נשמר: <code>${escapeHtml(r.body.key.slice(0, 12))}…</code>`;
-        rotateBtn.disabled = false;
+      if (r.ok && r.body.key) {
+        status.textContent = 'המפתח נוצר. ה־session באתר נשאר פעיל.';
+        const overlay = openModal(`
+          <div class="modal-hdr"><h3>API key חדש — מוצג פעם אחת</h3><button type="button" class="modal-close" id="account-key-close" aria-label="סגור">${icon('x', 16)}</button></div>
+          <div class="modal-body">
+            <p><strong>שמרו את המפתח עכשיו במנהל סיסמאות.</strong> הוא לא נשמר ב־localStorage ולא יוצג שוב.</p>
+            <label for="account-key-value">API key</label>
+            <textarea id="account-key-value" readonly dir="ltr" style="min-height:90px;font-family:monospace">${escapeHtml(r.body.key)}</textarea>
+            <button type="button" class="btn btn-primary" id="account-key-copy">${icon('copy', 14)} העתק מפתח</button>
+          </div>`);
+        overlay.querySelector('#account-key-close').onclick = () => closeModal(overlay);
+        overlay.querySelector('#account-key-copy').onclick = async () => {
+          try { await navigator.clipboard.writeText(r.body.key); toast('המפתח הועתק', 'success'); }
+          catch { overlay.querySelector('#account-key-value').select(); toast('העתיקו ידנית', 'info'); }
+        };
       } else {
-        document.getElementById('rotate-status').textContent = 'נכשל: ' + friendlyApiError(r.body);
-        rotateBtn.disabled = false;
+        status.textContent = 'היצירה נכשלה: ' + friendlyApiError(r.body);
       }
+      createKeyBtn.disabled = false;
     };
   }
 
@@ -1442,7 +1808,7 @@ async function renderWorkersList(alive = () => true) {
             <div class="wl-empty-lamp"><span class="wl-empty-ic">${icon('robot', 40)}</span></div>
             <h3>בואו נגייס לכם עובד AI ראשון</h3>
             <p>בכמה צעדים יהיה לכם עובד לדוגמה בצ׳אט באתר, ששומר לידים ומעביר פניות דחופות לנציג. אפשר לבדוק ולהגדיר לפני תשלום.</p>
-            <a class="wl-empty-cta" href="#/magic">${icon('arrow-right', 16)} התחל עכשיו — 3 צעדים</a>
+            <a class="wl-empty-cta" href="#/magic">${icon('arrow-right', 16)} התחילו עכשיו — 4 צעדים</a>
             <div class="wl-empty-steps">
               <div class="wl-step"><span class="wl-step-num">1</span><div><strong>בחר תפקיד</strong><span>מכירות, תמיכה, קליניקה, מסעדה…</span></div></div>
               <div class="wl-step"><span class="wl-step-num">2</span><div><strong>נסה בצ׳אט</strong><span>ראה איך העובד עונה בעברית טבעית</span></div></div>
@@ -1457,7 +1823,7 @@ async function renderWorkersList(alive = () => true) {
     const accountBanner = plan ? `
       <div class="account-banner">
         <div class="ab-info">
-          <div class="ab-label">${icon('shield', 13)} חבילה <strong>${escapeHtml(plan.plan || 'trial')}</strong></div>
+          <div class="ab-label">${icon('shield', 13)} חבילה <strong>${escapeHtml(planLabel(plan.plan))}</strong></div>
           ${plan.callsLimit ? `
             <div class="ab-bar"><div class="ab-bar-fill" style="width:${Math.min(100, Math.round((plan.callsUsed / plan.callsLimit) * 100))}%"></div></div>
             <div class="ab-sub">${plan.callsUsed.toLocaleString('he-IL')} / ${plan.callsLimit.toLocaleString('he-IL')} שיחות החודש</div>
@@ -1797,7 +2163,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const w = builderWorker;
     const html = BUILDER_STEPS.map((s, i) => {
       const cls = i === builderStep ? 'active' : i < builderStep ? 'done' : '';
-      return `<div class="wp-step ${cls}" data-step="${i}"><div class="wp-num">${i < builderStep ? icon('check', 12) : (i + 1)}</div>${s.label}</div>`;
+      return `<button type="button" class="wp-step ${cls}" data-step="${i}" ${i === builderStep ? 'aria-current="step"' : ''} ${i > builderStep ? 'aria-disabled="true"' : ''}><span class="wp-num">${i < builderStep ? icon('check', 12) : (i + 1)}</span>${s.label}</button>`;
     }).join('');
 
     const stepContent = (step) => {
@@ -1806,10 +2172,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           <div class="setup-coach">
             <div class="b-sec" style="margin-bottom:0">
               <div class="beginner-note">${icon('shield', 14)} בשלב הזה לא צריך לדעת לכתוב פרומפט. כתוב במילים רגילות מה העובד אמור לעשות, ואנחנו נשמור את זה כהוראות עבודה מסודרות.</div>
-              <div class="fld"><label>איך יקראו לעובד?</label>
+              <div class="fld"><label for="f-name">איך יקראו לעובד?</label>
                 <input id="f-name" value="${escapeHtml(w.name)}" placeholder="לדוגמה: דניאל - נציג מכירות" />
               </div>
-              <div class="fld"><label>מה העובד יעשה ביום-יום?</label>
+              <div class="fld"><label for="f-tasks">מה העובד יעשה ביום-יום?</label>
                 <textarea id="f-tasks" rows="6" placeholder="כתוב פעולה אחת בכל שורה:
 לענות לשאלות של לקוחות בעברית
 לאסוף פרטי קשר ולידים
@@ -1834,19 +2200,20 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           <div class="setup-coach">
             <div class="b-sec" style="margin-bottom:0">
               <div class="beginner-note">${icon('database', 14)} תן לעובד את המידע שהוא צריך כדי לא להמציא תשובות. אפשר להתחיל קצר ולהוסיף אחר כך.</div>
-              <div class="fld"><label>מידע שהעובד חייב לדעת</label>
+              <div class="fld"><label for="f-site-url">אתר העסק לייבוא מידע</label>
                 <div class="row" style="gap:8px;margin-bottom:8px;flex-wrap:wrap">
                   <input id="f-site-url" type="url" placeholder="https://example.co.il" style="flex:2;min-width:200px;direction:ltr;text-align:left;font-family:monospace" />
                   <button type="button" class="btn btn-sm btn-outline" id="f-learn-site">${icon('database', 14)} ייבא מאתר</button>
                 </div>
+                <label for="f-knowledge">מידע שהעובד חייב לדעת</label>
                 <textarea id="f-knowledge" rows="9" placeholder="לדוגמה:
 שעות פעילות: א-ה 9:00-18:00
 מחירים: שיחת ייעוץ ראשונה ללא עלות
 מה אנחנו מוכרים: שירותי ליווי לעסקים קטנים
 מתי להעביר לאדם: בקשת החזר, תלונה, או לקוח כועס">${escapeHtml(w.knowledge ?? '')}</textarea>
               </div>
-              <div class="fld"><label>איך הוא צריך לדבר?</label>
-                <div class="quick-choices">
+              <div class="fld"><span class="fld-label" id="tone-label">איך הוא צריך לדבר?</span>
+                <div class="quick-choices" role="group" aria-labelledby="tone-label">
                   <button type="button" class="quick-choice" data-tone="friendly">ידידותי וסבלני</button>
                   <button type="button" class="quick-choice" data-tone="professional">מקצועי וקצר</button>
                   <button type="button" class="quick-choice" data-tone="sales">מכירתי ועדין</button>
@@ -1861,7 +2228,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                   <button type="button" data-mode="agent" class="${(w.agentMode ?? 'agent') !== 'chat' ? 'active' : ''}">${icon('zap', 14)} סוכן (כלים פעילים)</button>
                   <button type="button" data-mode="chat" class="${(w.agentMode ?? 'agent') === 'chat' ? 'active' : ''}">${icon('chat', 14)} צ'אט בלבד</button>
                 </div>
-                <label style="margin-top:10px">כלים פעילים</label>
+                <p style="margin-top:10px">כלים פעילים</p>
                 <div class="tool-chips" id="active-tools-chips">${renderAgentToolsChips(w.tools)}</div>
                 <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;cursor:pointer">
                   <input type="checkbox" id="f-media-gen" ${MEDIA_TOOLS.some((t) => (w.tools ?? []).includes(t)) ? 'checked' : ''} style="margin-top:3px" />
@@ -1877,10 +2244,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
               <details class="advanced-config">
                 <summary>${icon('edit', 14)} עריכת הוראות מתקדמת</summary>
                 <div>
-                  <div class="fld"><label>הוראות אישיות לעובד</label>
+                  <div class="fld"><label for="f-persona">הוראות אישיות לעובד</label>
                     <textarea id="f-persona" rows="8">${escapeHtml(w.persona || defaultBeginnerPersona(w.name))}</textarea>
                   </div>
-                  <div class="fld"><label>פעולות שהעובד יכול לבצע</label>
+                  <div class="fld"><label for="f-tools">פעולות שהעובד יכול לבצע</label>
                     <div class="quick-choices" id="tool-presets" style="margin-bottom:8px">
                       ${TOOL_PRESETS.map((p) => `<button type="button" class="quick-choice" data-tool-preset="${escapeHtml(p.label)}">${escapeHtml(p.label)}</button>`).join('')}
                     </div>
@@ -1915,7 +2282,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
               ${isAdvancedMode() ? `<div class="agent-test b-sec" style="margin-top:14px">
                 <h3>${icon('zap', 16)} בדיקת סוכן (סימולציה)</h3>
                 <p class="muted" style="margin-bottom:10px">שלח הודעת לקוח לדוגמה וראה אילו כלים הופעלו — בלי לשמור בשיחה האמיתית.</p>
-                <textarea id="agent-test-input" rows="2" placeholder="לדוגמה: שלום, אני מעוניין בפגישה. שמי דני, טלפון 050-1234567"></textarea>
+                <label for="agent-test-input" class="sr-only">הודעת לקוח לסימולציה</label><textarea id="agent-test-input" aria-label="הודעת לקוח לסימולציה" rows="2" placeholder="לדוגמה: שלום, אני מעוניין בפגישה. שמי דני, טלפון 050-1234567"></textarea>
                 <button type="button" class="btn btn-outline btn-sm" id="agent-test-run" style="margin-top:8px">${icon('zap', 14)} הרץ בדיקה</button>
                 <div id="agent-test-result" class="agent-trace" style="display:none"></div>
               </div>
@@ -1932,8 +2299,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
                     <div class="muted" style="font-size:12px;margin-bottom:8px">מיועד לצוותים עם שרת MCP קיים. רוב העסקים לא צריכים את זה בהתחלה.</div>
                     <div id="mcp-list"></div>
                     <div class="mcp-add-row">
-                      <input id="mcp-new-url" type="url" placeholder="https://..." style="flex:2;min-width:180px;direction:ltr;text-align:left;font-family:monospace" />
-                      <input id="mcp-new-name" placeholder="שם" style="flex:1;min-width:80px" />
+                      <input id="mcp-new-url" type="url" aria-label="כתובת שרת MCP" placeholder="https://..." style="flex:2;min-width:180px;direction:ltr;text-align:left;font-family:monospace" />
+                      <input id="mcp-new-name" aria-label="שם שרת MCP" placeholder="שם" style="flex:1;min-width:80px" />
                       <button class="btn btn-sm btn-outline" id="mcp-add-btn">${icon('plus', 14)} הוסף</button>
                     </div>
                     <div id="mcp-status" class="mcp-status"></div>
@@ -1972,7 +2339,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
       <div class="wizard-actions">
         ${!isFirst ? '<button class="btn btn-outline" id="w-prev">' + icon('arrow-right', 14) + ' חזור</button>' : '<span></span>'}
-        <span id="f-status" class="muted" style="flex:1;text-align:center"></span>
+        <span id="f-status" class="muted" role="status" aria-live="polite" style="flex:1;text-align:center"></span>
         ${isLast
           ? '<button class="btn btn-primary" id="f-save" style="padding:12px 32px">' + icon('save', 16) + ' שמור עובד</button>'
           : '<button class="btn btn-primary" id="w-next">המשך ' + icon('arrow-right', 14) + '</button>'
@@ -1983,7 +2350,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   async function renderBuilder({ workerId, templateId }, alive = () => true) {
     setActive('marketplace');
-    if (!(await ensureSession('העסק שלי'))) return;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
     let worker = null;
     if (workerId) {
       const r = await api('/api/workers/' + workerId);
@@ -2449,7 +2816,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   async function renderConnectTools(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
     const wr = await api('/api/workers/' + workerId);
     if (!alive()) return;
     if (!wr.ok) {
@@ -2600,7 +2967,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   async function renderGoLive(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
     const wr = await api('/api/workers/' + workerId);
     if (!alive()) return;
     if (!wr.ok) {
@@ -2671,9 +3038,18 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     };
   }
 
+  async function waitForWorkerActivation(workerId, alive, attempts = 16) {
+    for (let attempt = 0; attempt < attempts && alive(); attempt++) {
+      const result = await api('/api/workers/' + workerId).catch(() => ({ ok: false }));
+      if (result.ok && result.body?.worker?.isActive) return true;
+      if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    return false;
+  }
+
   async function renderActivatePaywall(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
     const wr = await api('/api/workers/' + workerId);
     if (!alive()) return;
     if (!wr.ok) {
@@ -2682,9 +3058,33 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     }
     const w = wr.body.worker;
     if (w.isActive) { location.hash = '#/workers/live/' + workerId; return; }
+    const readiness = wr.body.readiness;
+    if (!readiness?.ready) {
+      const missing = Array.isArray(readiness?.missing) ? readiness.missing : [];
+      const labels = {
+        knowledge: 'מידע עסקי מאומת',
+        knowledge_not_reviewed: 'אישור בעל העסק למידע',
+        persona: 'הנחיות התנהגות לעובד',
+        tasks: 'משימות מוגדרות',
+      };
+      const items = missing.map((item) => `<li>${escapeHtml(labels[item] || item)}</li>`).join('');
+      app.innerHTML = `<div class="empty" role="status">
+        <h2>משלימים את העובד לפני תשלום</h2>
+        <p>לא נפתח תשלום לפני שהמידע וההנחיות מוכנים לעבודה מול לקוחות.</p>
+        ${items ? `<ul style="display:inline-block;text-align:right">${items}</ul>` : ''}
+        <p><button type="button" class="btn btn-primary" id="readiness-edit">השלמת הגדרות</button> <a class="btn btn-outline" href="#/workers/chat/${workerId}">חזרה לדמו</a></p>
+      </div>`;
+      document.getElementById('readiness-edit').onclick = () => { location.hash = '#/workers/edit/' + workerId; };
+      return;
+    }
     const tplRes = await api('/api/workers/templates');
-    const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
-    const price = template ? template.rentPriceIls : 199;
+    const template = tplRes.ok && Array.isArray(tplRes.body.templates) ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
+    if (!template || !Number.isFinite(Number(template.rentPriceIls))) {
+      app.innerHTML = `<div class="empty err" role="alert"><h2>לא הצלחנו לאמת את המחיר</h2><p>לא נפתח תשלום בלי מחיר שאושר על ידי השרת.</p><button type="button" class="btn btn-primary" id="paywall-retry">${icon('refresh', 14)} נסו שוב</button></div>`;
+      document.getElementById('paywall-retry').onclick = () => renderActivatePaywall(workerId, alive);
+      return;
+    }
+    const price = Number(template.rentPriceIls);
     const bitUrl = BIT_PHONE ? bitPayUrl(BIT_PHONE) : '';
     const bitDisplay = BIT_PHONE ? (BIT_PHONE.replace(/^972/, '0').replace(/^(\d{3})(\d+)/, '$1-$2') || BIT_PHONE) : '';
     const hasBit = Boolean(BIT_PHONE);
@@ -2715,9 +3115,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <p class="muted">אחרי הפעלה — העובד זמין ללקוחות, לא רק ל${timedTrialEnabled() ? 'ניסיון' : 'דמו'}.</p>
         <div class="pw-price">₪${price} <small>לחודש</small></div>
         ${hasPaddle ? `<div class="pw-instant-block">
-          <p class="pw-speed-label">${icon('zap', 14)} מיידי — כרטיס אשראי</p>
-          <button type="button" class="btn btn-primary btn-hero" id="paddle-checkout">${icon('check', 16)} שלמו בכרטיס — הפעלה מיידית</button>
-          <p class="pw-instant-note">תשלום מאובטח בכרטיס · העובד יופעל מיד אחרי התשלום</p>
+          <p class="pw-speed-label">${icon('zap', 14)} כרטיס אשראי</p>
+          <button type="button" class="btn btn-primary btn-hero" id="paddle-checkout">${icon('check', 16)} מעבר לתשלום מאובטח</button>
+          <p class="pw-instant-note">העובד יוצג כפעיל רק לאחר אישור התשלום בשרת.</p>
+          <div id="paddle-activation-status" class="muted pw-submit-status" role="status" aria-live="polite"></div>
         </div>` : ''}
         ${hasPaddle && hasManualPay ? `<div class="pw-divider"><span>או תשלום מקומי — אישור ${escapeHtml(sla.replace(/^אישור\s*/i, ''))}</span></div>` : ''}
         ${hasManualPay ? `<div class="pw-manual-block">
@@ -2725,17 +3126,17 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           <div class="pw-methods">${payMethods}</div>
           <div class="card pw-proof-card">
             <h3>אחרי התשלום — שלחו אסמכתא</h3>
-            <div class="fld"><label>איך שילמתם?</label>
+            <div class="fld"><label for="pay-channel">איך שילמתם?</label>
               <select id="pay-channel" class="magic-input">
                 ${hasBit ? '<option value="bit">Bit</option>' : ''}
                 ${hasPaypal ? '<option value="paypal">PayPal</option>' : ''}
                 ${hasBank ? '<option value="bank-transfer">העברה בנקאית</option>' : ''}
               </select>
             </div>
-            <div class="fld"><label>אימייל או טלפון ליצירת קשר</label><input id="pay-contact" placeholder="you@example.com" /></div>
-            <div class="fld"><label>אסמכתא / מספר אישור</label><input id="pay-reference" placeholder="מספר העברה או אישור PayPal" /></div>
-            <button class="btn btn-outline" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
-            <div id="pay-submit-status" class="muted pw-submit-status"></div>
+            <div class="fld"><label for="pay-contact">אימייל או טלפון ליצירת קשר</label><input id="pay-contact" autocomplete="email" placeholder="you@example.com" /></div>
+            <div class="fld"><label for="pay-reference">אסמכתא / מספר אישור</label><input id="pay-reference" placeholder="מספר העברה או אישור PayPal" /></div>
+            <button type="button" class="btn btn-outline" id="pay-submit">${icon('check', 14)} שלח לאישור</button>
+            <div id="pay-submit-status" class="muted pw-submit-status" role="status" aria-live="polite"></div>
           </div>
           <p class="pw-note">${icon('shield', 14)} בודקים כל הפעלה ידנית — כדי שתדעו שיש אדם מאחורי המוצר.</p>
         </div>` : (!hasPaddle ? `<p class="pw-individual-note err">ערוצי תשלום בדרך להגדרה — פנו לתמיכה.</p>` : '')}
@@ -2746,6 +3147,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       if (paddleBtn) {
         paddleBtn.onclick = async () => {
           paddleBtn.disabled = true;
+          const activationStatus = document.getElementById('paddle-activation-status');
+          let checkoutOpened = false;
+          let awaitingActivation = false;
+          activationStatus.textContent = 'פותח תשלום מאובטח...';
           try {
             const cfg = await api('/api/paddle/checkout', { method: 'POST', body: JSON.stringify({ workerId }) });
             if (!cfg.ok) {
@@ -2769,21 +3174,39 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
             Paddle.Initialize({
               token: body.clientToken,
               checkout: { settings: { displayMode: 'overlay', theme: 'dark', locale: 'he' } },
-              eventCallback: (data) => {
+              eventCallback: async (data) => {
                 if (data?.name === 'checkout.completed') {
-                  toast('התשלום התקבל — העובד מופעל!', 'success');
-                  location.hash = '#/workers/live/' + workerId;
+                  awaitingActivation = true;
+                  paddleBtn.disabled = true;
+                  activationStatus.textContent = 'התשלום התקבל. ממתינים לאישור הפעלה מהשרת...';
+                  toast('התשלום התקבל — מאמתים את ההפעלה', 'info');
+                  const active = await waitForWorkerActivation(workerId, alive);
+                  if (!alive()) return;
+                  if (active) {
+                    activationStatus.textContent = 'ההפעלה אושרה.';
+                    toast('העובד פעיל ומוכן ללקוחות', 'success');
+                    location.hash = '#/workers/live/' + workerId;
+                  } else {
+                    activationStatus.textContent = 'התשלום התקבל והאימות עדיין בתהליך. אל תשלמו שוב; אפשר לצאת ולחזור למסך הזה.';
+                    paddleBtn.innerHTML = icon('clock', 16) + ' התשלום התקבל — האימות בתהליך';
+                    toast('התשלום התקבל — ההפעלה עדיין בבדיקה', 'info');
+                  }
+                } else if (data?.name === 'checkout.closed' && !awaitingActivation) {
+                  activationStatus.textContent = '';
+                  paddleBtn.disabled = false;
                 }
               },
             });
             Paddle.Checkout.open({
-              items: [{ priceId: body.priceId, quantity: 1 }],
-              customData: body.customData,
+              transactionId: body.transactionId,
             });
+            checkoutOpened = true;
+            activationStatus.textContent = 'חלון התשלום פתוח.';
           } catch (e) {
             toast('לא הצלחנו לפתוח תשלום — נסו שוב', 'error');
+            activationStatus.textContent = 'פתיחת התשלום נכשלה. נסו שוב.';
           } finally {
-            paddleBtn.disabled = false;
+            if (!checkoutOpened && !awaitingActivation) paddleBtn.disabled = false;
           }
         };
       }
@@ -2811,11 +3234,12 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   }
 
   // ---- Chat (demo first, paywall only for production) ----
-  async function streamChatMessage(workerId, text, isDemo, onToken) {
+  async function streamChatMessage(workerId, text, isDemo, onToken, requestKey) {
     const r = await fetch('/api/workers/' + workerId + '/chat/stream', {
       method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ message: text, demoMode: isDemo }),
+      credentials: 'same-origin',
+      headers: { ...authHeaders('POST'), 'x-idempotency-key': requestKey },
+      body: JSON.stringify({ message: text, customerId: ownerChatCustomerId(workerId) }),
     });
     if (!r.ok || !r.body) return null;
     const reader = r.body.getReader();
@@ -2860,7 +3284,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   async function renderChat(workerId, alive = () => true) {
     setActive('workers');
-    if (!(await ensureSession('העסק שלי'))) return;
+    if (!(await ensureSession('העסק שלי'))) { ownerAccessGate(); return; }
     const wr = await api('/api/workers/' + workerId);
     if (!alive()) return;
     if (!wr.ok) {
@@ -2871,8 +3295,11 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const suggestions = wr.body.suggestions || [];
     const isDemo = !w.isActive;
 
-    const mr = await api('/api/workers/' + workerId + '/messages');
-    const messages = mr.ok ? mr.body.messages : [];
+    const customerId = ownerChatCustomerId(workerId);
+    const mr = await api('/api/workers/' + workerId + '/messages?customerId=' + encodeURIComponent(customerId)).catch(() => ({ ok: false, body: {} }));
+    if (!alive()) return;
+    const messages = mr.ok && Array.isArray(mr.body.messages) ? mr.body.messages : [];
+    const historyError = mr.ok ? '' : friendlyApiError(mr.body, 'לא הצלחנו לטעון את היסטוריית השיחה');
     const share = shareWorkerChat(workerId, w.name, w.isActive);
     const chips = suggestions.slice(0, 3).map((s) =>
       `<button type="button" class="suggestion-chip" data-suggest="${escapeHtml(s)}">${escapeHtml(s)}</button>`
@@ -2900,22 +3327,23 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <a class="btn btn-outline btn-sm" href="#/workers/connect/${workerId}">${icon('plug', 14)} חבר כלים</a>
       </div>`}
       <div class="chat-frame">
-      <div id="chat-window" class="chat-window">
-        ${messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתוב שלום — נראה איך העובד עונה (לדוגמה)</div>' : ''}
+      <div id="chat-window" class="chat-window" role="log" aria-live="polite" aria-relevant="additions text" aria-label="היסטוריית השיחה">
+        ${historyError ? `<div class="msg system err" id="chat-history-error" role="alert">${escapeHtml(historyError)} <button type="button" class="btn btn-outline btn-sm" id="chat-history-retry">נסו שוב</button></div>` : ''}
+        ${!historyError && messages.length === 0 ? '<div class="msg system">' + icon('chat', 14) + ' כתבו שלום — נראה איך העובד עונה בדמו</div>' : ''}
         ${messages.map((m) => `<div class="msg ${m.role}">${escapeHtml(m.content)}</div>`).join('')}
       </div>
       ${chips ? `<div class="chat-suggestions" id="chat-suggestions">${chips}</div>` : ''}
       <div class="composer">
-        <button type="button" class="btn btn-outline btn-mic" id="c-mic" title="דבר">${icon('mic', 22)}<span style="font-size:11px;display:block">דבר</span></button>
-        <textarea id="c-input" placeholder="כתוב הודעה..." rows="2"></textarea>
-        <button class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
+        <button type="button" class="btn btn-outline btn-mic" id="c-mic" aria-label="הכתבה קולית" aria-pressed="false" title="דבר">${icon('mic', 22)}<span style="font-size:11px;display:block">דבר</span></button>
+        <label for="c-input" class="sr-only">הודעה לעובד</label><textarea id="c-input" aria-label="הודעה לעובד" placeholder="כתבו הודעה..." rows="2"></textarea>
+        <button type="button" class="btn btn-primary" id="c-send">${icon('send', 16)} שלח</button>
       </div>
       </div>
       <details class="advanced-config" style="margin-top:16px" id="chat-settings">
         <summary>${icon('edit', 14)} הגדרות</summary>
         <div style="padding-top:12px">
           <div class="fld" style="margin-bottom:14px">
-            <label>${icon('chat', 12)} מספר להתראות WhatsApp (דורש ספק מאומת)</label>
+            <label for="notify-wa-phone">${icon('chat', 12)} מספר להתראות WhatsApp (דורש ספק מאומת)</label>
             <div class="row" style="gap:8px;flex-wrap:wrap">
               <input id="notify-wa-phone" type="tel" placeholder="05X-XXXXXXX" dir="ltr" style="flex:1;min-width:160px;text-align:left" />
               <button type="button" class="btn btn-sm btn-outline" id="notify-wa-save">${icon('check', 12)} שמור</button>
@@ -2934,6 +3362,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const input = document.getElementById('c-input');
     const send = document.getElementById('c-send');
     const micBtn = document.getElementById('c-mic');
+    const historyRetry = document.getElementById('chat-history-retry');
+    if (historyRetry) historyRetry.onclick = () => renderChat(workerId, alive);
     let gotFirstReply = messages.some((m) => m.role === 'assistant');
     if (gotFirstReply) {
       const row = document.getElementById('success-cta');
@@ -2972,12 +3402,13 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         const t = Array.from(e.results).map((r) => r[0].transcript).join('');
         input.value = t;
       };
-      speechRec.onend = () => { listening = false; micBtn.classList.remove('listening'); };
-      speechRec.onerror = () => { listening = false; micBtn.classList.remove('listening'); toast('לא הצלחנו לשמוע — נסו שוב', 'error'); };
+      speechRec.onend = () => { listening = false; micBtn.classList.remove('listening'); micBtn.setAttribute('aria-pressed', 'false'); };
+      speechRec.onerror = () => { listening = false; micBtn.classList.remove('listening'); micBtn.setAttribute('aria-pressed', 'false'); toast('לא הצלחנו לשמוע — נסו שוב', 'error'); };
       micBtn.onclick = () => {
         if (listening) { speechRec.stop(); return; }
         listening = true;
         micBtn.classList.add('listening');
+        micBtn.setAttribute('aria-pressed', 'true');
         speechRec.start();
       };
     } else if (micBtn) {
@@ -3006,10 +3437,12 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       win.parentNode.insertBefore(hint, win.nextSibling);
     }
 
-    async function sendJsonChat(text) {
-      const r = await api('/api/workers/' + workerId + '/chat', {
+    async function sendJsonChat(text, requestKey) {
+      const endpoint = isDemo ? '/test-agent' : '/chat';
+      const r = await api('/api/workers/' + workerId + endpoint, {
         method: 'POST',
-        body: JSON.stringify({ message: text, demoMode: isDemo }),
+        headers: { 'x-idempotency-key': requestKey },
+        body: JSON.stringify({ message: text, customerId }),
       });
       return r;
     }
@@ -3017,8 +3450,9 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     async function doSend() {
       const text = input.value.trim();
       if (!text) return;
+      const requestKey = newIdempotencyKey('chat');
       input.value = '';
-      if (listening && speechRec) { speechRec.stop(); listening = false; micBtn.classList.remove('listening'); }
+      if (listening && speechRec) { speechRec.stop(); listening = false; micBtn.classList.remove('listening'); micBtn.setAttribute('aria-pressed', 'false'); }
       const um = document.createElement('div'); um.className = 'msg user'; um.textContent = text; win.appendChild(um);
       send.disabled = true;
       win.scrollTop = win.scrollHeight;
@@ -3037,7 +3471,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       };
 
       if (isDemo) {
-        const r = await sendJsonChat(text);
+        const r = await sendJsonChat(text, requestKey);
         if (r.ok && r.body.reply) {
           finishReply(r.body.reply, r.body.qualityScore);
         } else {
@@ -3064,7 +3498,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           am.textContent = fullReply;
           am.appendChild(cursor);
           win.scrollTop = win.scrollHeight;
-        });
+        }, requestKey);
         if (streamed) quality = streamed.qualityScore;
         else streamFailed = true;
       } catch {
@@ -3073,13 +3507,10 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
       if (streamFailed || !fullReply) {
         am.remove();
-        const r = await sendJsonChat(text);
-        if (r.ok && r.body.reply) {
-          finishReply(r.body.reply, r.body.qualityScore);
-        } else {
-          send.disabled = false;
-          showChatError(win, () => { input.value = text; doSend(); });
-        }
+        // A broken stream may have completed server-side. Do not automatically
+        // submit a second paid/provider request or duplicate tool side effects.
+        send.disabled = false;
+        showChatError(win, () => { input.value = text; doSend(); });
         return;
       }
 
@@ -3444,21 +3875,22 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
           return;
         }
         try { await navigator.clipboard.writeText(r.body.key); } catch {}
-        openModal(`
+        const keyOverlay = openModal(`
           <div class="modal-hdr">
             <span class="icon-big">${icon('shield', 24)}</span>
             <h3>מפתח חדש לטננט</h3>
-            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x', 16)}</button>
+            <button type="button" class="modal-close" id="admin-key-close" aria-label="סגור">${icon('x', 16)}</button>
           </div>
           <div class="modal-body">
             <p class="muted">שלח את המפתח רק בערוץ תמיכה מאומת. המפתחות הישנים בוטלו.</p>
-            <label>Tenant</label>
-            <input value="${escapeHtml(r.body.tenantId)}" readonly style="direction:ltr;text-align:left;font-family:monospace;margin-bottom:10px" />
-            <label>API key ${icon('check', 14)}</label>
+            <label for="new-key-tenant">Tenant</label>
+            <input id="new-key-tenant" value="${escapeHtml(r.body.tenantId)}" readonly style="direction:ltr;text-align:left;font-family:monospace;margin-bottom:10px" />
+            <label for="new-key-box">API key ${icon('check', 14)}</label>
             <textarea id="new-key-box" readonly style="direction:ltr;text-align:left;font-family:monospace;min-height:72px">${escapeHtml(r.body.key)}</textarea>
-            <button class="btn btn-primary" id="modal-copy-key">${icon('copy', 14)} העתק מפתח</button>
+            <button type="button" class="btn btn-primary" id="modal-copy-key">${icon('copy', 14)} העתק מפתח</button>
           </div>
         `);
+        keyOverlay.querySelector('#admin-key-close').onclick = () => closeModal(keyOverlay);
         const copyBtn = document.getElementById('modal-copy-key');
         if (copyBtn) copyBtn.onclick = async () => {
           try { await navigator.clipboard.writeText(r.body.key); toast('הועתק', 'success'); }
@@ -3470,8 +3902,18 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
   return { render: route };
 })();
-window.addEventListener('hashchange', () => { void APP.render(); });
-void APP.render();
+async function renderAppSafely() {
+  try {
+    await APP.render();
+  } catch (error) {
+    console.error('[ui-route]', error);
+    const root = document.getElementById('app');
+    root.innerHTML = `<div class="empty err" role="alert"><h2>לא הצלחנו לפתוח את המסך</h2><p>המידע שלכם לא נמחק. נסו לטעון שוב.</p><button type="button" class="btn btn-primary" id="route-retry">נסו שוב</button></div>`;
+    document.getElementById('route-retry').onclick = () => { void renderAppSafely(); };
+  }
+}
+window.addEventListener('hashchange', () => { void renderAppSafely(); });
+void renderAppSafely();
 </script>
 <script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics({spa:true});</script>
 </body>

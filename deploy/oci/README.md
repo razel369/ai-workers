@@ -19,6 +19,9 @@ instance whose shape is explicitly labelled **Always Free Eligible**:
 
 Oracle account creation, login, region selection, and any identity/card check
 are owner-controlled steps. Stop if the console shows a non-zero estimate.
+As verified against Oracle's documentation on 2026-08-30, the Always Free A1
+allowance is currently described as 2 OCPUs / 12 GB total, with 200 GB combined
+boot + block volume storage. Limits can change; the live console is decisive.
 
 ## 2. Network and a free hostname
 
@@ -83,18 +86,69 @@ Create a consistent archive while briefly stopping the app container:
 sudo bash ./deploy/oci/backup.sh
 ```
 
-Copy both files from `backups/` to a different machine. Test a restore before
+Before the first run, generate two additional, distinct secrets with
+`openssl rand -hex 32` and set `BACKUP_ENCRYPTION_SECRET` and
+`BACKUP_MANIFEST_SECRET` in `.env`. The script never leaves a completed plaintext
+archive: it encrypts locally with AES-256-CBC + PBKDF2 (250,000 iterations), then
+creates an HMAC-SHA256 signed manifest bound to the ciphertext name, size and
+SHA-256 digest. Both secrets are required to restore; retain them outside the VM.
+
+For an automatic off-VM copy, configure a dedicated **rclone crypt** remote once
+with `sudo rclone config`, then set `BACKUP_RCLONE_REMOTE` in `.env` (for example,
+`encrypted-gdrive:ai-workers-production`). The script verifies that the selected
+remote is actually type `crypt`, uploads the encrypted archive + manifest + HMAC,
+and downloads the remote bytes for comparison before reporting success. Leaving
+the variable empty produces only an encrypted local copy, not disaster recovery.
+Local encrypted generations rotate after `BACKUP_LOCAL_RETENTION_DAYS` (default
+14); the dedicated crypt path rotates matching generations after
+`BACKUP_REMOTE_RETENTION_DAYS` (default 90). Choose periods that satisfy the
+published privacy policy and legal hold requirements.
+
+Run the non-destructive restore drill against a selected archive:
+
+```bash
+sudo bash ./deploy/oci/restore-drill.sh \
+  /absolute/path/to/backups/ai-workers-data-YYYYMMDDTHHMMSSZ.tar.gz.enc
+```
+
+The drill authenticates the signed manifest before decrypting, then rejects
+absolute/traversal paths, duplicate paths, symlinks, hardlinks, devices, fifos,
+unsupported entries and oversized archives before writing any member. It runs
+the SQLite verifier as a numeric non-root container user when possible and checks
+`quick_check` plus `foreign_key_check` on the platform DB and every tenant DB. It
+never overwrites `data/`. A final launch gate must still test the restored
+candidate through `/infra-ready`, `/ready`, login, an existing worker, and a real
+LLM chat.
+
+## 6. Monitor readiness
+
+`deploy/oci/monitor.sh` checks both `/health` and the stricter `/ready`, stores
+only the last state under `data/`, and exits non-zero when customer traffic
+should be stopped. If `MONITOR_ALERT_WEBHOOK_URL` is configured, it sends an
+HTTPS notification only when the state changes (failure or recovery).
+
+Run it manually first, then schedule it every five minutes with the VM's cron
+or systemd timer:
+
+```bash
+sudo bash ./deploy/oci/monitor.sh
+```
+
+This local check cannot alert while the VM itself is down. Before launch, add a
+separate external HTTPS monitor for `/ready`; the external monitor must expect
+HTTP 200 and should alert on 503, TLS failure, timeout, or DNS failure.
+
+Copy all three files (`.enc`, `.manifest`, `.manifest.hmac`) from `backups/` to a different machine. Test a restore before
 claiming recovery. A new VM starts empty; it does not recover the old Railway
 volume automatically. A valid recovery also requires the exact historical
 `INTEGRATIONS_SECRET` (or the old `ADMIN_TOKEN` if it was the encryption-key
 fallback), not just the SQLite files.
 
-Treat the local archive as staging only: it is on the same boot volume as the
-live data and does not survive every termination/reclamation scenario. Store the
-archive in encrypted off-VM storage, verify it there with
-`sha256sum -c ai-workers-data-*.tar.gz.sha256`, and retain the two production
-secrets separately in the owner's password manager. The script refuses to start
-when there is not enough free space; remove old local archives only after their
-off-VM copies are verified.
+Treat the encrypted local archive as staging only: it is on the same boot volume
+as the live data and does not survive every termination/reclamation scenario.
+Keep the two backup secrets and the two application secrets separately in the
+owner's password manager. The signed manifest detects ciphertext or metadata
+tampering; rclone verification proves the remote bytes are readable. Neither is
+a restore proof until the isolated drill actually passes.
 
 Official constraints: [Oracle Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).

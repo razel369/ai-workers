@@ -8,10 +8,14 @@
 
 **Railway הישן:** היסטורי/offline; `https://paid-agent-demo-production.up.railway.app` אינו אתר פעיל.
 
+**החלטת מוכנות:** NO-GO לפרודקשן וללקוחות משלמים. מטריצת הראיות המלאה:
+[`docs/PRODUCT-READINESS.md`](PRODUCT-READINESS.md).
+
 ## מצב שחזור — 2026-08-30
 
-- [x] `npm test` עובר מקומית, כולל buyer flow ב־Chromium ו־28 תרחישי הערכה במצב mock.
-- [x] בדיקות ה־CI של PR השחזור עברו; זהו proof לקוד, לא לפרודקשן.
+- [x] ה־harness העצמאי עבר מקומית 31/31 תרחישי dry-run דטרמיניסטיים על 13 תבניות; כל שערי intent/language/tools/safety עברו 31/31. לא בוצעה קריאת LLM ולא הופעל כלי.
+- [x] `npm test` המלא עבר מקומית על ה־worktree הנוכחי, כולל API, browser flow, lifecycle, CSV, Paddle production boundary, WhatsApp router, engine hardening ו־31/31 תרחישי eval. זו ראיית פיתוח מקומית בלבד.
+- [ ] להריץ CI מחדש על ה־commit הסופי. CI היסטורי של diff מוקדם יותר הוא proof לקוד הישן בלבד, לא ל־candidate הנוכחי ולא לפרודקשן.
 - [x] נבנתה חבילת OCI עם Docker Compose, ‏Caddy, HTTPS, volume, גיבוי וברירות מחדל fail-closed.
 - [x] לא נוצר שירות Render, לא אושר חיוב וקובץ ה־Blueprint בתשלום הוסר מה־repo.
 - [ ] לא נוצר ולא אומת עדיין Oracle VM חי.
@@ -50,7 +54,9 @@ VM חדש מתחיל עם `data/` ריק. פריסה ירוקה אינה משח�
 - [ ] לשחזר רק כשה־app עצור ולפני תעבורת לקוחות.
 - [ ] לאמת SQLite integrity, ספירת tenants/workers, פענוח integrations ולקוח קיים.
 - [ ] אם אין export מאומת, להשיק כ־fresh launch ולא לטעון שהנתונים שוחזרו.
-- [ ] להריץ `sudo bash ./deploy/oci/backup.sh`, להעתיק את ה־archive לאחסון מוצפן מחוץ ל־VM, לאמת שם checksum ולבצע restore drill.
+- [ ] להגדיר שני סודות שונים, לפחות 32 תווים כל אחד: `BACKUP_ENCRYPTION_SECRET` ו־`BACKUP_MANIFEST_SECRET`, ולשמור עותק מחוץ ל־VM.
+- [ ] להריץ `sudo bash ./deploy/oci/backup.sh`; לוודא שנוצרו `.tar.gz.enc`, ‏`.manifest` ו־`.manifest.hmac`. אם הוגדר `BACKUP_RCLONE_REMOTE`, הוא חייב להיות `rclone crypt` והסטטוס חייב להיות `offsite_verified`.
+- [ ] להריץ `sudo bash ./deploy/oci/restore-drill.sh /absolute/path/to/archive.tar.gz.enc`, ואז לבדוק בנפרד candidate משוחזר דרך `/infra-ready`, ‏`/ready`, כניסה וצ׳אט LLM אמיתי.
 - [ ] לשמור את `INTEGRATIONS_SECRET` ו־`ADMIN_TOKEN` בנפרד במנהל הסיסמאות של הבעלים; הם אינם נכללים בארכיון הנתונים.
 
 ## משתני סביבה לפרודקשן
@@ -84,9 +90,13 @@ VM חדש מתחיל עם `data/` ריק. פריסה ירוקה אינה משח�
 - [ ] `GET /ready` = ‏200 עם `ok:true` — שערי ההגדרה והאחסון; זה עדיין אינו smoke של LLM, TLS, buyer flow או restore.
 - [ ] Caddy מחזיר HTTPS תקין לאחר reboot מלא של ה־VM.
 - [ ] buyer flow מלא: signup → תבנית → אסמכתת תשלום → אישור אדמין → chat עם LLM אמיתי.
+- [ ] אם מוצע Paddle: לבצע עסקת production אמיתית עם price map מדויק, webhook חתום, entitlement, ביטול/refund ו־reconciliation. Sandbox אינו הוכחת כסף אמיתי.
+- [ ] אם מוצע WhatsApp: מספר Meta Business מאומת מקבל הודעה אמיתית ושולח תשובה אחת בלבד; בדיקות חתימה מקומיות אינן הוכחת Meta end-to-end.
+- [ ] אם מוצע Embed: לבדוק מדומיין לקוח HTTPS אמיתי origin allow-list, session expiry, abuse limits, mobile וחשיפת AI/פרטיות.
 - [ ] self-serve signup, paywall ו־admin נבדקו מול הדיסק הקבוע.
 - [ ] בדיקת גיבוי ושחזור עברה בפועל; עצם יצירת archive אינה הוכחת restore.
-- [ ] ניטור `/ready` מוגדר; ‏503 עוצר פתיחת תעבורה.
+- [ ] עותק encrypted הגיע ל־`offsite_verified`, הורד במסלול שחזור נפרד, עבר restore ו־application smoke. גיבוי מקומי על אותו VM אינו disaster recovery.
+- [ ] `deploy/oci/monitor.sh` רץ בהצלחה ומתוזמן; ניטור HTTPS חיצוני נפרד בודק `/ready`, ו־503/TLS/timeout מפעילים התראה ועוצרים פתיחת תעבורה.
 - [ ] רק לאחר כל אלה אפשר לפרסם URL ולתאר אותו כפרודקשן.
 
 ## שער 4 — Go-to-market בישראל
@@ -95,7 +105,8 @@ VM חדש מתחיל עם `data/` ריק. פריסה ירוקה אינה משח�
 - [ ] **ערוצים:** LinkedIn IL, קבוצות עסקים בפייסבוק, WhatsApp Status ופנייה ל־50 פיילוטים.
 - [ ] **הצעה:** להחליט אם להציע ניסיון; ברירת המחדל הבטוחה היא `TRIAL_DAYS=0`.
 - [ ] **הוכחה:** שלושה case studies שעברו מ־demo לפיילוט אמיתי.
-- [ ] **משפטי:** פרטיות, תנאים וחשבונית/מע״מ בהתאם לסטטוס העסק.
+- [ ] **פיילוט:** לפחות עסק אחד נתן הסכמה מפורשת, הפעיל scope מוגבל עם נתונים אמיתיים, ונמדדו ערך, עלות, תקלות ותמיכה. חומר GTM אינו proof לפיילוט.
+- [ ] **משפטי ומס:** עו״ד/יועץ פרטיות ישראלי ורו״ח אישרו פרטיות, תנאים, עיבוד/העברות מידע, החזרים, חשבונית/קבלה ומע״מ בהתאם לסטטוס העסק. מסמכי repo הם טיוטה בלבד.
 - [ ] להגדיר מגבלות שימוש גם לספק LLM חינמי; free quota יכולה להשתנות או להיגמר.
 
 ## Vercel — Preview בלבד
