@@ -29,9 +29,9 @@ COPY embed-widget.js ./
 COPY whatsapp-webhook.js ./
 COPY whatsapp-router.js ./
 
-# Optional: cloudflared binary so the container can expose itself publicly
-# without any cloud account. Disable with INSTALL_TUNNEL=0.
-ARG INSTALL_TUNNEL=1
+# Optional local-only tunnel helper. Managed hosts already provide HTTPS, so
+# production images skip this unpinned external download by default.
+ARG INSTALL_TUNNEL=0
 RUN if [ "$INSTALL_TUNNEL" = "1" ]; then \
       apk add --no-cache curl ca-certificates && \
       curl -fsSL -o /usr/local/bin/cloudflared \
@@ -40,14 +40,18 @@ RUN if [ "$INSTALL_TUNNEL" = "1" ]; then \
     fi
 
 ENV NODE_OPTIONS="--experimental-sqlite --no-warnings"
+ENV NODE_ENV=production
 ENV PORT=8765
 ENV RATE_LIMIT_PER_MIN=120
+ENV DATA_DIR=/app/data
 ENV DB_PATH=/app/data/earnings.db
 ENV TENANTS_DIR=/app/data/tenants
+ENV REQUIRE_PERSISTENT_VOLUME=1
+ENV ALLOW_PRIVATE_NETWORK_URLS=0
 
 EXPOSE 8765
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- "http://127.0.0.1:${PORT:-8765}/health" || exit 1
+  CMD wget -qO- "http://127.0.0.1:${PORT:-8765}/infra-ready" || exit 1
 
 CMD ["node", "server.js"]

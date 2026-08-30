@@ -202,7 +202,7 @@
     <a href="/terms">תנאי שימוש</a>
     <a href="/invoice">איך משלמים</a>
   </nav>
-  <p class="site-footer-note">תשלום ב-Bit, PayPal או העברה בנקאית — ללא כרטיס אשראי באתר · מפעיל פרטי · קבלה פשוטה לפי בקשה</p>
+  <p class="site-footer-note">אפשרויות התשלום הזמינות מוצגות בעת ההפעלה · אין להזין פרטי תשלום בתוך הצ'אט</p>
 </footer>
 <script>
 const APP = (() => {
@@ -216,6 +216,10 @@ const APP = (() => {
 
   function isAdvancedMode() { return localStorage.getItem(ADVANCED_LS) === '1'; }
   function setAdvancedMode(on) { localStorage.setItem(ADVANCED_LS, on ? '1' : '0'); }
+  function configuredTrialDays() {
+    try { return Math.max(0, Number(TRIAL_DAYS) || 0); } catch { return 0; }
+  }
+  function timedTrialEnabled() { return configuredTrialDays() > 0; }
 
   async function ensureSession(businessName) {
     const existing = getKey();
@@ -254,7 +258,9 @@ const APP = (() => {
     if (body.error === 'auth_required') return 'ההתחברות פגה — רעננו את הדף ונסו שוב';
     if (body.error === 'not_found') return 'לא מצאנו את העובד — ייתכן שהנתונים נמחקו. התחילו מההתחלה.';
     if (body.error === 'unknown_template') return 'תבנית לא נמצאה — בחרו שוב מהקטלוג';
-    if (body.error === 'payment_required') return 'נדרש תשלום להפעלה מלאה — אפשר להמשיך בניסיון חינם';
+    if (body.error === 'payment_required') return timedTrialEnabled()
+      ? 'נדרש תשלום להפעלה מלאה — אפשר להמשיך בניסיון בזמן שהוגדר'
+      : 'נדרש תשלום להפעלה מלאה — אפשר להמשיך בדמו';
     if (body.error === 'rate_limited' || body.error === 'signup_rate_limited') return 'הייתם מהירים מדי. חכו כמה שניות ונסו שוב 🙏';
     if (body.error === 'agent_timeout' || body.error === 'timeout') return 'העובד לא הספיק לענות — נסו שוב או שאלה קצרה יותר';
     if (body.error === 'llm_unavailable' || body.error === 'no_api_key') return 'שירות ה-AI עומד בעומס — נסו שוב בעוד רגע';
@@ -307,7 +313,7 @@ const APP = (() => {
     'content-he': 'כותב תוכן שיווקי בעברית',
     'property-manager-he': 'מקבל פניות תחזוקה מדיירים',
     'social-media-creator-he': 'יוצר רעיונות לפוסטים ותמונות',
-    'social-strategist-he': 'מנהלת סושיאל מלאה — פוסטים, תמונות, וואטסאפ',
+    'social-strategist-he': 'מנהלת סושיאל — פוסטים, תמונות ותכנון תוכן',
     'market-research-he': 'חוקר מתחרים ומסכם דוחות שוק',
     'hr-recruiter-he': 'מסנן מועמדים וקובע ראיונות',
     'complaints-desk-he': 'מתעד תלונות ומסלים דחוף',
@@ -1014,13 +1020,13 @@ async function renderMarketplace(alive = () => true) {
       return '<div class="empty" style="grid-column:1/-1">' + msg + '</div>';
     }
     return tpls.map((t, idx) => {
-      const popular = t.id === 'support-he' || t.id === 'sales-leads-il';
+      const recommended = t.id === 'support-he' || t.id === 'sales-leads-il';
       const bestVal = t.id === 'data-entry';
       const isNew = t.id === 'property-manager-he' || t.id === 'clinic-receptionist-he' || t.id === 'social-strategist-he' || t.id === 'market-research-he';
       const categoryLabel = CATEGORIES[t.category] || t.category;
       const outcome = OUTCOME_LABELS[t.category] || 'מקבל פניות, שואל שאלות המשך ומחזיר תשובה מוכנה לעבודה.';
-      const badge = popular
-        ? '<span class="badge popular">' + icon('shield', 10) + ' בחירת עסקים</span>'
+      const badge = recommended
+        ? '<span class="badge popular">' + icon('shield', 10) + ' תבנית מומלצת</span>'
         : bestVal
           ? '<span class="badge best">' + icon('ils', 10) + ' עלות נמוכה</span>'
           : isNew
@@ -1057,7 +1063,7 @@ async function renderMarketplace(alive = () => true) {
         <span class="sb-clock" id="sb-clock">23:14</span>
       </div>
       <div class="sb-feed">
-        <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בוואטסאפ — נענה</span></div>
+        <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בצ׳אט באתר — נענה</span></div>
         <div class="sb-event"><time>23:12</time><span class="sb-check">✓</span><span>תור נקבע למחר ב-10:00</span></div>
         <div class="sb-event"><time>23:14</time><span class="sb-check">✓</span><span>ליד חם הועבר לבעל העסק</span></div>
       </div>
@@ -1078,7 +1084,7 @@ async function renderMarketplace(alive = () => true) {
     if (!feed || feed.dataset.init) return;
     feed.dataset.init = '1';
     const events = [
-      { t: '23:11', m: 'לקוח כתב בוואטסאפ — נענה' },
+      { t: '23:11', m: 'לקוח כתב בצ׳אט באתר — נענה' },
       { t: '23:12', m: 'תור נקבע למחר ב-10:00' },
       { t: '23:14', m: 'ליד חם הועבר לבעל העסק' },
       { t: '23:16', m: 'אישור הזמנה נשלח ב-SMS' },
@@ -1146,9 +1152,9 @@ async function renderMarketplace(alive = () => true) {
       <div class="hero-copy">
         <div class="hero-badge">${icon('zap', 14)} משמרת לילה · עובדים חיים</div>
         <h1>העסק <em>לא ישן</em> — גם כשאתה כן</h1>
-        <p>עובד AI שמקבל פניות, עונה ללקוחות ומעביר רק מה שדחוף. בלי מונחים טכניים, בלי כרטיס אשראי לניסיון.</p>
+        <p>עובד AI שמקבל פניות, עונה ללקוחות ומעביר רק מה שדחוף. בלי מונחים טכניים, ואפשר לבדוק דמו לפני הפעלה.</p>
         <div class="hero-actions">
-          <button class="btn btn-primary btn-hero" id="mkt-start">${icon('zap', 16)} התחל ניסיון חינם</button>
+          <button class="btn btn-primary btn-hero" id="mkt-start">${icon('zap', 16)} ${timedTrialEnabled() ? 'התחל ניסיון חינם' : 'נסה דמו חינם'}</button>
           <a class="btn btn-outline btn-hero" href="#/workers">${icon('users', 14)} העובדים שלי</a>
         </div>
       </div>
@@ -1199,8 +1205,8 @@ async function renderMarketplace(alive = () => true) {
     const steps = [
       { title: 'בוחרים תבנית לפי תפקיד', body: 'מרפאה, נדל״ן, מסעדה או מכירות — כל תבנית מגיעה עם משימות וידע התחלתי בעברית.' },
       { title: 'מתאימים ידע ושעות', body: 'בבונה תכתבו שאלות נפוצות, מחירים ומדיניות. אפשר גם לייבא מאתר העסק.' },
-      { title: 'מפעילים ומתחילים לצ׳וטט', body: (typeof TRIAL_DAYS !== 'undefined' && TRIAL_DAYS > 0)
-        ? `ניסיון ${TRIAL_DAYS} ימים ללא תשלום — ואז תשלום ב-Bit/PayPal עם ${typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות'}.`
+      { title: 'מפעילים ומתחילים לצ׳וטט', body: timedTrialEnabled()
+        ? `ניסיון ${configuredTrialDays()} ימים ללא תשלום — ואז תשלום ב-Bit/PayPal עם ${typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות'}.`
         : `שלחו אסמכתא תשלום — ${typeof ACTIVATION_SLA_HE !== 'undefined' ? ACTIVATION_SLA_HE : 'אישור תוך 24 שעות בימי עסקים'}. האדמין יכול לאשר ידנית בכל עת.` },
     ];
     let step = 0;
@@ -1435,12 +1441,12 @@ async function renderWorkersList(alive = () => true) {
           <div class="wl-empty">
             <div class="wl-empty-lamp"><span class="wl-empty-ic">${icon('robot', 40)}</span></div>
             <h3>בואו נגייס לכם עובד AI ראשון</h3>
-            <p>תוך פחות מדקה יהיה לכם עובד שעונה ללקוחות בוואטסאפ, שומר לידים ומעביר דחופים לנציג. בלי כרטיס אשראי, בלי התחייבות.</p>
+            <p>בכמה צעדים יהיה לכם עובד לדוגמה בצ׳אט באתר, ששומר לידים ומעביר פניות דחופות לנציג. אפשר לבדוק ולהגדיר לפני תשלום.</p>
             <a class="wl-empty-cta" href="#/magic">${icon('arrow-right', 16)} התחל עכשיו — 3 צעדים</a>
             <div class="wl-empty-steps">
               <div class="wl-step"><span class="wl-step-num">1</span><div><strong>בחר תפקיד</strong><span>מכירות, תמיכה, קליניקה, מסעדה…</span></div></div>
               <div class="wl-step"><span class="wl-step-num">2</span><div><strong>נסה בצ׳אט</strong><span>ראה איך העובד עונה בעברית טבעית</span></div></div>
-              <div class="wl-step"><span class="wl-step-num">3</span><div><strong>חבר לכלים</strong><span>וואטסאפ, גוגל קלנדר, טפסים — או העתק embed</span></div></div>
+              <div class="wl-step"><span class="wl-step-num">3</span><div><strong>חבר לכלים</strong><span>טפסים, webhook, יומן או embed באתר; WhatsApp רק לאחר חיבור מאומת</span></div></div>
             </div>
           </div>
         </div>
@@ -1477,7 +1483,7 @@ async function renderWorkersList(alive = () => true) {
               <option value="all">הכל</option>
               <option value="active">פעילים</option>
               <option value="paused">מושהים</option>
-              <option value="trial">בניסיון</option>
+              <option value="trial">דמו / ממתין לתשלום</option>
               <option value="expired">פג תוקף</option>
             </select>
           ` : ''}
@@ -1700,7 +1706,7 @@ async function renderWorkersList(alive = () => true) {
     }).join('');
     if (statusEl) statusEl.textContent = connected.length
       ? connected.length + ' חיבורים פעילים — הכלים יופעלו אוטומטית בעובד'
-      : 'לחצו "חבר" — בלי מפתחות API, רק התחברות או קישור';
+      : 'לחצו "חבר" — OAuth או קישור כשאפשר; חיבור שדורש הרשאות יסומן במפורש';
     catalog.forEach((item) => {
       const card = grid.querySelector('[data-int-type="' + item.type + '"]');
       if (!card) return;
@@ -2436,7 +2442,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
   const SIMPLE_CONNECT_META = {
     webhook: { emoji: '🔗', plain: 'כל ליד או פנייה יישלחו אוטומטית ל-Zapier, Make, Monday או כל מערכת שתבחרו.' },
     google_calendar: { emoji: '📅', plain: 'העובד יציע שעות פנויות וישלח קישור לקביעת תור.' },
-    whatsapp: { emoji: '🔔', plain: 'כשמישהו כותב לעובד — תקבלו הודעה למספר הוואטסאפ שלכם.' },
+    whatsapp: { emoji: '🔔', plain: 'התראות WhatsApp זמינות רק לאחר חיבור ואימות ספק Meta או Twilio.' },
     shopify: { emoji: '🛒', plain: 'העובד יחפש הזמנות אמיתיות בחנות Shopify שלכם.' },
     crm_hubspot: { emoji: '📊', plain: 'לידים יסתנכרנו אוטומטית ל-HubSpot CRM.' },
   };
@@ -2456,7 +2462,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <div class="connect-tools-hero">
           <p class="connect-tools-eyebrow">${icon('plug', 14)} חיבור לכלים</p>
           <h1>חברו את ${escapeHtml(w.name)} למה שכבר עובד אצלכם</h1>
-          <p class="connect-tools-lead">בלי מפתחות API, בלי מונחים מוזרים. לחיצה אחת או הדבקת קישור — והעובד מתחיל לעבוד עם הכלים.</p>
+          <p class="connect-tools-lead">OAuth או קישור כשאפשר; שירות שדורש הרשאות או פרטי ספק יציג זאת לפני החיבור.</p>
         </div>
         <div id="connect-tools-grid" class="connect-tools-grid">
           <div class="muted">${icon('loading', 16, 'icon-spin')} טוען אפשרויות חיבור...</div>
@@ -2638,14 +2644,14 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
 
         <article class="go-live-card go-live-card-muted">
           <span class="gl-step">3</span>
-          <h2>וואטסאפ של העסק עצמו</h2>
-          <p>רוצים שלקוחות יכתבו למספר הוואטסאפ הרגיל של העסק ויקבלו תשובה? ${typeof AGENT_OWNER_CONTACT !== 'undefined' && AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">כתבו לנו</a> ונעזור.` : 'פנו אלינו דרך יצירת הקשר באתר.'}</p>
+          <h2>חיבור WhatsApp של העסק</h2>
+          <p>חיבור ישיר למספר העסק דורש הגדרה ואימות של ספק WhatsApp ואינו פעיל כברירת מחדל. ${typeof AGENT_OWNER_CONTACT !== 'undefined' && AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">כתבו לנו</a> לבדיקת התאמה.` : 'פנו אלינו דרך יצירת הקשר באתר לבדיקת התאמה.'}</p>
         </article>
 
         <article class="go-live-card go-live-card-tools">
           <span class="gl-step">+</span>
           <h2>רוצים שהלידים יגיעו ל-CRM / Zapier?</h2>
-          <p>חברו בלחיצה ל-Zapier, Make, יומן תורים, או התראות וואטסאפ — בלי מפתחות API.</p>
+          <p>חברו webhook ל-Zapier או Make, קישור ליומן תורים, או שירות נוסף לאחר שהוגדר ואומת.</p>
           <a class="btn btn-primary" href="#/workers/connect/${workerId}">${icon('plug', 14)} חברו לכלים</a>
         </article>
 
@@ -2678,7 +2684,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     if (w.isActive) { location.hash = '#/workers/live/' + workerId; return; }
     const tplRes = await api('/api/workers/templates');
     const template = tplRes.ok ? tplRes.body.templates.find((t) => t.id === w.templateId) : null;
-    const price = template ? template.rentPriceIls : 99;
+    const price = template ? template.rentPriceIls : 199;
     const bitUrl = BIT_PHONE ? bitPayUrl(BIT_PHONE) : '';
     const bitDisplay = BIT_PHONE ? (BIT_PHONE.replace(/^972/, '0').replace(/^(\d{3})(\d+)/, '$1-$2') || BIT_PHONE) : '';
     const hasBit = Boolean(BIT_PHONE);
@@ -2701,12 +2707,12 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('shield', 20)} הפעלה ללקוחות</h2>
-        <a href="#/workers/chat/${workerId}" style="margin-right:auto">${icon('arrow-right', 16)} חזרה לניסיון</a>
+        <a href="#/workers/chat/${workerId}" style="margin-right:auto">${icon('arrow-right', 16)} חזרה ל${timedTrialEnabled() ? 'ניסיון' : 'דמו'}</a>
       </div>
       <div class="paywall">
         <div class="pw-hire-label">הפעלה ללקוחות אמיתיים</div>
         <h2>${escapeHtml(w.name)} מוכן לעבודה מול לקוחות</h2>
-        <p class="muted">אחרי הפעלה — העובד זמין ללקוחות, לא רק לניסיון.</p>
+        <p class="muted">אחרי הפעלה — העובד זמין ללקוחות, לא רק ל${timedTrialEnabled() ? 'ניסיון' : 'דמו'}.</p>
         <div class="pw-price">₪${price} <small>לחודש</small></div>
         ${hasPaddle ? `<div class="pw-instant-block">
           <p class="pw-speed-label">${icon('zap', 14)} מיידי — כרטיס אשראי</p>
@@ -2848,7 +2854,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     const link = tryPageUrl(workerId);
     const text = isActive
       ? `שלום! אפשר לדבר עם ${workerName} כאן: ${link}`
-      : `שלום! ${workerName} עדיין במצב ניסיון — בעל העסק יפעיל אותו בקרוב. בינתיים: ${location.origin}/marketplace`;
+      : `שלום! ${workerName} עדיין במצב ${timedTrialEnabled() ? 'ניסיון' : 'דמו'} — בעל העסק יפעיל אותו בקרוב. בינתיים: ${location.origin}/marketplace`;
     return { link, text, wa: 'https://wa.me/?text=' + encodeURIComponent(text) };
   }
 
@@ -2875,7 +2881,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
     app.innerHTML = `
       <div class="toolbar">
         <h2>${icon('chat', 20)} ${escapeHtml(w.name)}</h2>
-        <span class="chat-status"><span class="sb-dot"></span> ${isDemo ? 'בניסיון' : 'במשמרת'}</span>
+        <span class="chat-status"><span class="sb-dot"></span> ${isDemo ? (timedTrialEnabled() ? 'בניסיון' : 'בדמו') : 'במשמרת'}</span>
         <a href="#/workers/insights/${workerId}" class="btn btn-outline btn-sm">${icon('activity', 14)} לוח</a>
         <a href="#/workers" style="margin-right:auto">${icon('arrow-right', 16)} חזרה</a>
       </div>
@@ -2884,8 +2890,8 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       </div>
       ${isDemo ? `<div class="demo-banner demo-banner-trial">
         <div class="demo-banner-copy">
-          <strong>${icon('zap', 14)} מצב ניסיון</strong>
-          <span class="demo-banner-sub">התשובות לדוגמה — לא מחוברות לוואטסאפ שלך</span>
+          <strong>${icon('zap', 14)} מצב ${timedTrialEnabled() ? 'ניסיון' : 'דמו'}</strong>
+          <span class="demo-banner-sub">התשובות לדוגמה — חיבור WhatsApp אינו פעיל כברירת מחדל</span>
         </div>
         <a class="btn btn-primary btn-sm" href="#/workers/activate/${workerId}">${icon('shield', 14)} להפעיל ללקוחות</a>
       </div>` : `<div class="live-bar">
@@ -2909,7 +2915,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
         <summary>${icon('edit', 14)} הגדרות</summary>
         <div style="padding-top:12px">
           <div class="fld" style="margin-bottom:14px">
-            <label>${icon('chat', 12)} רוצה התראות? הכנס מספר וואטסאפ</label>
+            <label>${icon('chat', 12)} מספר להתראות WhatsApp (דורש ספק מאומת)</label>
             <div class="row" style="gap:8px;flex-wrap:wrap">
               <input id="notify-wa-phone" type="tel" placeholder="05X-XXXXXXX" dir="ltr" style="flex:1;min-width:160px;text-align:left" />
               <button type="button" class="btn btn-sm btn-outline" id="notify-wa-save">${icon('check', 12)} שמור</button>
@@ -2950,7 +2956,7 @@ Never invent prices, policies, medical/legal advice, or promises that are not in
       const phone = document.getElementById('notify-wa-phone').value.trim();
       if (!phone) { toast('הכנס מספר וואטסאפ', 'error'); return; }
       const r = await api('/api/integrations/connect', { method: 'POST', body: JSON.stringify({ type: 'whatsapp', workerId, config: { ownerNotifyPhone: phone, provider: 'meta' } }) });
-      toast(r.ok ? 'נשמר — נשלח התראות למספר הזה' : 'משהו נתעכב, נסה שוב', r.ok ? 'success' : 'error');
+      toast(r.ok ? 'המספר נשמר — ההתראות יפעלו לאחר אימות ספק WhatsApp' : 'משהו נתעכב, נסה שוב', r.ok ? 'success' : 'error');
     };
 
     app.querySelectorAll('.suggestion-chip').forEach((chip) => {

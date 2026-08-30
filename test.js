@@ -1,5 +1,5 @@
 // Platform tests for AI Workers.
-// Covers: health, invoice, admin key issuance, earnings, tips, marketplace.
+// Covers: health, payment information, admin key issuance, earnings, tips, marketplace.
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:8765';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
@@ -32,11 +32,26 @@ console.log(`Testing ${BASE}\n`);
   });
   expect('spoofed forwarded host ignored by default', r.status === 200 && !String(r.body.publicBaseUrl).includes('evil.example'));
 }
+{
+  const r = await req('/ready');
+  expect('GET /ready blocks incomplete production config', r.status === 503 && r.body?.ok === false);
+  expect('  readiness checks SQLite', r.body?.persistence?.dbOk === true);
+  expect('  readiness checks aligned writable data paths', r.body?.persistence?.pathsAligned === true && r.body?.persistence?.writable === true);
+  expect('  readiness reports missing LLM config', r.body?.configuration?.llmConfigured === false);
+}
+{
+  const r = await req('/infra-ready');
+  expect('GET /infra-ready verifies local SQLite and writable paths', r.status === 200
+    && r.body?.ok === true
+    && r.body?.persistence?.dbOk === true
+    && r.body?.persistence?.writable === true);
+}
 
 // 2. Invoice
 {
   const r = await req('/invoice');
-  expect('GET /invoice -> 200 text', r.status === 200 && String(r.body).includes('INVOICE'));
+  expect('GET /invoice -> 200 text', r.status === 200 && String(r.body).includes('ORDER AND PAYMENT INFORMATION'));
+  expect('  clearly states it is not a tax document', String(r.body).includes('NOT A TAX DOCUMENT'));
   expect('  mentions AI WORKER TEMPLATES', String(r.body).includes('AI WORKER TEMPLATES'));
 }
 
@@ -44,6 +59,15 @@ console.log(`Testing ${BASE}\n`);
 {
   const r = await req('/invoice.txt');
   expect('GET /invoice.txt -> 200', r.status === 200);
+}
+
+// 3b. Legal copy follows the configured-channel model
+{
+  const terms = await req('/terms');
+  const privacy = await req('/privacy');
+  expect('GET /terms and /privacy -> 200', terms.status === 200 && privacy.status === 200);
+  expect('  terms distinguish manual and verified automatic activation', String(terms.body).includes('תשלום ידני דורש בדיקה') && String(terms.body).includes('סליקה אוטומטית'));
+  expect('  privacy does not claim a fixed payment provider', String(privacy.body).includes('בערוצים שמוצגים בפועל') && !String(privacy.body).includes('תשלומים מתבצעים ישירות ביניכם לבין PayPal'));
 }
 
 // 4. Admin issue key (with token)
@@ -176,8 +200,12 @@ console.log(`Testing ${BASE}\n`);
   expect('GET / -> 200 HTML', r.status === 200);
   expect('  mentions Hebrew branding', String(r.body).includes('עובדי AI'));
   expect('  links to marketplace', String(r.body).includes('/marketplace'));
-  expect('  case studies section', String(r.body).includes('id="case-studies"') && String(r.body).includes('סיפורי לקוחות'));
+  expect('  illustrative use cases are clearly labeled', String(r.body).includes('id="case-studies"') && String(r.body).includes('תרחישי שימוש להמחשה') && String(r.body).includes('אינן תוצאות של לקוחות'));
+  expect('  does not publish fabricated testimonial identities', !String(r.body).includes('ש. כהן') && !String(r.body).includes('ד. לוי') && !String(r.body).includes('ר. אברהם'));
+  expect('  does not claim unsupported popularity or WhatsApp handling', !String(r.body).includes('הכי נבחר') && !String(r.body).includes('לקוח כתב בוואטסאפ — נענה'));
+  expect('  payment copy only promises configured options', String(r.body).includes('אפשרויות התשלום הזמינות מוצגות בעת ההפעלה') && !String(r.body).includes('תשלום בכרטיס אשראי (Paddle), Bit'));
   expect('  magic CTA on landing', String(r.body).includes('href="/marketplace#/magic" class="cta"'));
+  expect('  does not promise an unconfigured 14-day trial', !String(r.body).includes('ניסיון 14 ימים'));
 }
 
 // 10. Marketplace HTML page
@@ -188,6 +216,8 @@ console.log(`Testing ${BASE}\n`);
   expect('  HTML allows Google font styles only', csp.includes("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"));
   expect('  HTML limits browser fetches to same origin', csp.includes("connect-src 'self'"));
   expect('  serves Hebrew HTML', String(r.body).includes('שוק העובדים'));
+  expect('  template badges avoid unsupported social proof', !String(r.body).includes('בחירת עסקים'));
+  expect('  WhatsApp capability is explicitly configuration-gated', String(r.body).includes('WhatsApp רק לאחר חיבור מאומת') && !String(r.body).includes('תוך פחות מדקה יהיה לכם עובד שעונה ללקוחות בוואטסאפ'));
 }
 
 // 11. Templates API
@@ -200,6 +230,7 @@ console.log(`Testing ${BASE}\n`);
   const r = await req('/api/public/stats');
   expect('GET /api/public/stats -> 200', r.status === 200);
   expect('  exposes template count', r.body.templateCount >= 10);
+  expect('  exposes the real monthly starting price', r.body.startingPriceIls === 199);
   expect('  does not expose revenue', r.body.monthlyRevenueIls === undefined && r.body.totalUsdcReceived === undefined);
 }
 

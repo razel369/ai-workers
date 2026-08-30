@@ -2,7 +2,7 @@
 
 import crypto from 'node:crypto';
 import * as workers from './workers.js';
-import { autoActivateWorker } from './payment-webhooks.js';
+import { autoActivateWorker, verifyRentAmount } from './payment-webhooks.js';
 
 const PADDLE_API_KEY = (process.env.PADDLE_API_KEY ?? '').trim();
 const PADDLE_CLIENT_TOKEN = (process.env.PADDLE_CLIENT_TOKEN ?? '').trim();
@@ -120,36 +120,32 @@ export function processPaddleWebhookEvent(event) {
   const data = event?.data ?? {};
   const { workerId, tenantId } = extractCustomData(data);
 
-  if (eventType === 'subscription.created' || eventType === 'subscription.activated') {
-    const subId = data.id ?? data.subscription_id ?? '';
-    return activateFromPaddle({
-      workerId, tenantId, reference: subId, eventType,
-    });
-  }
-
-  if (eventType === 'transaction.completed' || eventType === 'transaction.paid') {
+  // Subscription lifecycle events do not prove that a charge completed. Grant
+  // or renew access only from the corresponding completed transaction event.
+  if (eventType === 'transaction.completed') {
     const txId = data.id ?? '';
+    if (!workerId || !tenantId) return { ok: false, error: 'missing_custom_data' };
+    if (!String(txId).trim()) return { ok: false, error: 'payment_reference_required' };
     const amount = data.details?.totals?.total
       ?? data.details?.totals?.grand_total
       ?? data.totals?.total
-      ?? 0;
-    const amountIls = Number(amount) / 100 || undefined;
+      ?? null;
+    const currency = String(
+      data.currency_code
+      ?? data.details?.totals?.currency_code
+      ?? data.totals?.currency_code
+      ?? ''
+    ).trim().toUpperCase();
+    const minorUnits = Number(amount);
+    const amountIls = Number.isFinite(minorUnits) ? minorUnits / 100 : Number.NaN;
+    const verifiedAmount = verifyRentAmount({ workerId, tenantId, amountIls, currency });
+    if (!verifiedAmount.ok) return verifiedAmount;
     return activateFromPaddle({
       workerId, tenantId, reference: txId, amountIls, eventType,
     });
   }
 
-  if (eventType === 'subscription.updated') {
-    const status = String(data.status ?? '').toLowerCase();
-    if (status === 'active' || status === 'trialing') {
-      const subId = data.id ?? '';
-      return activateFromPaddle({
-        workerId, tenantId, reference: subId, eventType,
-      });
-    }
-  }
-
-  return { ok: true, ignored: true, eventType };
+  return { ok: true, ignored: true, eventType, reason: 'activation_requires_completed_transaction' };
 }
 
 /**

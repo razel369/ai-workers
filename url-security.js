@@ -113,7 +113,18 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
     headers = {},
     maxBytes = DEFAULT_PUBLIC_FETCH_MAX_BYTES,
     maxRedirects = MAX_PUBLIC_FETCH_REDIRECTS,
+    responseType = 'text',
+    allowedProtocols = ['http:', 'https:'],
   } = options;
+
+  const protocolValues = allowedProtocols instanceof Set
+    ? [...allowedProtocols]
+    : Array.isArray(allowedProtocols)
+      ? allowedProtocols
+      : [allowedProtocols];
+  const allowedProtocolSet = new Set(
+    protocolValues.map((protocol) => String(protocol ?? '').trim().toLowerCase()).filter(Boolean)
+  );
 
   let current = String(rawUrl ?? '').trim();
 
@@ -122,6 +133,9 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
     if (!checked.ok) return { ok: false, error: checked.error, url: current };
 
     const parsed = new URL(checked.url);
+    if (!allowedProtocolSet.has(parsed.protocol)) {
+      return { ok: false, error: 'protocol_not_allowed', url: checked.url };
+    }
     const lib = parsed.protocol === 'https:' ? await import('node:https') : await import('node:http');
     const lookup = pinnedLookup(checked.resolved);
 
@@ -146,19 +160,54 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
           }
           return;
         }
+
+        const contentType = cleanText(res.headers['content-type'] ?? '', 120);
+        const declaredLength = Number(res.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+          res.destroy();
+          resolve({
+            ok: false,
+            error: 'response_too_large',
+            status,
+            contentType,
+            url: checked.url,
+          });
+          return;
+        }
+
         const chunks = [];
         let size = 0;
+        let exceeded = false;
         res.on('data', (chunk) => {
+          if (exceeded) return;
           size += chunk.length;
-          if (size <= maxBytes) chunks.push(chunk);
+          if (size > maxBytes) {
+            exceeded = true;
+            res.destroy();
+            resolve({
+              ok: false,
+              error: 'response_too_large',
+              status,
+              contentType,
+              url: checked.url,
+            });
+            return;
+          }
+          chunks.push(chunk);
         });
         res.on('end', () => {
+          if (exceeded) return;
+          const buffer = Buffer.concat(chunks);
           resolve({
             ok: status >= 200 && status < 300,
             status,
-            body: Buffer.concat(chunks).toString('utf8'),
+            body: responseType === 'buffer' ? buffer : buffer.toString('utf8'),
+            contentType,
             url: checked.url,
           });
+        });
+        res.on('error', (error) => {
+          if (!exceeded) reject(error);
         });
       });
       req.on('error', reject);

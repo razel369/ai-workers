@@ -1,49 +1,76 @@
 # Render (https://render.com)
-# Drop this file at the repo root, then:
-#   1. New -> Web Service -> Connect repo
-#   2. Render auto-detects render.yaml
-#   3. Set env vars in dashboard (see .env.example)
+# Provision this file only through New -> Blueprint -> Connect repo.
+# A manually created Web Service does not apply render.yaml automatically and
+# can silently omit the persistent disk, Frankfurt region, and readiness gate.
+# Set every prompted env var before the first deploy (see .env.production.example).
+# Stop before Deploy Blueprint until the owner explicitly approves the live price.
+# After provisioning, set Blueprint Settings -> Auto Sync to No; this is separate
+# from the service-level autoDeployTrigger below.
+# Payment is deliberately not hard-coded or prompted as a single mandatory
+# provider here. As soon as the Blueprint creates the service, add at least one
+# real BIT_PHONE, PAYPAL_ME, bank-transfer set, or verified Paddle production
+# configuration in Render Environment. `/infra-ready` lets the first deploy
+# validate the disk and SQLite without exposing the customer app: all production
+# traffic still returns 503 until the stricter `/ready` gate passes.
 
 services:
   - type: web
-    name: paid-agent-demo
+    name: ai-workers-il
     runtime: docker
-    plan: starter
-    healthCheckPath: /health
+    # Candidate branch until Render is verified and Vercel production deploys
+    # are disabled. Change to main only as part of the approved merge cutover.
+    branch: codex/revive-ai-workers-baseline
+    region: frankfurt
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: "off"
+    healthCheckPath: /infra-ready
     disk:
       name: ai-workers-data
       mountPath: /app/data
       sizeGB: 1
     envVars:
       - key: PORT
-        value: 8765
+        value: "8765"
+      - key: NODE_ENV
+        value: production
       - key: NODE_OPTIONS
         value: --experimental-sqlite --no-warnings
       - key: DB_PATH
         value: /app/data/earnings.db
+      - key: DATA_DIR
+        value: /app/data
       - key: TENANTS_DIR
         value: /app/data/tenants
+      - key: REQUIRE_PERSISTENT_VOLUME
+        value: "1"
       - key: TRUST_PROXY_HEADERS
         value: "1"
+      - key: ALLOW_PRIVATE_NETWORK_URLS
+        value: "0"
+      - key: PAYMENT_AUTO_VERIFY
+        value: "0"
+      - key: TRIAL_DAYS
+        value: "0"
+      - key: EMBED_ALLOW_PUBLIC
+        value: "0"
       - key: AGENT_NAME
-        sync: false
+        value: AI Workers
       - key: AGENT_OWNER_CONTACT
-        sync: false
-      - key: PUBLIC_BASE_URL
         sync: false
       - key: LLM_API_KEY
         sync: false
       - key: LLM_PROVIDER
         value: openai_compatible
-      - key: LLM_MODEL
-        sync: false
       - key: LLM_BASE_URL
+        # Operator-controlled public HTTPS API root. The app appends /v1 routes;
+        # examples: https://api.openai.com or https://openrouter.ai/api
         sync: false
-      - key: PAYPAL_ME
-        sync: false
-      - key: BIT_PHONE
-        sync: false
-      - key: BUY_ME_A_COFFEE
+      - key: LLM_MODEL
         sync: false
       - key: ADMIN_TOKEN
         generateValue: true
+      - key: INTEGRATIONS_SECRET
+        # Supply a new long secret for a fresh launch. For recovery, this must
+        # exactly match the old encryption secret before restoring tenant data.
+        sync: false

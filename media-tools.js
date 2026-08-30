@@ -9,6 +9,7 @@ import {
   downloadGoogleMediaFile,
   isMediaMockMode,
 } from './google-media.js';
+import { fetchPublicHttpContent } from './url-security.js';
 
 const NSFW_PATTERNS = [
   /\b(nude|naked|nsfw|porn|xxx|erotic|sexual|hentai)\b/i,
@@ -50,17 +51,26 @@ function ensureMediaTables(db) {
   `);
 }
 
-function checkAndBumpRateLimit(db, tenantId) {
+function checkRateLimit(db, tenantId) {
   ensureMediaTables(db);
   const period = monthKey();
   const row = db.prepare(`SELECT count FROM media_gen_usage WHERE tenant_id=? AND period=?`).get(tenantId, period);
   const count = row?.count ?? 0;
-  if (count >= DEFAULT_MONTHLY_LIMIT) {
-    return { allowed: false, count, limit: DEFAULT_MONTHLY_LIMIT, period };
+  return { allowed: count < DEFAULT_MONTHLY_LIMIT, count, limit: DEFAULT_MONTHLY_LIMIT, period };
+}
+
+function checkAndBumpRateLimit(db, tenantId) {
+  ensureMediaTables(db);
+  const period = monthKey();
+  const row = db.prepare(`INSERT INTO media_gen_usage (tenant_id, period, count) VALUES (?, ?, 1)
+    ON CONFLICT(tenant_id, period) DO UPDATE SET count = media_gen_usage.count + 1
+      WHERE media_gen_usage.count < ?
+    RETURNING count`).get(tenantId, period, DEFAULT_MONTHLY_LIMIT);
+  if (row) {
+    return { allowed: true, count: row.count, limit: DEFAULT_MONTHLY_LIMIT, period };
   }
-  db.prepare(`INSERT INTO media_gen_usage (tenant_id, period, count) VALUES (?, ?, 1)
-    ON CONFLICT(tenant_id, period) DO UPDATE SET count = count + 1`).run(tenantId, period);
-  return { allowed: true, count: count + 1, limit: DEFAULT_MONTHLY_LIMIT, period };
+  const current = db.prepare(`SELECT count FROM media_gen_usage WHERE tenant_id=? AND period=?`).get(tenantId, period);
+  return { allowed: false, count: current?.count ?? 0, limit: DEFAULT_MONTHLY_LIMIT, period };
 }
 
 function mediaDir(tenantId, ensureTenantDir) {
@@ -71,7 +81,7 @@ function mediaDir(tenantId, ensureTenantDir) {
 }
 
 function publicBaseUrl() {
-  return (process.env.PUBLIC_BASE_URL || 'http://localhost:8765').replace(/\/$/, '');
+  return (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:8765').replace(/\/$/, '');
 }
 
 function saveMediaAsset({ tenantId, workerId, buffer, ext, mimeType, ensureTenantDir }) {
@@ -133,14 +143,23 @@ export function registerMediaTools(toolDefs, deps) {
           return { result: 'בקשה נחסמה: תוכן לא מתאים למדיניות הבטיחות. נסח מחדש בצורה מקצועית ומתאימה לעסק.' };
         }
 
+        const allowPlatformMedia = ctx.allowPlatformMedia === true;
         const db = getTenantDb(ctx.tenantId);
-        const rate = checkAndBumpRateLimit(db, ctx.tenantId);
+        const rate = allowPlatformMedia
+          ? checkAndBumpRateLimit(db, ctx.tenantId)
+          : { allowed: true, count: 0, limit: DEFAULT_MONTHLY_LIMIT, period: monthKey(), mock: true };
         if (!rate.allowed) {
           return { result: `מגבלת יצירת מדיה לחודש ${rate.period} הושגה (${rate.count}/${rate.limit}). נסה בחודש הבא או פנה למנהל המערכת.` };
         }
 
         const aspectRatio = args.aspectRatio || '1:1';
-        const gen = await generateImage({ prompt: args.prompt, aspectRatio });
+        const gen = allowPlatformMedia
+          ? await generateImage({ prompt: args.prompt, aspectRatio })
+          : {
+              mock: true,
+              dataUrl: mockSvgDataUrl(args.prompt, 'image'),
+              caption: 'מצב הדגמה — יצירת מדיה אמיתית זמינה רק לעובד פעיל ובתשלום',
+            };
 
         let url;
         let markdown;
@@ -163,12 +182,13 @@ export function registerMediaTools(toolDefs, deps) {
           storeInOutbox(db, ctx, `image:${args.purpose || 'generated'}`, `${url}\n${args.prompt}`);
         }
 
-        const mode = isMediaMockMode() ? 'mock' : 'google';
+        const mock = gen.mock === true;
+        const mode = mock ? 'mock' : 'google';
         return {
           result: `תמונה נוצרה (${mode}).\n${markdown}\n${gen.caption ? '\n' + gen.caption : ''}`,
           url,
           markdown,
-          mock: isMediaMockMode(),
+          mock,
           usage: rate,
         };
       },
@@ -192,48 +212,81 @@ export function registerMediaTools(toolDefs, deps) {
           return { result: 'בקשה נחסמה: תוכן לא מתאים למדיניות הבטיחות.' };
         }
 
+        const allowPlatformMedia = ctx.allowPlatformMedia === true;
         const db = getTenantDb(ctx.tenantId);
-        const rate = checkAndBumpRateLimit(db, ctx.tenantId);
-        if (!rate.allowed) {
-          return { result: `מגבלת יצירת מדיה לחודש ${rate.period} הושגה (${rate.count}/${rate.limit}).` };
+        const preflightRate = allowPlatformMedia
+          ? checkRateLimit(db, ctx.tenantId)
+          : { allowed: true, count: 0, limit: DEFAULT_MONTHLY_LIMIT, period: monthKey(), mock: true };
+        if (!preflightRate.allowed) {
+          return { result: `מגבלת יצירת מדיה לחודש ${preflightRate.period} הושגה (${preflightRate.count}/${preflightRate.limit}).` };
         }
 
         let imageBase64;
         let imageMime = 'image/png';
-        if (args.imageUrl && !String(args.imageUrl).startsWith('data:')) {
-          try {
-            const imgRes = await fetch(args.imageUrl, { signal: AbortSignal.timeout(15_000) });
-            if (imgRes.ok) {
-              const buf = Buffer.from(await imgRes.arrayBuffer());
-              imageBase64 = buf.toString('base64');
-              imageMime = imgRes.headers.get('content-type') || 'image/png';
-            }
-          } catch {}
+        if (allowPlatformMedia && args.imageUrl) {
+          const imageUrl = String(args.imageUrl).trim();
+          let parsedImageUrl;
+          try { parsedImageUrl = new URL(imageUrl); } catch {}
+          if (parsedImageUrl?.protocol !== 'https:') {
+            return { result: 'תמונת הייחוס חייבת להיות קישור HTTPS ציבורי לתמונת PNG, JPEG או WebP.', error: 'unsupported_reference_image' };
+          }
+          const fetched = await fetchPublicHttpContent(imageUrl, {
+            timeoutMs: 15_000,
+            maxBytes: 10 * 1024 * 1024,
+            maxRedirects: 3,
+            responseType: 'buffer',
+            allowedProtocols: ['https:'],
+            headers: { accept: 'image/png,image/jpeg,image/webp' },
+          });
+          if (!fetched.ok) {
+            return { result: 'לא ניתן לטעון את תמונת הייחוס מקישור ציבורי ובטוח.', error: `reference_image_${fetched.error || fetched.status || 'fetch_failed'}` };
+          }
+          const normalizedMime = String(fetched.contentType || '').split(';', 1)[0].trim().toLowerCase();
+          if (!['image/png', 'image/jpeg', 'image/webp'].includes(normalizedMime) || !Buffer.isBuffer(fetched.body)) {
+            return { result: 'תמונת הייחוס חייבת להיות PNG, JPEG או WebP.', error: 'unsupported_reference_image_type' };
+          }
+          imageBase64 = fetched.body.toString('base64');
+          imageMime = normalizedMime;
+        }
+
+        const rate = allowPlatformMedia
+          ? checkAndBumpRateLimit(db, ctx.tenantId)
+          : { allowed: true, count: 0, limit: DEFAULT_MONTHLY_LIMIT, period: monthKey(), mock: true };
+        if (!rate.allowed) {
+          return { result: `מגבלת יצירת מדיה לחודש ${rate.period} הושגה (${rate.count}/${rate.limit}).` };
         }
 
         const jobId = newId('vidjob');
         const now = new Date().toISOString();
         ensureMediaTables(db);
 
-        const started = await startVideoGeneration({
-          prompt: args.prompt,
-          imageBase64,
-          imageMime,
-          durationSeconds: Math.min(Math.max(Number(args.durationSeconds) || 4, 4), 8),
-          resolution: args.resolution || '720p',
-          aspectRatio: args.aspectRatio || '16:9',
-        });
+        const started = allowPlatformMedia
+          ? await startVideoGeneration({
+              prompt: args.prompt,
+              imageBase64,
+              imageMime,
+              durationSeconds: Math.min(Math.max(Number(args.durationSeconds) || 4, 4), 8),
+              resolution: args.resolution || '720p',
+              aspectRatio: args.aspectRatio || '16:9',
+            })
+          : {
+              operationName: `mock://video/${crypto.randomBytes(8).toString('hex')}`,
+              done: false,
+              mock: true,
+              model: 'mock',
+            };
 
         db.prepare(`INSERT INTO media_jobs (id, worker_id, kind, status, operation_name, prompt, created_at, updated_at)
           VALUES (?, ?, 'video', 'pending', ?, ?, ?, ?)`).run(
           jobId, ctx.workerId, started.operationName, args.prompt, now, now
         );
 
-        const maxPolls = isMediaMockMode() ? 1 : 18;
+        const mockGeneration = started.mock === true || String(started.operationName).startsWith('mock://');
+        const maxPolls = mockGeneration || isMediaMockMode() ? 1 : 18;
         let pollResult = started;
         for (let i = 0; i < maxPolls; i++) {
           if (pollResult.done) break;
-          await new Promise((r) => setTimeout(r, isMediaMockMode() ? 50 : 5000));
+          await new Promise((r) => setTimeout(r, mockGeneration || isMediaMockMode() ? 50 : 5000));
           pollResult = await pollVideoOperation(started.operationName);
           if (pollResult.done) break;
         }
@@ -272,13 +325,14 @@ export function registerMediaTools(toolDefs, deps) {
         db.prepare(`UPDATE media_jobs SET status='done', result_path=?, updated_at=? WHERE id=?`).run(url, new Date().toISOString(), jobId);
         storeInOutbox(db, ctx, 'video:generated', `${url}\n${args.prompt}`);
 
-        const mode = isMediaMockMode() ? 'mock' : 'google';
+        const mock = pollResult.mock === true || mockGeneration;
+        const mode = mock ? 'mock' : 'google';
         return {
           result: `וידאו נוצר (${mode}).\n[צפה בוידאו](${url})\nמזהה משימה: ${jobId}`,
           jobId,
           url,
           status: 'done',
-          mock: isMediaMockMode(),
+          mock,
         };
       },
     },
@@ -299,6 +353,14 @@ export function registerMediaTools(toolDefs, deps) {
         if (!row) return { result: 'משימת וידאו לא נמצאה.' };
         if (row.status === 'done' && row.result_path) {
           return { result: `הוידאו מוכן: [צפה](${row.result_path})`, url: row.result_path, status: 'done' };
+        }
+
+        if (ctx.allowPlatformMedia !== true && !String(row.operation_name).startsWith('mock://')) {
+          return {
+            result: 'בדיקת וידאו אמיתי זמינה רק לעובד פעיל ובתשלום.',
+            status: 'payment_required',
+            error: 'platform_media_not_allowed',
+          };
         }
 
         const poll = await pollVideoOperation(row.operation_name);

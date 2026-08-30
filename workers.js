@@ -1845,9 +1845,12 @@ function parseWorkerRow(r) {
     agentMode: r.agent_mode === 'chat' ? 'chat' : 'agent',
     mcpServers, skills,
     llm: {
-      provider: r.llm_provider || srv.provider,
-      model: r.llm_model || srv.model,
-      baseUrl: r.llm_base_url || srv.baseUrl,
+      // LLM routing is platform-managed. Never surface legacy tenant-stored
+      // routing as the effective runtime configuration: older databases may
+      // contain values written before this trust boundary was enforced.
+      provider: serverHasLlm ? srv.provider : 'mock',
+      model: serverHasLlm ? srv.model : '',
+      baseUrl: serverHasLlm ? srv.baseUrl : '',
       hasApiKey: serverHasLlm,
       platformProvided: serverHasLlm,
     },
@@ -1881,11 +1884,9 @@ export function updateWorker(tenantId, workerId, patch) {
   if (patch.mcpServers !== undefined) { fields.push('mcp_servers_json = ?'); values.push(JSON.stringify((Array.isArray(patch.mcpServers) ? patch.mcpServers : []).slice(0, 10))); }
   if (patch.skills !== undefined) { fields.push('skills_json = ?'); values.push(JSON.stringify((Array.isArray(patch.skills) ? patch.skills : []).slice(0, 10))); }
   if (patch.paused !== undefined) { fields.push('paused = ?'); values.push(patch.paused ? 1 : 0); }
-  if (patch.llm) {
-    if (patch.llm.provider !== undefined) { fields.push('llm_provider = ?'); values.push(String(patch.llm.provider).slice(0, 30)); }
-    if (patch.llm.model !== undefined) { fields.push('llm_model = ?'); values.push(String(patch.llm.model).slice(0, 60)); }
-    if (patch.llm.baseUrl !== undefined) { fields.push('llm_base_url = ?'); values.push(String(patch.llm.baseUrl).slice(0, 200)); }
-  }
+  // `llm` is intentionally ignored. Tenants may customize the worker's
+  // persona, tasks, knowledge, and tools, but platform credentials must only
+  // be used with the operator-configured provider/model/base URL.
   if (!fields.length) return { ok: true, changed: 0 };
   fields.push('updated_at = ?'); values.push(new Date().toISOString());
   values.push(workerId);
@@ -1924,17 +1925,33 @@ export function adminMarkPaid({ workerId, tenantId, days, paymentChannel, paymen
   if (!tenantId) return { ok: false, error: 'tenantId_required' };
   if (!days || days < 1) days = DEFAULT_RENTAL_DAYS;
   const db = getTenantDb(tenantId);
-  const w = db.prepare(`SELECT id, status FROM workers WHERE id = ?`).get(workerId);
+  const w = db.prepare(`SELECT id, status, paid_until AS paidUntil FROM workers WHERE id = ?`).get(workerId);
   if (!w) return { ok: false, error: 'not_found' };
+  const normalizedChannel = String(paymentChannel ?? '').trim() || null;
+  const normalizedReference = String(paymentReference ?? '').trim().slice(0, 200) || null;
+  if (normalizedReference) {
+    const existing = db.prepare(`SELECT worker_id AS workerId, paid_until AS paidUntil
+      FROM rentals WHERE payment_channel IS ? AND payment_reference = ?
+      ORDER BY created_at DESC LIMIT 1`).get(normalizedChannel, normalizedReference);
+    if (existing) {
+      if (existing.workerId !== workerId) return { ok: false, error: 'payment_reference_already_used' };
+      return { ok: true, alreadyRecorded: true, paidUntil: w.paidUntil || existing.paidUntil };
+    }
+  }
   const baseDate = new Date();
   const current = db.prepare(`SELECT MAX(paid_until) AS pu FROM rentals WHERE worker_id = ?`).get(workerId);
-  if (current?.pu && new Date(current.pu) > baseDate) baseDate.setTime(new Date(current.pu).getTime());
+  for (const candidate of [w.paidUntil, current?.pu]) {
+    const candidateDate = candidate ? new Date(candidate) : null;
+    if (candidateDate && !Number.isNaN(candidateDate.getTime()) && candidateDate > baseDate) {
+      baseDate.setTime(candidateDate.getTime());
+    }
+  }
   baseDate.setDate(baseDate.getDate() + days);
   const paidUntil = baseDate.toISOString();
   const now = new Date().toISOString();
   db.prepare(`UPDATE workers SET status = 'active', paid_until = ?, updated_at = ? WHERE id = ?`).run(paidUntil, now, workerId);
   db.prepare(`INSERT INTO rentals (worker_id, tenant_id, days, amount_ils, payment_channel, payment_reference, paid_until, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(workerId, tenantId, days, amountIls ?? 0, paymentChannel ?? null, paymentReference ?? null, paidUntil, now);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(workerId, tenantId, days, amountIls ?? 0, normalizedChannel, normalizedReference, paidUntil, now);
   return { ok: true, paidUntil };
 }
 
@@ -2324,9 +2341,11 @@ function mockReplyWithAgent(worker, userMessage, toolCallsLog = [], agentSteps =
 
 // --- Real LLM runtime ----------------------------------------------------
 
-async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
-  const provider = worker.llm.provider || 'openai_compatible';
-  const model = worker.llm.model || defaultModelFor(provider);
+async function callLLMOnce(systemPrompt, messages, toolDefs = [], modelOverride = '') {
+  const serverConfig = getServerLlmConfig();
+  const apiKey = serverConfig.apiKey;
+  const provider = serverConfig.provider || 'openai_compatible';
+  const model = modelOverride || serverConfig.model || defaultModelFor(provider);
   if (!apiKey) return { ok: false, error: 'no_api_key' };
 
   const formattedTools = toolDefs.filter(Boolean).map((td) => {
@@ -2339,7 +2358,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
   const hasTools = formattedTools.length > 0;
 
   if (provider === 'anthropic') {
-    const baseUrl = worker.llm.baseUrl || 'https://api.anthropic.com';
+    const baseUrl = (serverConfig.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
     const body = {
       model, max_tokens: LLM_MAX_TOKENS, system: systemPrompt,
       messages: messages.map((m) => {
@@ -2356,7 +2375,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
         return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
       }),
     };
-    if (hasTools) body.tools = toolDefs;
+    if (hasTools) body.tools = formattedTools;
     const r = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -2374,7 +2393,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
   }
 
   // OpenAI-compatible (covers OpenAI, Groq, OpenRouter, Together, local llama.cpp, etc.)
-  const baseUrl = (worker.llm.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
+  const baseUrl = (serverConfig.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
   const oaiMessages = [];
   for (const m of messages) {
     if (m.role === 'tool') {
@@ -2398,7 +2417,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
     max_tokens: LLM_MAX_TOKENS,
     temperature: 0.7,
   };
-  if (hasTools) body.tools = toolDefs;
+  if (hasTools) body.tools = formattedTools;
   const r = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
@@ -2422,15 +2441,15 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
   return { ok: true, text, toolCalls };
 }
 
-async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
-  let res = await callLLMOnce(worker, systemPrompt, messages, toolDefs, apiKey);
+async function callLLM(systemPrompt, messages, toolDefs = []) {
+  const configuredModel = getServerLlmConfig().model || '';
+  let res = await callLLMOnce(systemPrompt, messages, toolDefs);
   if (!res.ok && isRetryableLlmError(res)) {
-    const fallback = getFallbackModel(worker.llm.model || '');
-    if (fallback && fallback !== worker.llm.model) {
-      const fallbackWorker = { ...worker, llm: { ...worker.llm, model: fallback } };
+    const fallback = getFallbackModel(configuredModel);
+    if (fallback && fallback !== configuredModel) {
       const shortPrompt = `${systemPrompt}\n\nIMPORTANT: Reply in Hebrew, under 80 words, no tools.`;
       const shortHistory = messages.slice(-6);
-      const retry = await callLLMOnce(fallbackWorker, shortPrompt, shortHistory, [], apiKey);
+      const retry = await callLLMOnce(shortPrompt, shortHistory, [], fallback);
       if (retry.ok) return { ...retry, retried: true, fallbackModel: fallback };
       res = retry;
     }
@@ -2456,15 +2475,15 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   else if (userMessage != null) userMessage = String(userMessage).slice(0, 4000);
   else userMessage = '';
   const srvCfg = getServerLlmConfig();
-  if (srvCfg.apiKey) {
-    worker.llm.provider = worker.llm.provider || srvCfg.provider;
-    worker.llm.model = worker.llm.model || srvCfg.model;
-    worker.llm.baseUrl = worker.llm.baseUrl || srvCfg.baseUrl;
-  }
 
-  // Active + paid check (demoMode lets owner try before paying for production)
-  const isPaid = worker.paidUntil && new Date(worker.paidUntil) > new Date();
-  const isProductionReady = worker.status === 'active' && isPaid && !worker.paused;
+  // Active entitlement check (demoMode lets owner try before activation).
+  const isProductionReady = worker.isActive;
+  // Demo/test modes bypass the customer-facing payment error so owners can
+  // preview configuration, but they must not spend the platform LLM key until
+  // the worker has an active entitlement. Legacy recovered workers can have
+  // status=active without paidUntil; that historical perpetual entitlement is
+  // preserved until the operator explicitly pauses or replaces it.
+  const canUsePlatformLlm = !!srvCfg.apiKey && isProductionReady;
   if (!testMode && !demoMode && !isProductionReady) {
     if (worker.paused) {
       return {
@@ -2548,7 +2567,15 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
   const agentSteps = [];
 
   const chatHistory = history.map((m) => ({ role: m.role, content: m.content }));
-  const toolCtx = { tenantId, workerId, customerId, workerName: worker.name, workerKnowledge: worker.knowledge, customerProfile };
+  const toolCtx = {
+    tenantId,
+    workerId,
+    customerId,
+    workerName: worker.name,
+    workerKnowledge: worker.knowledge,
+    customerProfile,
+    allowPlatformMedia: isProductionReady,
+  };
 
   const loopStarted = Date.now();
   let finalReply = '';
@@ -2558,7 +2585,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     agentSteps.push({ step: loopIndex + 1, phase, thought: phase === 'plan' ? 'LLM planning next action' : undefined });
   };
 
-  if (srvCfg.apiKey && agentMode && enabledToolNames.length > 0) {
+  if (canUsePlatformLlm && agentMode && enabledToolNames.length > 0) {
     for (let loop = 0; loop < MAX_AGENT_STEPS; loop++) {
       if (Date.now() - loopStarted > AGENT_LOOP_TIMEOUT_MS) {
         timedOut = true;
@@ -2566,7 +2593,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
         break;
       }
       await runAgentStep(loop, 'plan');
-      const llmRes = await callLLM(worker, systemPrompt, chatHistory, allToolDefsArray, srvCfg.apiKey);
+      const llmRes = await callLLM(systemPrompt, chatHistory, allToolDefsArray);
       if (!llmRes.ok) {
         error = llmRes.error;
         finalReply = mockReplyWithAgent(worker, userMessage, toolCallsLog, agentSteps);
@@ -2574,7 +2601,7 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
         if (isRetryableLlmError(llmRes)) error = llmRes.error;
         break;
       }
-      runtime = worker.llm.provider;
+      runtime = srvCfg.provider;
       finalReply = llmRes.text;
 
       if (!llmRes.toolCalls || llmRes.toolCalls.length === 0) {
@@ -2613,14 +2640,14 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       if (timedOut) break;
     }
     reply = finalReply;
-  } else if (srvCfg.apiKey) {
-    const llmRes = await callLLM(worker, systemPrompt, chatHistory, [], srvCfg.apiKey);
+  } else if (canUsePlatformLlm) {
+    const llmRes = await callLLM(systemPrompt, chatHistory, []);
     if (!llmRes.ok) {
       error = llmRes.error;
       reply = mockReply(worker, chatHistory, userMessage);
       runtime = 'mock_fallback';
     } else {
-      runtime = worker.llm.provider;
+      runtime = srvCfg.provider;
       reply = sanitizeCustomerFacingReply(llmRes.text, worker);
     }
   } else if (agentMode && enabledToolNames.length > 0) {

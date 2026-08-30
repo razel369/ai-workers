@@ -18,13 +18,9 @@
 //
 //   -- Oldschool payment channels (any subset) --
 //   PAYPAL_ME=you                                  -> https://paypal.me/you
-//   BUY_ME_A_COFFEE=https://buymeacoffee.com/you
-//   KO_FI=https://ko-fi.com/you
-//   BIT_PHONE=972541234567                         -> shows a Bit payment link
-//   GITHUB_SPONSORS=you
-//   GUMROAD_URL=https://you.gumroad.com/l/ai-workers
+//   BIT_PHONE=9725XXXXXXXX                         -> shows a Bit payment link
 //
-//   -- Bank invoice (Israeli-friendly) --
+//   -- Bank transfer details (Israeli-friendly) --
 //   PAYEE_NAME=Your Name
 //   BANK_NAME=Bank Hapoalim
 //   BANK_BRANCH=620
@@ -71,7 +67,7 @@ import * as urlSecurity from './url-security.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 8765);
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const AGENT_NAME = process.env.AGENT_NAME ?? 'AI Workers';
 const AGENT_DESCRIPTION = process.env.AGENT_DESCRIPTION ?? 'AI employees for Israeli businesses.';
 const AGENT_OWNER_CONTACT = process.env.AGENT_OWNER_CONTACT ?? '';
@@ -79,20 +75,19 @@ const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 120);
 const SIGNUP_LIMIT_PER_HOUR = Number(process.env.SIGNUP_LIMIT_PER_HOUR ?? 12);
 const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, 'data', 'earnings.db');
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, 'data');
+const TENANTS_DIR = process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 const CORS_ALLOW_ORIGIN = process.env.CORS_ALLOW_ORIGIN ?? '';
 const ALLOW_PRIVATE_NETWORK_URLS = process.env.ALLOW_PRIVATE_NETWORK_URLS === '1';
 const TRUST_PROXY_HEADERS = process.env.TRUST_PROXY_HEADERS === '1';
+const RUNNING_ON_RENDER = process.env.RENDER === 'true';
+const REQUIRE_PERSISTENT_VOLUME = process.env.REQUIRE_PERSISTENT_VOLUME === '1' || RUNNING_ON_RENDER;
 
 // Oldschool channels
 const PAYPAL_ME = process.env.PAYPAL_ME ?? '';
-const BUY_ME_A_COFFEE = process.env.BUY_ME_A_COFFEE ?? '';
-const KO_FI = process.env.KO_FI ?? '';
 const BIT_PHONE = process.env.BIT_PHONE ?? '';
-const GITHUB_SPONSORS = process.env.GITHUB_SPONSORS ?? '';
-const GUMROAD_URL = process.env.GUMROAD_URL ?? '';
 
-// Bank invoice
+// Bank transfer details
 const PAYEE_NAME = process.env.PAYEE_NAME ?? '';
 const BANK_NAME = process.env.BANK_NAME ?? '';
 const BANK_BRANCH = process.env.BANK_BRANCH ?? '';
@@ -653,7 +648,7 @@ function gatherWorkerStats() {
 }
 
 function getPublicMarketplaceStats() {
-  const prices = workers.TEMPLATES.map((t) => t.buyPriceIls).filter((n) => Number.isFinite(n));
+  const prices = workers.TEMPLATES.map((t) => t.rentPriceIls).filter((n) => Number.isFinite(n));
   let tenantCount = 0;
   let workerCount = 0;
   let messageCount = 0;
@@ -776,7 +771,7 @@ function clientIp(req) {
 
 // Resolve the public base URL for the current request.
 // Trusts X-Forwarded-* headers (set by Cloudflare Tunnel, Fly, Render, Railway)
-// so the dashboard and invoice always show the real public URL, not localhost.
+// so the dashboard and payment information always show the real public URL, not localhost.
 function resolveBaseUrl(req) {
   const host = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-host'] ?? req.headers.host) : req.headers.host;
   const proto = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-proto'] ?? 'http') : 'http';
@@ -784,9 +779,10 @@ function resolveBaseUrl(req) {
   return PUBLIC_BASE_URL;
 }
 async function readBody(req, max = 1024 * 64) {
+  const contentType = String(req.headers['content-type'] ?? '');
   const cs = []; let t = 0;
-  for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true }; cs.push(c); }
-  return { text: Buffer.concat(cs).toString('utf8') };
+  for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true, contentType }; cs.push(c); }
+  return { text: Buffer.concat(cs).toString('utf8'), contentType };
 }
 
 const MAX_USER_MESSAGE_CHARS = 4000;
@@ -800,15 +796,241 @@ function rejectOversizedMessage(res, body) {
 
 function buildAcquireChannels() {
   const list = [];
-  if (PAYPAL_ME) list.push({ kind: 'paypal', url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
-  if (paddleEnabled()) list.push({ kind: 'paddle', url: `${PUBLIC_BASE_URL}/marketplace`, note: 'Credit card checkout via Paddle (auto-activation)' });
-  if (BUY_ME_A_COFFEE) list.push({ kind: 'buymeacoffee', url: BUY_ME_A_COFFEE });
-  if (KO_FI) list.push({ kind: 'kofi', url: KO_FI });
-  if (BIT_PHONE) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
-  if (GITHUB_SPONSORS) list.push({ kind: 'github-sponsors', url: `https://github.com/sponsors/${GITHUB_SPONSORS}` });
-  if (GUMROAD_URL) list.push({ kind: 'gumroad', url: GUMROAD_URL });
-  if (BANK_ACCOUNT) list.push({ kind: 'bank-transfer', payee: PAYEE_NAME, bank: BANK_NAME, branch: BANK_BRANCH, account: BANK_ACCOUNT, iban: IBAN || null, swift: SWIFT || null, note: 'Israeli-friendly bank transfer (masheh)' });
+  if (validAccountSlug(PAYPAL_ME)) list.push({ kind: 'paypal', account: PAYPAL_ME, url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
+  if (paddleOperational()) list.push({ kind: 'paddle', url: `${PUBLIC_BASE_URL}/marketplace`, note: 'Credit card checkout via Paddle (auto-activation)' });
+  if (validIsraeliMobile(BIT_PHONE)) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
+  if (bankTransferOperational()) {
+    list.push({
+      kind: 'bank-transfer',
+      payee: normalizePaymentLabel(PAYEE_NAME),
+      bank: normalizePaymentLabel(BANK_NAME),
+      branch: String(BANK_BRANCH).trim(),
+      account: String(BANK_ACCOUNT).trim(),
+      iban: normalizeIban(IBAN) || null,
+      swift: normalizeSwift(SWIFT) || null,
+      note: 'Israeli-friendly bank transfer',
+    });
+  }
   return list;
+}
+
+function looksLikePlaceholder(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return true;
+  return text.includes('...')
+    || /x{3,}/i.test(text)
+    || /[<>\[\]]/.test(text)
+    || /(?:your[-_ ]?(?:service|website|customer|domain|business|paypal)|yourdomain|placeholder|change[-_ ]?me|replace[-_ ]?me|\btodo\b|\btbd\b)/i.test(text)
+    || /^your(?:[-_. ]+(?:user(?:name)?|name|handle|account|slug))+$/i.test(text)
+    || /(?:^|\.)example\.(?:com|org|net)$/i.test(text)
+    || /@local$/i.test(text);
+}
+
+function configuredValue(value, minLength = 1) {
+  const text = String(value ?? '').trim();
+  return text.length >= minLength && !looksLikePlaceholder(text);
+}
+
+function validAccountSlug(value) {
+  const text = String(value ?? '').trim();
+  return configuredValue(text, 2) && /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/i.test(text);
+}
+
+function validPublicHttpsUrl(value) {
+  if (!configuredValue(value, 8)) return false;
+  try {
+    const parsed = new URL(String(value).trim());
+    return parsed.protocol === 'https:'
+      && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      && !parsed.hostname.endsWith('.invalid')
+      && !/(?:^|\.)example\.(?:com|org|net)$/.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function validIsraeliMobile(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return configuredValue(value, 10) && /^(?:05\d{8}|9725\d{8})$/.test(digits);
+}
+
+function normalizePaymentLabel(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function normalizeIban(value) {
+  const normalized = String(value ?? '').replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(normalized) ? normalized : '';
+}
+
+function normalizeSwift(value) {
+  const normalized = String(value ?? '').replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$/.test(normalized) ? normalized : '';
+}
+
+function bankTransferOperational() {
+  const account = String(BANK_ACCOUNT ?? '').trim();
+  const branch = String(BANK_BRANCH ?? '').trim();
+  return configuredValue(normalizePaymentLabel(PAYEE_NAME), 2)
+    && configuredValue(normalizePaymentLabel(BANK_NAME), 2)
+    && /^\d{4,20}$/.test(account)
+    && account !== '123456'
+    && /^\d{1,6}$/.test(branch);
+}
+
+function paddleOperational() {
+  if (!paddleEnabled()) return false;
+  if (process.env.NODE_ENV !== 'production') return true;
+  const status = paddleConfigStatus();
+  return status.environment === 'production'
+    && status.apiKeySet
+    && status.webhookSecretSet
+    && configuredValue(process.env.PADDLE_CLIENT_TOKEN, 8)
+    && configuredValue(process.env.PADDLE_PRICE_ID, 8)
+    && configuredValue(process.env.PADDLE_API_KEY, 8)
+    && configuredValue(process.env.PADDLE_WEBHOOK_SECRET, 16);
+}
+
+function pathIsInside(root, candidate) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function decodeMountInfoPath(value) {
+  return String(value).replace(/\\([0-7]{3})/g, (_match, octal) => String.fromCharCode(Number.parseInt(octal, 8)));
+}
+
+function mountPointStatus(target) {
+  let resolved;
+  try {
+    resolved = fs.realpathSync(target);
+  } catch {
+    return { supported: false, mounted: false };
+  }
+
+  if (process.platform === 'linux') {
+    try {
+      const mountInfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+      const mounted = mountInfo.split('\n').some((line) => {
+        const fields = line.trim().split(' ');
+        return fields.length > 4 && decodeMountInfoPath(fields[4]) === resolved;
+      });
+      return { supported: true, mounted };
+    } catch {
+      return { supported: false, mounted: false };
+    }
+  }
+
+  try {
+    const current = fs.statSync(resolved);
+    const parent = fs.statSync(path.dirname(resolved));
+    return { supported: true, mounted: current.dev !== parent.dev };
+  } catch {
+    return { supported: false, mounted: false };
+  }
+}
+
+function persistenceStatus() {
+  const root = path.resolve(DATA_DIR);
+  const dbPath = path.resolve(DB_PATH);
+  const tenantsDir = path.resolve(TENANTS_DIR);
+  const pathsAligned = pathIsInside(root, dbPath) && pathIsInside(root, tenantsDir);
+  let writable = false;
+  let dbOk = false;
+
+  try {
+    fs.accessSync(root, fs.constants.R_OK | fs.constants.W_OK);
+    writable = true;
+  } catch {}
+
+  try {
+    dbOk = db.prepare('SELECT 1 AS ok').get()?.ok === 1;
+  } catch {}
+
+  const mount = mountPointStatus(root);
+  const ok = pathsAligned && writable && dbOk && (!REQUIRE_PERSISTENT_VOLUME || mount.mounted);
+  return {
+    ok,
+    required: REQUIRE_PERSISTENT_VOLUME,
+    root,
+    dbPath,
+    tenantsDir,
+    pathsAligned,
+    writable,
+    dbOk,
+    mountCheckSupported: mount.supported,
+    mounted: mount.mounted,
+  };
+}
+
+function productionPublicUrlConfigured() {
+  if (process.env.NODE_ENV !== 'production') return true;
+  try {
+    const parsed = new URL(PUBLIC_BASE_URL);
+    return parsed.protocol === 'https:'
+      && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      && !/(?:^|\.)example\.(?:com|org|net)$/.test(parsed.hostname)
+      && !parsed.hostname.includes('your-service');
+  } catch {
+    return false;
+  }
+}
+
+function ownerContactConfigured() {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const value = String(AGENT_OWNER_CONTACT ?? '').trim();
+  if (!configuredValue(value, 5)) return false;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    const domain = value.split('@').pop().toLowerCase();
+    return !domain.endsWith('.invalid') && !/^example\.(?:com|org|net)$/.test(domain);
+  }
+  return validIsraeliMobile(value) || validPublicHttpsUrl(value);
+}
+
+function embedOriginsConfigured() {
+  if (process.env.NODE_ENV !== 'production' || !EMBED_ALLOW_PUBLIC) return true;
+  if (!Object.hasOwn(process.env, 'EMBED_ALLOWED_ORIGINS')) return false;
+  const values = String(process.env.EMBED_ALLOWED_ORIGINS ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (values.length === 0) return false;
+  if (values.length === 1 && values[0] === '*') return true;
+  return values.every((value) => {
+    if (!validPublicHttpsUrl(value)) return false;
+    const parsed = new URL(value);
+    return value.replace(/\/$/, '') === parsed.origin;
+  });
+}
+
+function readinessConfiguration() {
+  const channels = buildAcquireChannels().map((channel) => channel.kind);
+  const llmEndpointConfigured = !String(LLM_BASE_URL).trim() || validPublicHttpsUrl(LLM_BASE_URL);
+  const configuration = {
+    adminEnabled: configuredValue(ADMIN_TOKEN, 24),
+    integrationsEncryptionConfigured: configuredValue(process.env.INTEGRATIONS_SECRET, 24),
+    llmConfigured: configuredValue(LLM_API_KEY, 8)
+      && configuredValue(LLM_MODEL, 2)
+      && ['openai_compatible', 'anthropic'].includes(LLM_PROVIDER)
+      && llmEndpointConfigured,
+    paymentChannelConfigured: channels.length > 0,
+    ownerContactConfigured: ownerContactConfigured(),
+    publicBaseUrlConfigured: productionPublicUrlConfigured(),
+    embedOriginsConfigured: embedOriginsConfigured(),
+    privateNetworkFetchDisabled: !ALLOW_PRIVATE_NETWORK_URLS,
+    paymentAutoVerifyDisabled: !paymentConfigStatus().autoVerifyEnabled,
+  };
+  return { channels, configuration, ok: Object.values(configuration).every(Boolean) };
+}
+
+function readinessStatus() {
+  const persistence = persistenceStatus();
+  const config = readinessConfiguration();
+  return {
+    ok: config.ok && persistence.ok,
+    configurationOk: config.ok,
+    configuration: config.configuration,
+    channels: config.channels,
+    persistence,
+  };
 }
 
 // --- HTML pages -----------------------------------------------------------
@@ -1055,7 +1277,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <a href="/marketplace">שוק העובדים</a>
         <a href="/marketplace#/workers">העובדים שלי</a>
         <a href="#pricing">מחירים</a>
-        <a href="/marketplace#/magic" class="nav-cta">התחל ניסיון</a>
+        <a href="/marketplace#/magic" class="nav-cta">${TRIAL_DAYS > 0 ? 'התחל ניסיון' : 'נסה דוגמה'}</a>
       </div>
     </nav>
 
@@ -1069,9 +1291,9 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <a href="/marketplace" class="cta-secondary">לשוק העובדים ←</a>
       </div>
       <div class="proof-strip">
-        <span class="proof-item">✓ בלי כרטיס אשראי — מתחילים תוך דקה</span>
+        <span class="proof-item">✓ דמו והגדרה ראשונית לפני תשלום</span>
         <span class="proof-item">✓ דוגמה חיה לפני תשלום</span>
-        <span class="proof-item">✓ ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} ללא תשלום</span>
+        ${TRIAL_DAYS > 0 ? `<span class="proof-item">✓ ניסיון ${TRIAL_DAYS} ימים ללא תשלום</span>` : ''}
       </div>
       <div class="hero-stat-eyebrow">דוגמה · כך זה נראה בלילה</div>
       <div class="hero-stat-row" aria-label="נתוני משמרת הלילה — דוגמה">
@@ -1091,7 +1313,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <span class="sb-clock" id="landing-shift-feed-clock">23:14</span>
         </div>
         <div class="sb-feed" id="landing-shift-feed">
-          <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בוואטסאפ — נענה</span></div>
+          <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בצ׳אט באתר — נענה</span></div>
           <div class="sb-event"><time>23:12</time><span class="sb-check">✓</span><span>תור נקבע למחר ב-10:00</span></div>
           <div class="sb-event"><time>23:14</time><span class="sb-check">✓</span><span>ליד חם הועבר לבעל העסק</span></div>
         </div>
@@ -1141,53 +1363,53 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     </section>
 
     <section class="anim anim-3 section-order-case-studies" id="case-studies">
-      <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
-      <p class="section-sub">תיקי עובדים מעסקים ישראליים — תוצאות ראשונות</p>
+      <h2 class="section-title">תרחישי שימוש להמחשה</h2>
+      <p class="section-sub">הדוגמאות הבאות אינן תוצאות של לקוחות. נתוני פיילוט אמיתיים יפורסמו רק לאחר אימות ואישור.</p>
       <div class="proof-stats">
-        <div class="proof-stat"><div class="proof-stat-n">${stats.tenantCount}+</div><div class="proof-stat-l">עסקים פעילים</div></div>
-        <div class="proof-stat"><div class="proof-stat-n">${stats.workerCount}</div><div class="proof-stat-l">עובדי AI פעילים</div></div>
-        <div class="proof-stat"><div class="proof-stat-n">${(stats.messageCount || 0).toLocaleString('he-IL')}</div><div class="proof-stat-l">שיחות עם לקוחות</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.tenantCount}</div><div class="proof-stat-l">חשבונות בסביבה הזו</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.workerCount}</div><div class="proof-stat-l">עובדים שנוצרו בסביבה</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${(stats.messageCount || 0).toLocaleString('he-IL')}</div><div class="proof-stat-l">הודעות שנשמרו בסביבה</div></div>
         <div class="proof-stat"><div class="proof-stat-n">${stats.templateCount}</div><div class="proof-stat-l">תבניות מוכנות</div></div>
       </div>
       <div class="employee-files">
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · קליניקה</div>
+          <div class="ef-tab">תרחיש לדוגמה · קליניקה</div>
           <div class="ef-body">
-            <h3>קליניקת שיניים — תל אביב</h3>
-            <p>מזכירה וירטואלית ענתה על 340 פניות בחודש הראשון. 78% קבעו תור ללא שיחה עם אדם.</p>
-            <div class="ef-result">−62% עומס טלפוני</div>
+            <h3>מזכירה וירטואלית לקליניקה</h3>
+            <p>עונה על שעות ומדיניות, אוספת פרטים לבקשת תור ומעבירה מצב דחוף לאדם — ללא ייעוץ רפואי.</p>
+            <div class="ef-result">נמדוד: זמן תגובה והעברות לאדם</div>
           </div>
         </div>
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · נדל״ן</div>
+          <div class="ef-tab">תרחיש לדוגמה · נדל״ן</div>
           <div class="ef-body">
-            <h3>משרד תיווך — חיפה</h3>
-            <p>סוכן נדל״ן סינן 120 לידים בחודש. 31 לידים חמים הועברו לסוכן עם תקציב ואזור מוגדרים.</p>
-            <div class="ef-result">3× יותר פגישות</div>
+            <h3>סינון לידים למשרד תיווך</h3>
+            <p>אוסף אזור, תקציב וסוג נכס ומעביר לסוכן ליד מסודר עם הפרטים שהלקוח מסר.</p>
+            <div class="ef-result">נמדוד: לידים מלאים ופגישות שנקבעו</div>
           </div>
         </div>
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · מסעדה</div>
+          <div class="ef-tab">תרחיש לדוגמה · מסעדה</div>
           <div class="ef-body">
-            <h3>מסעדת שף — ירושלים</h3>
-            <p>מנהל מסעדה טיפל בהזמנות ושאלות תפריט בערב שישי. 94% מהשאלות נענו ללא הסלמה.</p>
-            <div class="ef-result">הפעלה תוך יום עסקים</div>
+            <h3>מענה למסעדה מחוץ לשעות עומס</h3>
+            <p>עונה מתוך הידע שהעסק הגדיר על שעות ותפריט ואוסף בקשות להזמנה או לאירוע.</p>
+            <div class="ef-result">נמדוד: שאלות שנענו ובקשות שנאספו</div>
           </div>
         </div>
       </div>
 
       <div class="testimonials">
         <div class="testimonial">
-          <div class="t-quote">"העובד שלנו עונה ללקוחות גם בשבת בלי שאני צריך לפתוח טלפון. סגרנו 3 מנויים בשבת הראשונה."</div>
-          <div class="t-attr">— ש. כהן, מנכ״ל סטודיו לעיצוב</div>
+          <div class="t-quote">יעד פיילוט: מענה מהיר לפניות שמגיעות כשהעסק סגור.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
         <div class="testimonial">
-          <div class="t-quote">"חיסכון של 5 שעות בשבוע של מזכירה. הלידים שמגיעים אליי כבר מסוננים ועם תקציב."</div>
-          <div class="t-attr">— ד. לוי, סוכנת נדל״ן</div>
+          <div class="t-quote">יעד פיילוט: לידים עם פרטי קשר, צורך ותקציב לפני מעבר לבעל העסק.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
         <div class="testimonial">
-          <div class="t-quote">"הלקוחות לא יודעים שזה AI. חשבו שהמזכירה שלי במשרד. רק שהיא זמינה 24/7."</div>
-          <div class="t-attr">— ר. אברהם, רופא שיניים</div>
+          <div class="t-quote">יעד פיילוט: לזהות מתי אין ביטחון בתשובה ולהעביר את הפנייה לאדם.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
       </div>
     </section>
@@ -1205,12 +1427,12 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
             <li><span class="price-check">✓</span> זיכרון לקוח ו-webhook</li>
             <li><span class="price-check">✓</span> צ'אט 24/7 לאחר אישור</li>
           </ul>
-          <a href="/marketplace#/magic" class="price-cta">התחל ניסיון ←</a>
+          <a href="/marketplace#/magic" class="price-cta">${TRIAL_DAYS > 0 ? 'התחל ניסיון' : 'נסה דוגמה'} ←</a>
         </div>
         <div class="price-card featured">
-          <div class="price-ribbon">הכי נבחר</div>
-          <div class="amount">₪249–299<span>/חודש</span></div>
-          <div class="price-cat">מכירות · שירות · נדל״ן · מסעדות</div>
+          <div class="price-ribbon">תפקידים מתקדמים</div>
+          <div class="amount">₪249–349<span>/חודש</span></div>
+          <div class="price-cat">מכירות · שירות · נדל״ן · מסעדות · תוכן</div>
           <ul>
             <li><span class="price-check">✓</span> תבנית מותאמת לתחום</li>
             <li><span class="price-check">✓</span> לידים, תורים, escalation</li>
@@ -1219,12 +1441,12 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <a href="/marketplace#/magic" class="price-cta">התחל עכשיו ←</a>
         </div>
       </div>
-      <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">חשבונית</a>.</p>
+      <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">מחירון ואפשרויות תשלום</a>.</p>
     </section>
 
     <section class="anim anim-3 section-order-how">
       <h2 class="section-title">איך מתחילים</h2>
-      <p class="section-sub">שלושה צעדים — בלי מפתחות API ובלי מפתח</p>
+      <p class="section-sub">שלושה צעדים — בלי מפתח LLM אישי; חיבורים חיצוניים מוגדרים לפי הספק</p>
       <div class="timeline-steps">
         <div class="timeline-step">
           <div class="ts-marker">🏢</div>
@@ -1239,7 +1461,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <div class="timeline-step">
           <div class="ts-marker">💬</div>
           <h3>שיחה ראשונה</h3>
-          <p>דוגמה חיה לפני תשלום — ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'}.</p>
+          <p>${TRIAL_DAYS > 0 ? `דוגמה חיה לפני תשלום — ניסיון ${TRIAL_DAYS} ימים.` : 'בודקים שיחה חיה לפני שמחליטים על הפעלה.'}</p>
         </div>
       </div>
     </section>
@@ -1300,11 +1522,11 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         </details>
         <details class="faq-item">
           <summary>כמה זה עולה?</summary>
-          <div class="content">מנוי חודשי מ-199 ₪ (תפעול) עד 299 ₪ (מרפאות). לרוב אין דמי הקמה. תשלום ב-PayPal, Bit או העברה בנקאית. פירוט מלא בדף החשבונית.</div>
+          <div class="content">מנוי חודשי מ-199 ₪ עד 349 ₪, לפי התפקיד והכלים. כרגע אין דמי הקמה בתבניות הקטלוג. אפשרויות התשלום שהמפעיל אימת מוצגות בעת ההפעלה ובדף פרטי התשלום.</div>
         </details>
         <details class="faq-item">
           <summary>האם אני צריך כרטיס אשראי?</summary>
-          <div class="content">לא. אנחנו תומכים ב-PayPal, Bit, והעברה בנקאית. מתאים במיוחד לבעלי עסקים בישראל.</div>
+          <div class="content">לא בהכרח. לפני תשלום מוצגות רק האפשרויות שהוגדרו ואומתו בפועל; ייתכן תשלום ידני או סליקה מאובטחת אצל ספק חיצוני.</div>
         </details>
         <details class="faq-item">
           <summary>איך העובד לומד על העסק שלי?</summary>
@@ -1312,7 +1534,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         </details>
         <details class="faq-item">
           <summary>האם העובד זוכר לקוחות?</summary>
-          <div class="content">כן! העובד זוכר עובדות על לקוחות לאורך שיחות — העדפות, פרטי קשר, היסטוריית רכישות. הכל מאובטח בשרת שלך.</div>
+          <div class="content">בהתאם להגדרות, העובד יכול לשמור עובדות שמסרתם לאורך שיחות. הנתונים נשמרים בתשתית שמפעיל השירות מנהל, ותוכן עשוי להישלח לספק ה-LLM שהוגדר לצורך יצירת תשובה. פרטים נוספים במדיניות הפרטיות.</div>
         </details>
       </div>
     </section>
@@ -1334,7 +1556,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       ${AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">צור קשר</a>` : ''}
     </div>
     <p>${escapeHtml(AGENT_NAME)} · ${escapeHtml(AGENT_DESCRIPTION)}</p>
-    <p class="footer-legal-note">תשלום בכרטיס אשראי (Paddle), Bit, PayPal או העברה בנקאית</p>
+    <p class="footer-legal-note">אפשרויות התשלום הזמינות מוצגות בעת ההפעלה</p>
   </div>
 
   <script>
@@ -1395,7 +1617,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       }
       if (!feed || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
       const events = [
-        { t: '23:11', m: 'לקוח כתב בוואטסאפ — נענה' },
+        { t: '23:11', m: 'לקוח כתב בצ׳אט באתר — נענה' },
         { t: '23:12', m: 'תור נקבע למחר ב-10:00' },
         { t: '23:14', m: 'ליד חם הועבר לבעל העסק' },
         { t: '23:16', m: 'אישור הזמנה נשלח ב-SMS' },
@@ -1485,12 +1707,15 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   const tplRows = TEMPLATES.map((t) =>
     `  ${(t.name + ' (' + t.nameHe + ')').padEnd(50)}  buy ${String(t.buyPriceIls).padStart(4)} ILS  |  rent ${String(t.rentPriceIls).padStart(4)} ILS/mo`
   ).join('\n');
+  const paymentChannels = buildAcquireChannels();
+  const bankChannel = paymentChannels.find((channel) => channel.kind === 'bank-transfer');
+  const oneLine = (value) => String(value ?? '').replace(/[\r\n\t]+/g, ' ').trim();
 
   const lines = [];
-  lines.push(`INVOICE / HATZAMAT HESHBON`);
+  lines.push('ORDER AND PAYMENT INFORMATION — NOT A TAX DOCUMENT');
   lines.push('='.repeat(60));
   lines.push(`From:    ${AGENT_NAME}`);
-  if (PAYEE_NAME) lines.push(`Payee:   ${PAYEE_NAME}`);
+  if (bankChannel?.payee) lines.push(`Payee:   ${oneLine(bankChannel.payee)}`);
   if (AGENT_OWNER_CONTACT) lines.push(`Email:   ${AGENT_OWNER_CONTACT}`);
   if (baseUrl) lines.push(`URL:     ${baseUrl}`);
   lines.push(`Date:    ${new Date().toISOString().slice(0, 10)}`);
@@ -1501,25 +1726,23 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   lines.push('');
   lines.push('PAYMENT OPTIONS');
   lines.push('-'.repeat(60));
-  if (PAYPAL_ME) lines.push(`  PayPal:       https://paypal.me/${PAYPAL_ME}`);
-  if (BUY_ME_A_COFFEE) lines.push(`  Buy Me Coffee: ${BUY_ME_A_COFFEE}`);
-  if (KO_FI) lines.push(`  Ko-fi:        ${KO_FI}`);
-  if (BIT_PHONE) lines.push(`  Bit:          https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}  (${BIT_PHONE})`);
-  if (GITHUB_SPONSORS) lines.push(`  GitHub:       https://github.com/sponsors/${GITHUB_SPONSORS}`);
-  if (GUMROAD_URL) lines.push(`  Gumroad:      ${GUMROAD_URL}`);
-  lines.push('');
-  if (BANK_ACCOUNT) {
-    lines.push('BANK TRANSFER (Israeli-friendly)');
-    lines.push('-'.repeat(60));
-    if (PAYEE_NAME) lines.push(`  Payee name:   ${PAYEE_NAME}`);
-    if (BANK_NAME) lines.push(`  Bank:         ${BANK_NAME}`);
-    if (BANK_BRANCH) lines.push(`  Branch:       ${BANK_BRANCH}`);
-    if (BANK_ACCOUNT) lines.push(`  Account #:    ${BANK_ACCOUNT}`);
-    if (IBAN) lines.push(`  IBAN:         ${IBAN}`);
-    if (SWIFT) lines.push(`  SWIFT/BIC:    ${SWIFT}`);
-    lines.push('  Reference:    include the template id (e.g. "real-estate-il") so I can match the payment.');
-    lines.push('');
+  if (paymentChannels.length === 0) lines.push('  No verified payment channel is configured yet. Contact the operator.');
+  for (const channel of paymentChannels) {
+    if (channel.kind === 'paypal') lines.push(`  PayPal:       ${oneLine(channel.url)}`);
+    else if (channel.kind === 'paddle') lines.push(`  Card checkout: ${oneLine(channel.url)}`);
+    else if (channel.kind === 'bit') lines.push(`  Bit:          ${oneLine(channel.url)}  (${oneLine(channel.phone)})`);
+    else if (channel.kind === 'bank-transfer') {
+      lines.push('  Bank transfer:');
+      lines.push(`    Payee:      ${oneLine(channel.payee)}`);
+      lines.push(`    Bank:       ${oneLine(channel.bank)}`);
+      lines.push(`    Branch:     ${oneLine(channel.branch)}`);
+      lines.push(`    Account:    ${oneLine(channel.account)}`);
+      if (channel.iban) lines.push(`    IBAN:       ${oneLine(channel.iban)}`);
+      if (channel.swift) lines.push(`    SWIFT/BIC:  ${oneLine(channel.swift)}`);
+      lines.push('    Reference: include the worker/template id so the operator can match the payment.');
+    }
   }
+  lines.push('');
   lines.push('HOW TO ORDER');
   lines.push('-'.repeat(60));
   lines.push(`  1. Open the marketplace and create your tenant key: ${baseUrl}/marketplace`);
@@ -1533,55 +1756,67 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
 function buildWorkerInvoiceHtml({ worker, tenantId, template, baseUrl }) {
   const date = new Date().toISOString().slice(0, 10);
   const rent = template?.rentPriceIls ?? 0;
-  const vatRate = process.env.VAT_RATE ?? '17';
-  const vatNote = process.env.VAT_REGISTERED === '1'
-    ? `מע"מ ${vatRate}% יחושב בחשבונית מס`
-    : 'מע"מ: לפי סטטוס עוסק (מורשה / פטור) — יש למלא בחשבונית';
-  const paidUntil = worker.paidUntil ? new Date(worker.paidUntil).toLocaleDateString('he-IL') : '—';
+  const hasPaidUntilValue = String(worker.paidUntil ?? '').trim().length > 0;
+  const paidUntilDate = worker.paidUntil ? new Date(worker.paidUntil) : null;
+  const hasPaidUntil = paidUntilDate && !Number.isNaN(paidUntilDate.getTime());
+  const paidUntil = hasPaidUntil ? paidUntilDate.toLocaleDateString('he-IL') : '';
+  const paymentCurrent = hasPaidUntil && paidUntilDate > new Date();
+  let accessPeriod = 'ממתין לאימות תשלום';
+  if (worker.paused) {
+    if (paymentCurrent) accessPeriod = `מושהה · התשלום בתוקף עד ${paidUntil}`;
+    else if (hasPaidUntil) accessPeriod = `מושהה · התוקף הסתיים ב-${paidUntil}`;
+    else accessPeriod = 'מושהה ללא תאריך סיום';
+  } else if (worker.status === 'active') {
+    if (paymentCurrent) accessPeriod = `פעיל עד ${paidUntil}`;
+    else if (!hasPaidUntilValue) accessPeriod = 'פעיל ללא תאריך סיום (רשומת legacy)';
+    else if (hasPaidUntil) accessPeriod = `התוקף הסתיים ב-${paidUntil}`;
+    else accessPeriod = 'סטטוס פעיל · תאריך התשלום דורש בדיקה';
+  } else if (hasPaidUntil && !paymentCurrent) {
+    accessPeriod = `התוקף הסתיים ב-${paidUntil}`;
+  }
   const safeWorkerName = escapeHtml(worker.name ?? '');
   const safeWorkerId = escapeHtml(worker.id ?? '');
-  const safeTplHe = escapeHtml(template?.nameHe ?? '');
-  const safeTplName = escapeHtml(template?.name ?? '');
-  const safePayee = PAYEE_NAME ? escapeHtml(PAYEE_NAME) : '';
+  const bankChannel = buildAcquireChannels().find((channel) => channel.kind === 'bank-transfer');
+  const safePayee = bankChannel?.payee ? escapeHtml(bankChannel.payee) : '';
   const safeContact = AGENT_OWNER_CONTACT ? escapeHtml(AGENT_OWNER_CONTACT) : '';
   const safeAgent = escapeHtml(AGENT_NAME ?? '');
   const safeTenant = escapeHtml(tenantId ?? '');
   const safeBase = escapeHtml(baseUrl ?? '');
-  const safeVatNote = escapeHtml(vatNote);
   const itemName = template?.nameHe || template?.name || worker.name;
   const safeItem = escapeHtml(itemName ?? '');
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>חשבונית — ${safeWorkerName}</title>
+  <title>סיכום הזמנה — ${safeWorkerName}</title>
   <style>
     body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:24px;color:#111;line-height:1.6}
     h1{font-size:22px;margin:0 0 8px} .muted{color:#666;font-size:14px}
     table{width:100%;border-collapse:collapse;margin:20px 0} th,td{border:1px solid #ddd;padding:10px;text-align:right}
-    th{background:#f6f6f6} .total{font-size:18px;font-weight:700}
+    th{background:#f6f6f6} .total{font-size:18px;font-weight:700}.notice{padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;color:#7c2d12}
     @media print{body{margin:0}}
   </style>
 </head>
 <body>
-  <h1>חשבונית / קבלה — ${safeAgent}</h1>
+  <h1>סיכום הזמנה ותשלום — ${safeAgent}</h1>
   <p class="muted">תאריך: ${date} · מזהה עובד: ${safeWorkerId}</p>
-  ${safePayee ? `<p><strong>לכבוד:</strong> ${safePayee}</p>` : ''}
+  <p class="notice"><strong>זהו סיכום הזמנה בלבד.</strong> הוא אינו חשבונית מס, אינו קבלה ואינו אישור שהתשלום התקבל.</p>
+  ${safePayee ? `<p><strong>מקבל התשלום:</strong> ${safePayee}</p>` : ''}
   ${safeContact ? `<p><strong>יצירת קשר:</strong> ${safeContact}</p>` : ''}
   <table>
     <thead><tr><th>פריט</th><th>תקופה</th><th>סכום (₪)</th></tr></thead>
     <tbody>
       <tr>
         <td>${safeItem}</td>
-        <td>שכירות חודשית · בתוקף עד ${paidUntil}</td>
+        <td>שכירות חודשית · ${accessPeriod}</td>
         <td>${rent}</td>
       </tr>
     </tbody>
   </table>
-  <p class="total">סה"כ לפני מע"מ: ₪${rent}</p>
-  <p class="muted">${safeVatNote}</p>
+  <p class="total">מחיר חודשי מוצג: ₪${rent}</p>
+  <p class="muted">מע"מ, אם חל, ופרטי התשלום יופיעו במסמך המס הרשמי.</p>
   <p class="muted">Tenant: ${safeTenant} · ${safeBase}</p>
-  <p class="muted" style="margin-top:24px">מסמך זה נוצר אוטומטית לצורכי תיעוד. לחשבונית מס רשמית פנו לתמיכה.</p>
+  <p class="muted" style="margin-top:24px">לאחר אימות התשלום, פנו לתמיכה לקבלת מסמך מס רשמי בהתאם לסטטוס העסק.</p>
 </body>
 </html>`;
 }
@@ -1619,31 +1854,65 @@ const server = http.createServer(async (req, res) => {
     } : {});
     return send(res, 204, '', preflight);
   }
-  if (url.pathname !== '/health' && !rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
+  if (!['/health', '/infra-ready', '/ready'].includes(url.pathname) && !rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
 
-  if (req.method === 'GET' && url.pathname === '/') {
-    return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
-  }
   if (req.method === 'GET' && url.pathname === '/health') {
+    const persistence = persistenceStatus();
+    const readinessConfig = readinessConfiguration();
     return send(res, 200, {
       ok: true, agent: AGENT_NAME,
-      statusHe: LLM_API_KEY ? 'מוכן לעבודה' : 'צריך הגדרה',
-      channels: buildAcquireChannels().map((c) => c.kind),
-      adminEnabled: !!ADMIN_TOKEN,
-      llmConfigured: !!LLM_API_KEY,
+      statusHe: readinessConfig.ok && persistence.ok ? 'מוכן לעבודה' : 'צריך הגדרה',
+      channels: readinessConfig.channels,
+      adminEnabled: readinessConfig.configuration.adminEnabled,
+      llmConfigured: readinessConfig.configuration.llmConfigured,
       llmProvider: LLM_PROVIDER,
       llmModel: LLM_MODEL,
       publicBaseUrl: resolveBaseUrl(req),
       dbPath: DB_PATH,
-      tenantsDir: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
-      persistentStorage: !DB_PATH.includes('/tmp'),
+      tenantsDir: TENANTS_DIR,
+      persistentStorage: persistence.ok,
+      persistence,
       whatsapp: whatsappConfigStatus(),
       integrationsCatalog: integrations.listCatalog().length,
       payment: { ...paymentConfigStatus(), paddle: paddleConfigStatus() },
       trialDays: TRIAL_DAYS,
     });
   }
+  if (req.method === 'GET' && url.pathname === '/infra-ready') {
+    const persistence = persistenceStatus();
+    return send(res, persistence.ok ? 200 : 503, {
+      ok: persistence.ok,
+      agent: AGENT_NAME,
+      persistence,
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/ready') {
+    const readiness = readinessStatus();
+    return send(res, readiness.ok ? 200 : 503, {
+      ...readiness,
+      agent: AGENT_NAME,
+      publicBaseUrl: resolveBaseUrl(req),
+    });
+  }
   if (handleLegalRoutes(req, res, url, send)) return;
+
+  // Render's infrastructure health check can succeed once SQLite and the
+  // persistent mount work, but production traffic remains fail-closed until
+  // the separate business/configuration gate is fully ready.
+  if (process.env.NODE_ENV === 'production') {
+    const readiness = readinessStatus();
+    if (!readiness.ok) {
+      return send(res, 503, {
+        error: 'service_not_ready',
+        messageHe: 'השירות עדיין בהגדרה ואינו פתוח ללקוחות.',
+        ...readiness,
+      });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
+  }
 
   if (await handlePaddleWebhook(req, res, url, { send, readBody, recordAdminAudit })) return;
 
@@ -1865,16 +2134,20 @@ const server = http.createServer(async (req, res) => {
   // HTML pages
   if (req.method === 'GET' && (url.pathname === '/marketplace' || url.pathname === '/builder' || url.pathname.startsWith('/workers/') || url.pathname === '/workers')) {
     let html = fs.readFileSync(path.join(__dirname, 'workers-ui.html'), 'utf8');
+    const paymentChannels = buildAcquireChannels();
+    const bitChannel = paymentChannels.find((channel) => channel.kind === 'bit');
+    const paypalChannel = paymentChannels.find((channel) => channel.kind === 'paypal');
+    const bankChannel = paymentChannels.find((channel) => channel.kind === 'bank-transfer');
     const payCfg = JSON.stringify({
-      bitPhone: BIT_PHONE || '',
-      paypalMe: PAYPAL_ME || '',
-      bankName: BANK_NAME || '',
-      bankBranch: BANK_BRANCH || '',
-      bankAccount: BANK_ACCOUNT || '',
-      payeeName: PAYEE_NAME || '',
+      bitPhone: bitChannel?.phone || '',
+      paypalMe: paypalChannel?.account || '',
+      bankName: bankChannel?.bank || '',
+      bankBranch: bankChannel?.branch || '',
+      bankAccount: bankChannel?.account || '',
+      payeeName: bankChannel?.payee || '',
       activationSlaHe: activationSlaTextHe(),
       trialDays: TRIAL_DAYS,
-      paddleEnabled: paddleEnabled(),
+      paddleEnabled: paddleOperational(),
       ownerContact: AGENT_OWNER_CONTACT || '',
     }).replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
     html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;const PADDLE_ENABLED=PAYMENT_CONFIG.paddleEnabled;const AGENT_OWNER_CONTACT=PAYMENT_CONFIG.ownerContact;</script></body>`);
@@ -1925,7 +2198,7 @@ const server = http.createServer(async (req, res) => {
     if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
     const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId, paymentChannel: body.paymentChannel, paymentReference: body.paymentReference });
     if (!res2.ok) return send(res, 400, res2);
-    return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Pay via /invoice and ask the admin to mark the worker paid.' });
+    return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Review payment options at /invoice and ask the admin to verify payment.' });
   }
 
   // API: create worker from template (used by Builder "new" flow)
@@ -1940,7 +2213,6 @@ const server = http.createServer(async (req, res) => {
     const updated = workers.updateWorker(tenantId, res2.workerId, {
       name: body.name, persona: body.persona, tasks: body.tasks,
       knowledge: body.knowledge, tools: body.tools, agentMode: body.agentMode,
-      llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
     });
     if (!updated.ok) return send(res, 500, { error: 'update_failed', reason: updated.error, workerId: res2.workerId });
     return send(res, 200, { ok: true, workerId: res2.workerId });
@@ -2077,8 +2349,7 @@ const server = http.createServer(async (req, res) => {
     if (!body.testMode && !body.demoMode) {
       const pre = workers.getWorker(tenantId, chatStreamMatch[1]);
       if (!pre) return send(res, 404, { error: 'not_found' });
-      const prePaid = pre.paidUntil && new Date(pre.paidUntil) > new Date();
-      if (pre.status !== 'active' || !prePaid || pre.paused) {
+      if (!pre.isActive) {
         return send(res, 402, { error: 'not_paid_or_paused', message: 'worker is paused or not paid', paused: !!pre.paused, paidUntil: pre.paidUntil, status: pre.status });
       }
     }
@@ -2809,14 +3080,10 @@ function startServer() {
     console.log(`  Marketplace: ${PUBLIC_BASE_URL}/marketplace`);
     console.log(`  Payment channels:`);
     if (PAYPAL_ME) console.log(`    - PayPal.me/${PAYPAL_ME}`);
-    if (BUY_ME_A_COFFEE) console.log(`    - Buy Me a Coffee: ${BUY_ME_A_COFFEE}`);
-    if (KO_FI) console.log(`    - Ko-fi: ${KO_FI}`);
     if (BIT_PHONE) console.log(`    - Bit: ${BIT_PHONE}`);
-    if (GITHUB_SPONSORS) console.log(`    - GitHub Sponsors: ${GITHUB_SPONSORS}`);
-    if (GUMROAD_URL) console.log(`    - Gumroad: ${GUMROAD_URL}`);
     if (BANK_ACCOUNT) console.log(`    - Bank transfer: ${BANK_NAME} branch ${BANK_BRANCH} acct ${BANK_ACCOUNT}`);
     console.log(`  Admin: ${ADMIN_TOKEN ? 'ENABLED' : 'DISABLED (set ADMIN_TOKEN to enable)'}`);
-    console.log(`  Invoice: ${PUBLIC_BASE_URL}/invoice`);
+    console.log(`  Payment info: ${PUBLIC_BASE_URL}/invoice`);
   });
 
   for (const sig of ['SIGINT', 'SIGTERM']) {

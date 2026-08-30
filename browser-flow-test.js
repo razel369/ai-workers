@@ -90,6 +90,7 @@ try {
   }
   expect('demo chat composer visible before payment', await page.locator('#c-input').isVisible());
   expect('no paywall on chat screen', !(await page.locator('#pay-submit').count()));
+  expect('zero-day configuration is labeled as demo, not a timed trial', (await page.locator('.demo-banner-copy').innerText()).includes('מצב דמו') && !(await page.locator('.demo-banner-copy').innerText()).includes('מצב ניסיון'));
 
   let magicWorker = { status: 0 };
   for (let i = 0; i < 5; i++) {

@@ -1,6 +1,8 @@
 // E2E tests for the Workers feature (v0.5.0).
 import crypto from 'node:crypto';
-import { validateConfig } from './integrations/registry.js';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { normalizeShopifyShopHost, validateConfig } from './integrations/registry.js';
 import { buildOAuthReturnUrl } from './url-security.js';
 // payment-gated chat (mock + LLM-free), admin mark-paid, admin listing,
 // per-tenant isolation, platform-provided AI (no BYOK).
@@ -8,6 +10,7 @@ import { buildOAuthReturnUrl } from './url-security.js';
 const BASE = process.env.BASE_URL ?? 'http://localhost:8765';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
 const BIT_WEBHOOK_SECRET = process.env.BIT_WEBHOOK_SECRET ?? process.env.PAYMENT_WEBHOOK_SECRET ?? '';
+const PAYPAL_WEBHOOK_SECRET = process.env.PAYPAL_WEBHOOK_SECRET ?? process.env.PAYMENT_WEBHOOK_SECRET ?? '';
 let failures = 0;
 const ok = (l) => console.log(`OK    ${l}`);
 const fail = (l, d) => { failures++; console.log(`FAIL  ${l}${d ? ' \u2014 ' + d : ''}`); };
@@ -313,22 +316,55 @@ let mismatchedActivationRequestId = null;
   expect('  customData has worker + tenant', cfg.body.customData?.worker_id === paddleWorkerId && cfg.body.customData?.tenant_id === tenantId);
   const secret = process.env.PADDLE_WEBHOOK_SECRET ?? '';
   if (secret) {
-    const body = JSON.stringify({
-      event_id: 'evt_paddle_test',
+    const subscriptionBody = JSON.stringify({
+      event_id: 'evt_paddle_subscription_test',
       event_type: 'subscription.created',
       data: { id: 'sub_test_1', custom_data: { worker_id: paddleWorkerId, tenant_id: tenantId } },
     });
     const ts = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac('sha256', secret).update(`${ts}:${body}`).digest('hex');
+    const subscriptionSig = crypto.createHmac('sha256', secret).update(`${ts}:${subscriptionBody}`).digest('hex');
+    const subscriptionWh = await req('/api/webhooks/paddle', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${ts};h1=${subscriptionSig}` },
+      body: subscriptionBody,
+    });
+    expect('Paddle subscription event is accepted but ignored', subscriptionWh.status === 200
+      && subscriptionWh.body.ignored === true
+      && subscriptionWh.body.reason === 'activation_requires_completed_transaction');
+    const pendingWorker = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
+    expect('  subscription event alone cannot activate worker', pendingWorker.body.worker?.isActive === false);
+
+    const transactionBody = JSON.stringify({
+      event_id: 'evt_paddle_transaction_test',
+      event_type: 'transaction.completed',
+      data: {
+        id: 'txn_test_1',
+        currency_code: 'ILS',
+        details: { totals: { total: '19900' } },
+        custom_data: { worker_id: paddleWorkerId, tenant_id: tenantId },
+      },
+    });
+    const transactionSig = crypto.createHmac('sha256', secret).update(`${ts}:${transactionBody}`).digest('hex');
     const wh = await req('/api/webhooks/paddle', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${ts};h1=${sig}` },
-      body,
+      headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${ts};h1=${transactionSig}` },
+      body: transactionBody,
     });
-    expect('paddle webhook -> 200', wh.status === 200 && wh.body.ok === true);
-    expect('  auto-activates worker', wh.body.autoActivated === true);
+    expect('completed Paddle transaction webhook -> 200', wh.status === 200 && wh.body.ok === true);
+    expect('  completed exact-price transaction auto-activates worker', wh.body.autoActivated === true);
     const w = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
     expect('  worker active after paddle', w.body.worker?.isActive === true);
+    const paidUntil = w.body.worker?.paidUntil;
+
+    const replay = await req('/api/webhooks/paddle', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'paddle-signature': `ts=${ts};h1=${transactionSig}` },
+      body: transactionBody,
+    });
+    const afterReplay = await req(`/api/workers/${paddleWorkerId}`, { headers: auth() });
+    expect('  replayed Paddle transaction is idempotent', replay.status === 200
+      && replay.body.alreadyRecorded === true
+      && afterReplay.body.worker?.paidUntil === paidUntil);
   }
 }
 
@@ -630,6 +666,7 @@ let mediaWorkerId = null;
   expect('GET /api/integrations/catalog -> 200', r.status === 200);
   expect('  catalog has webhook + mcp', (r.body.catalog ?? []).some((c) => c.type === 'webhook') && (r.body.catalog ?? []).some((c) => c.type === 'mcp'));
   expect('  Hebrew labels present', (r.body.catalog ?? []).every((c) => c.labelHe && c.descriptionHe));
+  expect('  Shopify normalizer canonicalizes a valid shop', normalizeShopifyShopHost(' HTTPS://Demo-Store.MyShopify.com/ ') === 'demo-store.myshopify.com');
 }
 {
   const r = await req('/api/integrations', { headers: auth() });
@@ -668,6 +705,63 @@ let integrationId = null;
   expect('  hookUrl returned', !!r.body.hookUrl || !!r.body.integration?.config?.hookUrl);
 }
 {
+  const r = await req('/api/integrations/connect', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ type: 'shopify', config: { shopDomain: 'attacker.example', accessToken: 'tenant-shop-token' } }),
+  });
+  expect('POST Shopify connect rejects custom host', r.status === 400 && r.body.error === 'invalid_shop_domain');
+}
+{
+  const r = await req('/api/integrations', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      type: 'shopify',
+      config: { authMethod: 'oauth', shopDomain: 'store.myshopify.com.attacker.example', accessToken: 'tenant-shop-token' },
+    }),
+  });
+  expect('POST direct Shopify integration cannot bypass host validation', r.status === 400 && r.body.error === 'invalid_shop_domain');
+}
+{
+  const r = await req('/api/integrations/connect', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      type: 'shopify',
+      config: { shopDomain: 'HTTPS://Manual-Store.MyShopify.com/', accessToken: 'tenant-shop-token' },
+    }),
+  });
+  expect('POST Shopify connect accepts canonical myshopify.com host', (r.status === 200 || r.status === 201) && r.body.integration?.config?.shopDomain === 'manual-store.myshopify.com');
+}
+{
+  const valid = await req('/api/integrations/oauth/start', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ type: 'shopify', extra: { shop: ' HTTPS://OAuth-Store.MyShopify.com/ ' } }),
+  });
+  let redirect = null;
+  try { redirect = new URL(valid.body.redirectUrl); } catch {}
+  expect('POST Shopify OAuth start uses normalized Shopify host', valid.status === 200
+    && redirect?.protocol === 'https:'
+    && redirect?.hostname === 'oauth-store.myshopify.com'
+    && redirect?.pathname === '/admin/oauth/authorize');
+
+  for (const shop of [
+    'attacker.example',
+    'store.myshopify.com.attacker.example',
+    'store.myshopify.com@attacker.example',
+    'store.myshopify.com:444',
+    'store.myshopify.com/admin',
+  ]) {
+    const rejected = await req('/api/integrations/oauth/start', {
+      method: 'POST', headers: auth(),
+      body: JSON.stringify({ type: 'shopify', extra: { shop } }),
+    });
+    expect(`  Shopify OAuth start rejects ${shop}`, rejected.status === 400 && rejected.body.error === 'invalid_shop_domain');
+  }
+  const missing = await req('/api/integrations/oauth/start', {
+    method: 'POST', headers: auth(), body: JSON.stringify({ type: 'shopify', extra: {} }),
+  });
+  expect('  Shopify OAuth start rejects missing shop', missing.status === 400 && missing.body.error === 'shop_required');
+}
+{
   const r = await req('/api/integrations/catalog');
   expect('  catalog has authMethod on items', (r.body.catalog ?? []).every((c) => c.authMethod && c.connectLabelHe));
 }
@@ -692,7 +786,9 @@ let integrationId = null;
 {
   const r = await req(`/invoice/${mediaWorkerId}`);
   expect('GET /invoice/:workerId -> 200 html', r.status === 200 && String(r.body).includes('חשבונית'));
-  expect('  invoice mentions VAT placeholder', String(r.body).includes('מע"מ'));
+  expect('  order summary is not presented as a tax invoice', String(r.body).includes('סיכום הזמנה') && String(r.body).includes('אינו חשבונית מס'));
+  expect('  order summary mentions VAT placeholder', String(r.body).includes('מע"מ'));
+  expect('  active order summary reflects active access', String(r.body).includes('פעיל עד'));
 }
 {
   const r = await req('/embed.js');
@@ -712,6 +808,176 @@ let integrationId = null;
     body: JSON.stringify({ workerId: 'wk_nonexistent' }),
   });
   expect('bit webhook rejects missing worker', r.status === 400);
+}
+let paypalWebhookWorkerId = null;
+let paypalFirstPaidUntil = null;
+{
+  const created = await req('/api/workers', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ templateId: 'sales-leads-il', name: 'PayPal Signature Worker', tools: [] }),
+  });
+  paypalWebhookWorkerId = created.body.workerId;
+  expect('create pending PayPal webhook worker', created.status === 200 && !!paypalWebhookWorkerId);
+  const pendingSummary = await req(`/invoice/${paypalWebhookWorkerId}`);
+  expect('  pending order summary does not claim active access', pendingSummary.status === 200
+    && String(pendingSummary.body).includes('ממתין לאימות תשלום')
+    && !String(pendingSummary.body).includes('שכירות חודשית · פעיל עד'));
+}
+{
+  const forged = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': 'wrong-paypal-signature' },
+    body: JSON.stringify({ workerId: paypalWebhookWorkerId, tenantId, payment_status: 'Completed', txn_id: 'FORGED-PAYPAL' }),
+  });
+  expect('PayPal webhook rejects invalid signature', forged.status === 401 && forged.body.error === 'invalid_webhook_secret');
+  const worker = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  invalid PayPal signature cannot activate worker', worker.body.worker?.status !== 'active' && !worker.body.worker?.paidUntil);
+}
+{
+  const notCompleted = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: JSON.stringify({ workerId: paypalWebhookWorkerId, tenantId, event_type: 'PAYMENT.CAPTURE.DENIED', id: 'DENIED-PAYPAL' }),
+  });
+  expect('PayPal webhook ignores signed non-completed event', notCompleted.status === 200 && notCompleted.body.ignored === true);
+  const worker = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  signed non-completed PayPal event cannot activate worker', worker.body.worker?.status !== 'active' && !worker.body.worker?.paidUntil);
+}
+{
+  const wrongAmount = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: paypalWebhookWorkerId,
+      tenantId,
+      payment_status: 'Completed',
+      txn_id: 'WRONG-AMOUNT-PAYPAL',
+      mc_gross: '1.00',
+      mc_currency: 'ILS',
+    }),
+  });
+  expect('PayPal webhook rejects a signed amount mismatch', wrongAmount.status === 400 && wrongAmount.body.error === 'payment_amount_mismatch');
+  const worker = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  amount mismatch cannot activate worker', worker.body.worker?.status !== 'active' && !worker.body.worker?.paidUntil);
+}
+{
+  const verified = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: paypalWebhookWorkerId,
+      tenantId,
+      payment_status: 'Completed',
+      txn_id: 'VERIFIED-PAYPAL',
+      mc_gross: '249.00',
+      mc_currency: 'ILS',
+    }),
+  });
+  expect('PayPal webhook activates only after verified signature', verified.status === 200 && verified.body.ok === true && verified.body.autoActivated === true);
+  const worker = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  verified completed PayPal event activates worker', worker.body.worker?.status === 'active' && !!worker.body.worker?.paidUntil);
+  paypalFirstPaidUntil = worker.body.worker?.paidUntil;
+}
+{
+  const renewalPayload = new URLSearchParams({
+    workerId: paypalWebhookWorkerId,
+    tenantId,
+    payment_status: 'Completed',
+    txn_id: 'VERIFIED-PAYPAL-RENEWAL',
+    mc_gross: '249.00',
+    mc_currency: 'ILS',
+  }).toString();
+  const renewed = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: renewalPayload,
+  });
+  expect('PayPal form webhook renews an already-active worker', renewed.status === 200 && renewed.body.autoRenewed === true);
+  const afterRenewal = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  const renewedPaidUntil = afterRenewal.body.worker?.paidUntil;
+  expect('  early renewal extends paidUntil', new Date(renewedPaidUntil) > new Date(paypalFirstPaidUntil));
+
+  const replay = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: renewalPayload,
+  });
+  const afterReplay = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  expect('  replayed transaction is idempotent', replay.status === 200
+    && replay.body.alreadyRecorded === true
+    && afterReplay.body.worker?.paidUntil === renewedPaidUntil);
+}
+{
+  const created = await req('/api/workers', {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({ templateId: 'sales-leads-il', name: 'Duplicate Reference Worker', tools: [] }),
+  });
+  const duplicateReferenceWorkerId = created.body.workerId;
+  const activation = await req(`/api/workers/${duplicateReferenceWorkerId}/activation-request`, {
+    method: 'POST', headers: auth(),
+    body: JSON.stringify({
+      channel: 'paypal',
+      reference: 'VERIFIED-PAYPAL',
+      contact: 'duplicate-reference@example.com',
+    }),
+  });
+  const duplicateRequestId = activation.body.requestId;
+  const rejected = await req('/api/webhooks/paypal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-secret': PAYPAL_WEBHOOK_SECRET },
+    body: JSON.stringify({
+      workerId: duplicateReferenceWorkerId,
+      tenantId,
+      payment_status: 'Completed',
+      txn_id: 'VERIFIED-PAYPAL',
+      mc_gross: '249.00',
+      mc_currency: 'ILS',
+    }),
+  });
+  expect('PayPal reference reuse on another worker is rejected', rejected.status === 400
+    && rejected.body.error === 'payment_reference_already_used');
+  const pending = await req('/api/admin/activation-requests?status=pending', { headers: adminAuth });
+  expect('  failed webhook keeps activation request pending', !!pending.body.requests?.find((x) => x.id === duplicateRequestId));
+  const worker = await req(`/api/workers/${duplicateReferenceWorkerId}`, { headers: auth() });
+  expect('  failed webhook cannot activate duplicate-reference worker', worker.body.worker?.isActive === false);
+}
+{
+  const workerBefore = await req(`/api/workers/${paypalWebhookWorkerId}`, { headers: auth() });
+  const originalPaidUntil = workerBefore.body.worker?.paidUntil;
+  const tenantDbPath = path.join(process.env.TENANTS_DIR ?? 'data/tenants', tenantId, 'workers.db');
+  const tenantDb = new DatabaseSync(tenantDbPath);
+  try {
+    tenantDb.prepare(`UPDATE workers SET status = 'active', paid_until = NULL WHERE id = ?`).run(paypalWebhookWorkerId);
+    const legacySummary = await req(`/invoice/${paypalWebhookWorkerId}`);
+    expect('  legacy active worker without paidUntil is shown as active', legacySummary.status === 200
+      && String(legacySummary.body).includes('פעיל ללא תאריך סיום (רשומת legacy)')
+      && !String(legacySummary.body).includes('ממתין לאימות תשלום'));
+    const legacyChat = await req(`/api/workers/${paypalWebhookWorkerId}/chat`, {
+      method: 'POST', headers: auth(),
+      body: JSON.stringify({ message: 'בדיקת entitlement ישן', customerId: 'legacy-entitlement' }),
+    });
+    expect('  legacy active worker can answer a normal chat', legacyChat.status === 200 && !!legacyChat.body.reply);
+    const legacyStream = await req(`/api/workers/${paypalWebhookWorkerId}/chat/stream`, {
+      method: 'POST', headers: auth(),
+      body: JSON.stringify({ message: 'בדיקת stream ישן', customerId: 'legacy-entitlement-stream' }),
+    });
+    expect('  legacy active worker can answer a stream chat', legacyStream.status === 200 && String(legacyStream.body).includes('event: done'));
+
+    tenantDb.prepare(`UPDATE workers SET status = 'active', paid_until = ? WHERE id = ?`)
+      .run('2020-01-01T00:00:00.000Z', paypalWebhookWorkerId);
+    const expiredSummary = await req(`/invoice/${paypalWebhookWorkerId}`);
+    expect('  expired worker is shown as expired', expiredSummary.status === 200
+      && String(expiredSummary.body).includes('התוקף הסתיים'));
+    const expiredChat = await req(`/api/workers/${paypalWebhookWorkerId}/chat`, {
+      method: 'POST', headers: auth(),
+      body: JSON.stringify({ message: 'בדיקת entitlement שפג', customerId: 'expired-entitlement' }),
+    });
+    expect('  expired worker cannot answer a paid chat', expiredChat.status === 402);
+  } finally {
+    tenantDb.prepare(`UPDATE workers SET status = 'active', paid_until = ? WHERE id = ?`)
+      .run(originalPaidUntil, paypalWebhookWorkerId);
+    tenantDb.close();
+  }
 }
 
 {

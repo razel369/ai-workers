@@ -1,10 +1,12 @@
 # AI Workers — AI Employees for Israeli Businesses
 
-**Production status (verified 2026-08-30): offline.** The previous Railway URL
-returns `404 Application not found`; redeploy and verify persistent storage before
-sharing it with customers.
+**Production status (verified 2026-08-30): offline.** Render (Frankfurt) is the
+approved replacement host, but it has not been deployed or verified yet. The old
+Railway address is historical/offline: `https://paid-agent-demo-production.up.railway.app`.
 
-**Previous Railway URL:** https://paid-agent-demo-production.up.railway.app
+**Current production URL:** none yet. A fresh Render deployment starts with an
+empty database; it does not recover customers, workers, payments, or conversations
+from the Railway volume automatically.
 
 Hire AI employees — pick a template, customize it, deploy it. Your worker handles customers 24/7 on web chat. WhatsApp coming soon.
 
@@ -31,9 +33,9 @@ Open http://localhost:8765/ for the dashboard, then /marketplace to browse worke
 ## How it works
 
 1. **Start from the marketplace** — buyers can create a tenant key without admin help.
-2. **Pick a template** from the marketplace (one-time buy: 99-199 ₪).
+2. **Pick a template** from the marketplace (current catalog setup price: ₪0).
 3. **Customize** persona, tasks, knowledge, skills, and MCP tools in the Builder.
-4. **Pay monthly rental** (149-299 ₪/mo) via PayPal, Bit, or bank transfer.
+4. **Pay monthly rental** (₪199-349/mo in the current catalog) via a configured payment channel.
 5. **Submit payment proof** from the worker paywall.
 6. **Admin approves the activation request** from `#/admin`.
 7. **Chat with the worker** — it handles customers using its persona + your knowledge.
@@ -53,7 +55,9 @@ src/
 └── run-tests.js         # isolated test runner used by npm test
 ```
 
-Zero runtime npm dependencies. Uses Node 22 built-ins: `node:http`, `node:sqlite`, `node:crypto`. Playwright is a dev dependency for browser-flow verification.
+The core server uses Node 22 built-ins (`node:http`, `node:sqlite`, `node:crypto`)
+plus the small `@vercel/analytics` browser package retained for preview analytics.
+Playwright is a dev dependency for browser-flow verification.
 
 ## Configure
 
@@ -62,7 +66,7 @@ Edit `.env` or set env vars:
 ```bash
 set ADMIN_TOKEN=your-secret-token   # admin panel access
 set PAYPAL_ME=your-username          # payment channel
-set BIT_PHONE=972541234567           # Israeli Bit payments
+set BIT_PHONE=9725XXXXXXXX           # Israeli Bit payments; replace locally
 set BANK_ACCOUNT=123456              # bank transfer details
 ```
 
@@ -94,71 +98,104 @@ database (`earnings.db`) and per-tenant worker databases (`tenants/*/workers.db`
 If this directory is ephemeral, customers will lose keys, workers, audit events,
 payment status, and chat history on restart.
 
-| Platform | Config | Persistent DB | Time |
+| Platform | Config | Persistent DB | Status |
 |---|---|---|---|
-| **Railway** (recommended) | `railway.toml` + `Dockerfile` + volume `/app/data` | Yes | 5 min |
+| **Render** (primary target) | `render.yaml` + `Dockerfile` + disk `/app/data` | Yes | Planned; not deployed |
 | Fly.io | `fly.toml` + `Dockerfile` | Yes (volume) | 5 min |
-| Render | `render.yaml` + `Dockerfile` | Yes (disk) | 5 min |
-| Vercel | `vercel.json` | **No** (`/tmp` only) | demos |
+| Railway | `railway.toml` + `Dockerfile` | Historical/offline | Not the current target |
+| Vercel | `vercel.json` | **No** (`/tmp` only) | Preview only |
 | Any VPS | `Dockerfile` | Yes (mount volume) | 15 min |
 
-### Railway (recommended)
+### Render in Frankfurt (primary target)
 
-No CLI login required — use the dashboard:
+The intended baseline is one paid Render web service in **Frankfurt, Germany**
+with the smallest paid compute plan and a 1 GB persistent disk mounted at
+`/app/data`. Estimated baseline cost: **US$7.25/month before tax and outbound
+bandwidth/egress** (US$7 compute + US$0.25 for the 1 GB disk). Confirm the live
+amount before creating the service: [Render pricing](https://render.com/pricing),
+[persistent disk documentation](https://render.com/docs/disks), and
+[available regions](https://render.com/docs/regions).
 
-1. Open [railway.app/new](https://railway.app/new) → **Deploy from GitHub repo** → select this repo.
-2. Railway detects `Dockerfile` + `railway.toml` automatically. First build may fail until env + volume are set — that is expected.
-3. **Service → Volumes → Add Volume** → mount path `/app/data` (1 GB+). Without this, `GET /health` returns `persistentStorage: false`.
-4. **Service → Variables → Raw Editor** — paste non-comment lines from `.env.production.example` and replace placeholders:
-   - `PUBLIC_BASE_URL` = `https://<your-service>.up.railway.app` (no trailing slash)
+1. Open the [Render Dashboard](https://dashboard.render.com/) and choose **New → Blueprint**, connect this GitHub repository, and select branch `codex/revive-ai-workers-baseline`. Review the proposed resources and live price, then **stop before `Deploy Blueprint` until the owner explicitly approves that amount**; clicking it provisions the paid service and starts the initial deploy. Do not create a manual Web Service: it does not apply `render.yaml` automatically and can omit the disk, region, and readiness gates.
+2. Confirm the region is **Frankfurt**, the Docker service uses `render.yaml`, and the persistent disk is mounted at `/app/data` with at least 1 GB.
+3. During Blueprint creation, fill every `sync:false` prompt. As soon as the service resource appears, open **Environment** and add at least one real payment channel. The first deploy can validate the disk through `/infra-ready`, but every customer route intentionally returns `503` until the stricter `/ready` gate passes. Configure:
+   - `PUBLIC_BASE_URL` = optional on Render because `RENDER_EXTERNAL_URL` is used automatically; set it only when a verified custom domain should be canonical
    - `ADMIN_TOKEN` = random hex (`node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`)
-   - `LLM_API_KEY` = your provider key
-   - `BIT_PHONE` or `PAYPAL_ME` = at least one payment channel
-5. **Settings → Networking → Generate Domain** if Railway did not assign one yet.
-6. Push to `main` (or click **Deploy**) and wait for the build.
-7. Verify: `curl https://<your-service>.up.railway.app/health` → `ok:true`, `persistentStorage:true`.
+   - `INTEGRATIONS_SECRET` = a separate random secret; for recovery, use the exact old encryption secret instead
+   - `LLM_API_KEY`, `LLM_MODEL`, and operator-controlled `LLM_BASE_URL` = the real provider configuration (`https://api.openai.com` for OpenAI or `https://openrouter.ai/api` for OpenRouter; the app appends `/v1` routes)
+   - `BIT_PHONE`, `PAYPAL_ME`, a complete bank-transfer set, or verified Paddle production settings = at least one real payment channel in the Render dashboard (payment is not hard-coded in `render.yaml`)
+   - keep `EMBED_ALLOW_PUBLIC=0` for the safe launch default; when external embeds are approved, change it to `1` and set an explicit HTTPS `EMBED_ALLOWED_ORIGINS` allow-list
+4. Keep `DATA_DIR=/app/data`, `DB_PATH=/app/data/earnings.db`,
+   `TENANTS_DIR=/app/data/tenants`, and `REQUIRE_PERSISTENT_VOLUME=1`.
+5. Deploy, then check all three endpoints:
+   - `GET /health` returning `200` proves the process is alive and exposes diagnostics; it is **not** the production gate.
+   - `GET /infra-ready` must return `200`; Render uses it to verify SQLite, writable paths, and the mounted disk during bootstrap.
+   - `GET /ready` must return `200` with `ok:true`; `503` means Render must keep the service out of production.
+6. Run the full buyer smoke flow before publishing a URL: signup → template → activation proof → admin approval → real configured-LLM chat.
+7. Immediately after provisioning, set **Blueprint Settings → Auto Sync → No**. This is separate from `autoDeployTrigger: off` and prevents Blueprint changes from redeploying resources automatically.
+8. Only after the candidate is verified and Vercel production auto-deploys are disabled, perform one approved cutover: change `branch:` in `render.yaml` to `main` as part of the merge, point both the Blueprint's linked branch and the service branch to `main`, then run one Manual Sync. Keep Blueprint Auto Sync off.
 
-Optional CLI (only if you have `RAILWAY_TOKEN` or can complete browser login):
-
-```powershell
-.\scripts\railway-deploy.ps1
-# or verify only:
-.\scripts\railway-deploy.ps1 -BaseUrl "https://your-app.up.railway.app"
-```
-
-Set variables in the dashboard (same as step 4 above):
+Set variables in the Render dashboard (same as step 3 above):
 
 ```bash
 ADMIN_TOKEN=<random-hex>          # node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
 LLM_API_KEY=sk-...
-PUBLIC_BASE_URL=https://your-app.up.railway.app
+LLM_MODEL=<provider-model-id>
+LLM_BASE_URL=https://api.openai.com # or https://openrouter.ai/api
+# Optional on Render; set only for a verified canonical custom domain
+PUBLIC_BASE_URL=
 TRUST_PROXY_HEADERS=1
+DATA_DIR=/app/data
+DB_PATH=/app/data/earnings.db
+TENANTS_DIR=/app/data/tenants
+REQUIRE_PERSISTENT_VOLUME=1
+EMBED_ALLOW_PUBLIC=0             # enable later only with an explicit HTTPS allow-list
 AGENT_OWNER_CONTACT=you@example.com
-BIT_PHONE=972541234567            # or PAYPAL_ME
+BIT_PHONE=9725XXXXXXXX            # or PAYPAL_ME; set the real value only in Render
 WEBHOOK_NOTIFY_URL=               # optional: lead/escalation webhook
 ```
 
-`DB_PATH` and `TENANTS_DIR` are preset in `railway.toml` to `/app/data/...`.
+`render.yaml` defines the Render baseline, including Frankfurt, the disk mount,
+and the readiness health-check path.
 
-4. After deploy, verify:
+After deploy, verify:
 
 ```bash
-curl https://your-app.up.railway.app/health
-# expect: ok:true, persistentStorage:true, adminEnabled:true
+curl https://your-service.onrender.com/health
+# liveness only: expect HTTP 200 and inspect diagnostics
+curl -i https://your-service.onrender.com/infra-ready
+# Render infrastructure gate: expect HTTP 200 after the persistent disk is mounted
+curl -i https://your-service.onrender.com/ready
+# production gate: expect HTTP 200 and ok:true (not 503)
 ```
+
+#### Fresh deployment is not Railway data recovery
+
+Render creates a new, empty `/app/data` disk. Before directing returning
+customers to it, separately obtain and verify a Railway backup containing both
+`earnings.db` and `tenants/`. Preserve the exact old `INTEGRATIONS_SECRET`; if it
+was unset, preserve the old `ADMIN_TOKEN` value that served as the encryption
+fallback. Restore the data and matching encryption secret to Render, then
+validate tenant counts, decrypt/test every integration, and run a real customer
+flow. If the old encryption secret is unavailable, reconnect every integration
+and document that limitation. If no verified Railway export is available, label
+the Render instance as a **fresh launch**, not a recovered production system.
 
 Deployment checklist:
 
 - Set `ADMIN_TOKEN` from a secret manager, never in source.
 - Set `LLM_API_KEY` for real worker replies; without it the app intentionally runs in mock mode.
-- Mount persistent storage at `/app/data` or set `DB_PATH` and `TENANTS_DIR` to another persistent path.
+- Mount persistent storage at `DATA_DIR`; if using a path other than `/app/data`, move the mount and update `DATA_DIR`, `DB_PATH`, and `TENANTS_DIR` together so both database paths remain under that mount.
 - Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy/load balancer that overwrites `X-Forwarded-*` headers.
-- Set `PUBLIC_BASE_URL` to your public URL (Railway domain or custom domain).
-- Verify `/health` after deploy and run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
-- Roll back by redeploying the previous image/revision, then verify `/health` and the admin audit panel.
+- Confirm `/health` reports Render's external URL; set `PUBLIC_BASE_URL` only for a verified canonical custom domain.
+- Use `/health` for liveness diagnostics, `/infra-ready` for Render's infrastructure health check, and require `/ready` to return `200` before sending customer traffic.
+- Run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
+- Roll back by redeploying the previous image/revision, then verify `/ready` and the admin audit panel.
 
-**Production URL:** `https://paid-agent-demo-production.up.railway.app` — this is the only supported live environment.  
-Vercel (if still connected) uses ephemeral `/tmp` storage and is not used for real customers; disconnect it in the Vercel dashboard to avoid confusion.
+**Production URL:** not assigned or verified yet. The previous Railway URL is
+historical and offline. Vercel uses ephemeral `/tmp` storage and is allowed only
+for disposable previews. **Disable Vercel production auto-deploys from `main`**
+before merging; PR previews must never be presented as customer production.
 
 ## Why this is worth paying for (2026)
 
