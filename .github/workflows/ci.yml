@@ -19,6 +19,16 @@ jobs:
 
       - run: npm ci
 
+      - name: Validate Oracle deployment configuration
+        run: |
+          bash -n deploy/oci/bootstrap.sh deploy/oci/deploy.sh deploy/oci/backup.sh
+          cp .env.oci.example .env
+          docker compose --env-file .env.oci.example -f compose.oci.yaml config --quiet
+          docker run --rm \
+            -e AI_WORKERS_DOMAIN=ai-workers-ci.example.com \
+            -v "$PWD/deploy/oci/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
 

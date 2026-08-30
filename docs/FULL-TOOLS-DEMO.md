@@ -6,11 +6,11 @@
 2. הזן שם עסק → בחר תבנית → **דבר איתו עכשיו**
 3. כתוב שלום בצ'אט — אחרי התשובה לחץ **מעולה! שתף עם לקוחות**
 4. התראות וואטסאפ? **הגדרות** בצ'אט (לא באשף)
-5. `curl http://localhost:8765/health` → `מוכן לעבודה` או `צריך הגדרה`
+5. `curl http://localhost:8765/health` → liveness ואבחון; בפרודקשן רק `curl http://localhost:8765/ready` עם `200` ו־`ok:true` מאשר מוכנות
 
 ---
 
-מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב-Vercel (mock), או ב-Railway (LLM אמיתי + DB קבוע).
+מדריך מפורט למטה — להפעלת עובד AI עם **כל הכלים המובנים** (save_lead, book_meeting, search_knowledge, escalate, generate_image ועוד) — מקומית, ב־Vercel preview זמני, או ב־Oracle Always Free עם LLM אמיתי ואחסון קבוע.
 
 ---
 
@@ -40,7 +40,7 @@ Copy-Item .env.demo.example .env
 | `WEBHOOK_NOTIFY_URL` | מומלץ | JSON ל-webhook.site על save_lead / escalate |
 | `MEETING_BOOKING_URL` | מומלץ | קישור ל-`book_meeting_link` |
 | `GOOGLE_AI_API_KEY` | אופציונלי | `generate_image` אמיתי (בלי — SVG mock) |
-| `TRIAL_DAYS=14` | מומלץ | עובד חדש **פעיל מיד** 14 יום |
+| `TRIAL_DAYS=0` | חובה בפרודקשן עד החלטת בעלים | אין הפעלה חינמית אוטומטית; לדמו מקומי בלבד אפשר לבחור משך אחר |
 
 דוגמה מלאה: [`.env.demo.example`](../.env.demo.example)
 
@@ -70,24 +70,34 @@ Copy-Item .env.demo.example .env
 
 ---
 
-## אופציה B — Vercel (mock LLM) vs Railway (LLM + DB)
+## אופציה B — Vercel Preview מול Oracle Production
 
-| | **Vercel** | **Railway** |
-|---|------------|-------------|
-| URL לדוגמה | `https://paid-agent-demo-production.up.railway.app` |
-| LLM | Mock (אין persistence ל-API key ב-/tmp) | `LLM_API_KEY` ב-Variables |
-| SQLite | אфמרלי — `/tmp`, מתאפס | Volume ב-`/app/data` |
-| מתאים ל | UI, Magic flow, mock tools | דמו production, webhooks, היסטוריה |
-| Deploy | push ל-main → Vercel auto | [railway.app/new](https://railway.app/new) + `railway.toml` |
+| | **Vercel Preview בלבד** | **Oracle Always Free — יעד פרודקשן** |
+|---|--------------------------|---------------------------|
+| URL | URL זמני של PR preview | `https://YOUR_DOMAIN` — עדיין לא הוקצה/אומת |
+| LLM | Mock מומלץ; אין להסתמך על persistence | `LLM_API_KEY` ב־`.env`; free hosting אינו free inference |
+| SQLite | ephemeral ב־`/tmp`; מתאפס | `./data` קבוע שמחובר ל־`/app/data` |
+| מתאים ל | UI, Magic flow וכלי mock | פרודקשן, webhooks והיסטוריה לאחר readiness + smoke |
+| Deploy | PR previews בלבד; `main` לא יבצע Production auto-deploy | GitHub + `compose.oci.yaml` + `deploy/oci/` |
 
-**Vercel — מה לצפות:** כלים יופעלו ב-**mock_agent** (זיהוי מילות מפתח בעברית). tool trace מלא ב-Builder test panel; בצ'אט — סיכום בתוך התשובה.
+**Vercel — מה לצפות:** כלים יכולים לפעול ב־**mock_agent** (זיהוי מילות מפתח בעברית). tool trace מלא ב־Builder test panel; בצ'אט — סיכום בתוך התשובה. הנתונים זמניים, ולכן אין להזין לקוחות אמיתיים ואין להציג את ה־URL כפרודקשן. לפני merge ל־`main` חייבים לחסום Vercel Production auto-deploy.
 
-**Railway — checklist:**
+**Oracle Always Free — checklist:**
 
-1. Deploy from GitHub → Volume `/app/data`
-2. Variables מ-`.env.production.example` + `LLM_API_KEY`, `ADMIN_TOKEN`, `TRIAL_DAYS=14`
-3. `PUBLIC_BASE_URL=https://<domain>.up.railway.app`
-4. `curl https://<domain>/health` → `persistentStorage: true`
+יצירת החשבון, login, home region ו־2FA נשארים בשליטת הבעלים. יוצרים רק משאב שמסומן **Always Free Eligible** ועוצרים אם מוצג מחיר שאינו `$0`.
+
+1. צור `VM.Standard.A1.Flex` ב־home region: ‏1 OCPU, ‏4 GB, ‏Ubuntu ARM64 ו־boot volume של 50 GB.
+2. פתח רק 80/443 לציבור והגבל SSH ל־IP של הבעלים; אל תפתח 8765.
+3. בצע את [`deploy/oci/README.md`](../deploy/oci/README.md), הגדר hostname חינמי ומלא `.env` בלי `REPLACE_ME`.
+4. ודא ש־`/health` מציג `PUBLIC_BASE_URL` תואם ל־`https://YOUR_DOMAIN`.
+5. `GET /health` חייב להחזיר `200`, אך זו בדיקת liveness בלבד.
+6. `GET /infra-ready` וגם `GET /ready` חייבים להחזיר `200`; `503` חוסם פרודקשן.
+7. הרץ buyer flow עם LLM אמיתי לפני פרסום הכתובת.
+8. צור staging backup, העתק אותו לאחסון מוצפן מחוץ ל־VM ואמת checksum + restore.
+
+אין SLA, A1 capacity אינה מובטחת ו־Oracle רשאית reclaim למכונה שהיא מסווגת כ־idle. אין לעבור למשאב בתשלום במקרה כזה. ראו [Oracle Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
+
+> Oracle VM חדש מתחיל עם DB ריק. הוא אינו משחזר אוטומטית את `earnings.db` או `tenants/` מה־volume הישן של Railway. Recovery דורש גם את `INTEGRATIONS_SECRET` הישן המדויק (או את `ADMIN_TOKEN` הישן אם שימש fallback), אחרת יש לחבר מחדש כל integration. ללא export, מפתח הצפנה ושחזור מאומתים, זהו fresh launch ולא recovery.
 
 ---
 
@@ -97,15 +107,15 @@ Copy-Item .env.demo.example .env
 
 ### קליקים מדויקים
 
-1. פתח **http://localhost:8765/marketplace#/magic** (או לחץ **«נסה עכשיו בחינם»** בגיבור)
+1. פתח **http://localhost:8765/marketplace#/magic** (או לחץ **«גייס עובד ב-3 דקות»** בגיבור)
 2. **שלב 1/3** — הזן שם עסק (למשל: «קפה השכונה») → **המשך**
 3. **שלב 2/3** — בחר תבנית:
    - **מוקדן לידים B2B** (`sales-leads-il`) — מומלץ לכלים save_lead + book_meeting
    - **מזכיר/ת רפואי/ת** (`clinic-receptionist-he`) — תורים + escalate
 4. לחץ **«דבר איתו עכשיו!»**
-5. נפתח **צ'אט** ב-`#/workers/chat/wk_...` עם באנר «מצב ניסיון»
+5. נפתח **צ'אט** ב-`#/workers/chat/wk_...` עם באנר «מצב דמו»; אם הוגדר trial מאושר יוצג «מצב ניסיון»
 
-> עם `TRIAL_DAYS=14` העובד **פעיל** — אין paywall בצ'אט. בלי trial — צ'אט demoMode עדיין עובד; להפעלה מלאה → אדמין.
+> בדמו מקומי בלבד, `TRIAL_DAYS=14` יוצר עובד **פעיל** ל־14 יום. בפרודקשן ברירת המחדל היא `0`; במצב זה demoMode עדיין עובד, ולהפעלה מלאה נדרש תשלום ואישור אדמין.
 
 ### URL אחרי Magic
 
@@ -150,7 +160,7 @@ http://localhost:8765/marketplace#/workers/edit/<workerId>
 
 ### הכנה
 
-1. `TRIAL_DAYS=14`, `WEBHOOK_NOTIFY_URL` מ-[webhook.site](https://webhook.site)
+1. לדמו מקומי בלבד: `TRIAL_DAYS=14`, ו־`WEBHOOK_NOTIFY_URL` מ-[webhook.site](https://webhook.site). בפרודקשן נשארים עם `0` עד החלטת בעלים.
 2. `MEETING_BOOKING_URL=https://cal.com/demo` (או Cal.com שלך)
 3. קנה/צור עובד `sales-leads-il` (Magic או Pro)
 4. Builder → שלב 4 → ודא **מצב סוכן** + כלים: `save_lead`, `book_meeting_link`, `notify_webhook`
@@ -254,8 +264,9 @@ npm test
 | **Local** | http://localhost:8765/marketplace |
 | **Magic** | http://localhost:8765/marketplace#/magic |
 | **Admin** | http://localhost:8765/marketplace#/admin |
-| **Production** | https://paid-agent-demo-production.up.railway.app/marketplace |
-| **Railway** | https://\<your-app\>.up.railway.app/marketplace |
+| **Oracle target** | `https://YOUR_DOMAIN/marketplace` — עדיין לא הוקצה/אומת |
+| **Historical Railway** | `https://paid-agent-demo-production.up.railway.app` — offline, לא להשתמש |
+| **Readiness** | `https://YOUR_DOMAIN/ready` — חובה `200` לפני לקוחות |
 
 ---
 
@@ -266,3 +277,4 @@ npm test
 3. **הרץ** `.\scripts\prepare-demo.ps1` — וודא Node ≥ 22.5.
 4. **עבור Magic או Pro flow** עם הודעות העברית מהטבלה למעלה.
 5. **בדוק tool trace** ב-Builder שלב 4 («הרץ בדיקה») + webhook.site.
+6. לפרודקשן: בצע את runbook של Oracle Always Free, עצור אם מוצג מחיר שאינו `$0`, ודא `/infra-ready` ו־`/ready`, ואז הרץ את אותו מסלול עם LLM אמיתי.

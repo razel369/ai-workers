@@ -1,5 +1,6 @@
-# Smoke-test production endpoints (health, marketplace, templates API).
-# Usage: .\scripts\smoke-production.ps1 -BaseUrl "https://your-app.up.railway.app"
+# Smoke-test production liveness, infrastructure readiness, go-live readiness,
+# customer pages, and the templates API.
+# Usage: .\scripts\smoke-production.ps1 -BaseUrl "https://YOUR_DOMAIN"
 
 param(
     [Parameter(Mandatory = $true)]
@@ -43,6 +44,8 @@ function Test-Endpoint {
 Write-Host "`nSmoke test: $BaseUrl`n"
 
 Test-Endpoint -Name "GET /health" -Path "/health" -ExpectBodyContains '"ok": true'
+Test-Endpoint -Name "GET /infra-ready" -Path "/infra-ready" -ExpectBodyContains '"ok": true'
+Test-Endpoint -Name "GET /ready" -Path "/ready" -ExpectBodyContains '"ok": true'
 Test-Endpoint -Name "GET /marketplace" -Path "/marketplace" -ExpectBodyContains "marketplace"
 Test-Endpoint -Name "GET /api/workers/templates" -Path "/api/workers/templates" -ExpectBodyContains '"templates"'
 Test-Endpoint -Name "GET /privacy" -Path "/privacy" -ExpectBodyContains "פרטיות"

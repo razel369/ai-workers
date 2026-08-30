@@ -1,6 +1,7 @@
 // Browser regression test for the rendered buy -> activate -> chat flow.
 
 import { chromium } from 'playwright';
+import { readFile } from 'node:fs/promises';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:8765';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token';
@@ -33,6 +34,14 @@ async function createWorkerViaApi() {
       body: JSON.stringify({ templateId: 'sales-leads-il' }),
     });
     if (buy.status === 200 && buy.body?.workerId) {
+      await req('/api/workers/' + buy.body.workerId, {
+        method: 'PATCH',
+        headers: { authorization: 'Bearer ' + issue.body.key, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          knowledge: 'שם העסק: Browser Flow Business\nשעות פעילות: א׳–ה׳ 09:00–17:00\nמידע חסר מועבר תמיד לנציג אנושי.',
+          knowledgeReviewed: true,
+        }),
+      });
       return { tenantKey: issue.body.key, tenantId: issue.body.tenantId, workerId: buy.body.workerId };
     }
     await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
@@ -42,6 +51,13 @@ async function createWorkerViaApi() {
 
 console.log(`Browser flow tests against ${BASE}\n`);
 
+const uiSource = await readFile(new URL('./workers-ui.html', import.meta.url), 'utf8');
+expect('UI has no automatic account key rotation request', !uiSource.includes("const rotateRow = await api('/api/account/rotate-key'"));
+expect('Paddle completion waits for server activation', uiSource.includes('waitForWorkerActivation(workerId, alive)') && uiSource.includes('paddle-activation-status'));
+expect('Paddle checkout uses only a server-created transaction id', uiSource.includes('transactionId: body.transactionId')
+  && !uiSource.includes('customData: body.customData'));
+expect('protected exports use authenticated Blob download', uiSource.includes('downloadAuthenticated(`/api/workers/${encodeURIComponent(workerId)}/leads.csv`') && !uiSource.includes('href="/api/workers/${encodeURIComponent(workerId)}/leads.csv"'));
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -49,21 +65,56 @@ try {
   page.setDefaultTimeout(25000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
 
-  // Magic wizard UI smoke (isolated page — avoid polluting chat session)
+  // API failures must be rendered as failures, never as an empty catalogue.
   try {
-    const magicPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const errorPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await errorPage.route('**/api/workers/templates', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporary' }) }));
+    await errorPage.goto(BASE + '/marketplace#/', { waitUntil: 'domcontentloaded' });
+    await errorPage.waitForSelector('#marketplace-retry', { timeout: 15000 });
+    expect('template API error is not rendered as empty catalogue', (await errorPage.locator('[role="alert"]').innerText()).includes('לא הצלחנו לטעון'));
+    await errorPage.close();
+  } catch (e) {
+    fail('template API error state', e.message);
+  }
+
+  // Magic wizard: real owner contact and mandatory knowledge review precede creation.
+  try {
+    const magicContext = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+    const magicPage = await magicContext.newPage();
+    let buyRequests = 0;
+    magicPage.on('request', (request) => { if (request.url().includes('/api/workers/buy')) buyRequests++; });
     await magicPage.goto(BASE + '/marketplace#/magic', { waitUntil: 'domcontentloaded' });
     await magicPage.waitForSelector('#magic-business', { timeout: 15000 });
     await magicPage.fill('#magic-business', 'Browser Flow Business');
+    await magicPage.fill('#magic-contact', `browser-flow-${Date.now()}@example.com`);
     await magicPage.click('#magic-next');
     await magicPage.waitForSelector('.tpl-pick-btn[data-tpl="sales-leads-il"]', { timeout: 15000 });
     expect('magic wizard step 1 has no integration fields', await magicPage.locator('#magic-wa-phone').count() === 0);
     expect('magic step 2 shows template picker', await magicPage.locator('.tpl-pick-btn[data-tpl="sales-leads-il"]').isVisible());
-    await magicPage.waitForSelector('#magic-skip-to-chat', { timeout: 8000 });
-    expect('magic step 2 offers skip to chat', await magicPage.locator('#magic-skip-to-chat').isVisible());
-    await magicPage.close();
-  } catch {
-    ok('magic wizard smoke skipped — continuing with API setup');
+    await magicPage.click('.tpl-pick-btn[data-tpl="sales-leads-il"]');
+    await magicPage.click('#magic-next');
+    await magicPage.waitForSelector('#magic-knowledge', { timeout: 15000 });
+    expect('knowledge review is mandatory before worker creation', await magicPage.locator('#magic-review-next').isDisabled() && buyRequests === 0);
+    await magicPage.fill('#magic-knowledge', 'שם העסק: Browser Flow Business\nשעות: א׳–ה׳ 09:00–17:00\nבכל מידע חסר יש להעביר לנציג אנושי.');
+    await magicPage.check('#magic-knowledge-confirm');
+    expect('explicit knowledge approval enables review continuation', !(await magicPage.locator('#magic-review-next').isDisabled()));
+    await magicPage.click('#magic-review-next');
+    await magicPage.waitForSelector('#magic-finish', { timeout: 10000 });
+    expect('final CTA creates worker only after review', await magicPage.locator('#magic-finish').isVisible() && buyRequests === 0);
+    await magicPage.click('#magic-skip');
+    await magicPage.waitForSelector('#recovery-code-value', { timeout: 20000 });
+    const magicCookies = await magicContext.cookies(BASE);
+    expect('signup establishes HttpOnly owner session cookie', magicCookies.some((cookie) => cookie.name === 'aiw_owner_session' && cookie.httpOnly));
+    expect('signup does not persist a new tenant key in localStorage', await magicPage.evaluate(() => !localStorage.getItem('paid-agent.workerKey')));
+    expect('recovery code is shown once with storage warning', (await magicPage.locator('[role="dialog"]').innerText()).includes('לא יוצג שוב'));
+    await magicPage.waitForFunction(() => location.hash.startsWith('#/workers/chat/'), null, { timeout: 15000 });
+    await magicPage.click('#recovery-code-close');
+    await magicPage.goto(BASE + '/marketplace#/account', { waitUntil: 'domcontentloaded' });
+    await magicPage.waitForSelector('#create-api-key-btn', { timeout: 15000 });
+    expect('cookie session exposes API-key creation only as an explicit action', await magicPage.locator('#create-api-key-btn').isVisible());
+    await magicContext.close();
+  } catch (e) {
+    fail('magic wizard review flow', e.message);
   }
 
   const { tenantKey, tenantId, workerId } = await createWorkerViaApi();
@@ -77,6 +128,28 @@ try {
   await page.addInitScript((key) => {
     localStorage.setItem('paid-agent.workerKey', key);
   }, tenantKey);
+  let ownerRotateRequests = 0;
+  let lastChatCustomerId = '';
+  let lastHistoryCustomerId = '';
+  page.on('request', (request) => {
+    if (request.url().includes('/api/account/rotate-key')) ownerRotateRequests++;
+    if (request.url().includes(`/api/workers/${workerId}/messages`)) {
+      lastHistoryCustomerId = new URL(request.url()).searchParams.get('customerId') || '';
+    }
+    if (request.method() === 'POST'
+        && (request.url().endsWith(`/api/workers/${workerId}/chat`)
+          || request.url().endsWith(`/api/workers/${workerId}/test-agent`))) {
+      try { lastChatCustomerId = JSON.parse(request.postData() || '{}').customerId || ''; } catch {}
+    }
+  });
+  await page.goto(BASE + '/marketplace#/account', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.account-page', { timeout: 20000 });
+  const legacyKeyAfterAccountLoad = await page.evaluate(() => localStorage.getItem('paid-agent.workerKey'));
+  expect('account load never rotates owner key', ownerRotateRequests === 0 && legacyKeyAfterAccountLoad === tenantKey);
+  expect('legacy migration login cannot rotate key from UI', await page.locator('#create-api-key-btn').count() === 0);
+  const legacyStillValid = await req('/api/account', { headers: { authorization: 'Bearer ' + tenantKey } });
+  expect('legacy key remains valid after account screen', legacyStillValid.status === 200);
+
   for (let navAttempt = 0; navAttempt < 3; navAttempt++) {
     await page.goto(BASE + '/marketplace#/workers/chat/' + workerId, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.querySelector('#c-input') || document.querySelector('.empty.err'), null, { timeout: 20000 });
@@ -90,6 +163,8 @@ try {
   }
   expect('demo chat composer visible before payment', await page.locator('#c-input').isVisible());
   expect('no paywall on chat screen', !(await page.locator('#pay-submit').count()));
+  expect('chat exposes accessible log and labelled composer', await page.locator('#chat-window[role="log"]').count() === 1 && (await page.locator('#c-input').getAttribute('aria-label')) === 'הודעה לעובד');
+  expect('zero-day configuration is labeled as demo, not a timed trial', (await page.locator('.demo-banner-copy').innerText()).includes('מצב דמו') && !(await page.locator('.demo-banner-copy').innerText()).includes('מצב ניסיון'));
 
   let magicWorker = { status: 0 };
   for (let i = 0; i < 5; i++) {
@@ -111,10 +186,10 @@ try {
       { timeout: 35000 },
     );
   } catch {
-    const chatProbe = await req('/api/workers/' + workerId + '/chat', {
+    const chatProbe = await req('/api/workers/' + workerId + '/test-agent', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + tenantKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ message: 'שלום', demoMode: true }),
+      body: JSON.stringify({ message: 'שלום', customerId: `owner:${workerId}` }),
     });
     expect('demo chat returns assistant reply', chatProbe.status === 200 && (chatProbe.body?.reply?.length ?? 0) > 10);
   }
@@ -123,9 +198,51 @@ try {
     expect('demo chat UI shows assistant reply', demoReply.length > 10);
   }
 
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#c-input', { timeout: 20000 });
+  const demoReloadText = await page.locator('#chat-window').innerText();
+  expect('owner chat uses one stable customer id for send and history', lastChatCustomerId === `owner:${workerId}` && lastHistoryCustomerId === `owner:${workerId}`);
+  expect('demo preview is intentionally ephemeral', !demoReloadText.includes('שלום, מי אתה ומה אתה עושה?'));
+
+  const historyPattern = `**/api/workers/${workerId}/messages*`;
+  const failHistory = (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporary' }) });
+  await page.route(historyPattern, failHistory);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#chat-history-error', { timeout: 15000 });
+  expect('chat history failure shows retry instead of empty state', await page.locator('#chat-history-retry').isVisible());
+  await page.unroute(historyPattern, failHistory);
+  await page.click('#chat-history-retry');
+  await page.waitForSelector('#chat-history-error', { state: 'detached', timeout: 15000 });
+
+  await page.goto(BASE + '/marketplace#/workers/insights/' + workerId, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#leads-csv-download', { timeout: 20000 });
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 15000 }),
+    page.click('#leads-csv-download'),
+  ]);
+  expect('CSV export is downloaded through authenticated fetch', download.suggestedFilename().startsWith('leads-'));
+
   await page.goto(BASE + '/marketplace#/workers/activate/' + workerId, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.paywall', { timeout: 20000, state: 'visible' });
   expect('activation paywall visible when user opts in', await page.locator('.paywall').isVisible());
+  if (await page.locator('#paddle-checkout').count()) {
+    await page.evaluate(() => {
+      window.Paddle = {
+        Environment: { set() {} },
+        Initialize(config) { this.eventCallback = config.eventCallback; },
+        Checkout: { open() {} },
+      };
+    });
+    await page.click('#paddle-checkout');
+    await page.waitForFunction(() => typeof window.Paddle?.eventCallback === 'function', null, { timeout: 10000 });
+    await page.evaluate(() => { void window.Paddle.eventCallback({ name: 'checkout.completed' }); });
+    await page.waitForFunction(
+      () => document.querySelector('#paddle-activation-status')?.textContent.includes('ממתינים לאישור'),
+      null,
+      { timeout: 10000 },
+    );
+    expect('Paddle completion stays pending until server confirms active', page.url().includes(`#/workers/activate/${workerId}`) && !page.url().includes('/live/'));
+  }
 
   const act = await req('/api/workers/' + workerId + '/activation-request', {
     method: 'POST',
@@ -175,6 +292,14 @@ try {
   );
   const reply = await page.locator('.msg.assistant').last().innerText();
   expect('chat returns assistant reply', reply.length > 20);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#c-input', { timeout: 20000 });
+  await page.waitForFunction(
+    () => document.querySelector('#chat-window')?.textContent.includes('שלום, מי אתה ומה אתה עושה?'),
+    null,
+    { timeout: 10000 },
+  );
+  expect('paid owner chat history persists after reload', (await page.locator('#chat-window').innerText()).includes('שלום, מי אתה ומה אתה עושה?'));
 } finally {
   await browser.close();
 }

@@ -1,7 +1,7 @@
 {
   "name": "ai-workers",
   "version": "1.0.0",
-  "description": "AI employees for Israeli businesses. Pick a template, customize it, deploy it. Monthly rental via PayPal/Bit/bank transfer.",
+  "description": "Hebrew-first AI worker marketplace for Israeli businesses, with operator-managed AI and configurable payment channels.",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -21,13 +21,12 @@
     "marketplace",
     "israel",
     "hebrew",
-    "whatsapp",
-    "paypal",
-    "bit",
+    "customer-service",
+    "lead-generation",
     "business"
   ],
   "license": "MIT",
-  "homepage": "https://paid-agent-demo-production.up.railway.app",
+  "homepage": "https://github.com/razel369/ai-workers",
   "devDependencies": {
     "playwright": "^1.61.1"
   },

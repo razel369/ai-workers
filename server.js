@@ -1,8 +1,10 @@
-// AI Workers — Israeli businesses hire AI employees, not APIs.
+// AI Workers — Hebrew-first AI worker software for Israeli businesses.
 //
-// Businesses pick a worker template (Lead Qualifier, Hebrew Support, etc.),
-// customize it, and deploy it. Workers chat with customers 24/7 on web chat
-// (WhatsApp coming soon). Monthly subscription covers all usage and tokens.
+// Product status (2026-08-30): local development candidate, not verified
+// production. Web/embed and provider-signed WhatsApp paths exist in source, but
+// no live Oracle/TLS/LLM/Paddle/Meta deployment or customer pilot is proven.
+// Paid access is quota-bound; hosting, inference, provider and tax costs are
+// separate operational decisions. See docs/PRODUCT-READINESS.md.
 //
 // ENV:
 //   PORT=8765
@@ -18,13 +20,9 @@
 //
 //   -- Oldschool payment channels (any subset) --
 //   PAYPAL_ME=you                                  -> https://paypal.me/you
-//   BUY_ME_A_COFFEE=https://buymeacoffee.com/you
-//   KO_FI=https://ko-fi.com/you
-//   BIT_PHONE=972541234567                         -> shows a Bit payment link
-//   GITHUB_SPONSORS=you
-//   GUMROAD_URL=https://you.gumroad.com/l/ai-workers
+//   BIT_PHONE=9725XXXXXXXX                         -> shows a Bit payment link
 //
-//   -- Bank invoice (Israeli-friendly) --
+//   -- Bank transfer details (Israeli-friendly) --
 //   PAYEE_NAME=Your Name
 //   BANK_NAME=Bank Hapoalim
 //   BANK_BRANCH=620
@@ -46,6 +44,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { csvRow } from './csv-security.js';
 import * as workers from './workers.js';
 import * as mcpClient from './mcp-client.js';
 import { SKILLS, getSkill, handleLegalRoutes } from './skills.js';
@@ -62,16 +61,36 @@ import {
 import {
   paddleEnabled,
   paddleConfigStatus,
+  paddlePriceMapStatus,
   buildPaddleCheckoutConfig,
   handlePaddleWebhook,
 } from './paddle-billing.js';
 import { buildEmbedScript } from './embed-widget.js';
+import {
+  authenticateOwnerSession,
+  clearOwnerSessionCookie,
+  createOwnerAccount,
+  findOwnerAccountByEmail,
+  getOwnerAccount,
+  initOwnerSessions,
+  issueOwnerSession,
+  normalizeOwnerEmail,
+  ownerSessionCookie,
+  recoverOwnerAccount,
+  revokeOwnerSession,
+} from './owner-sessions.js';
+import {
+  authenticateEmbedSession,
+  initEmbedSessions,
+  issueEmbedSession,
+  pruneEmbedSessions,
+} from './embed-sessions.js';
 import * as urlSecurity from './url-security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 8765);
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const AGENT_NAME = process.env.AGENT_NAME ?? 'AI Workers';
 const AGENT_DESCRIPTION = process.env.AGENT_DESCRIPTION ?? 'AI employees for Israeli businesses.';
 const AGENT_OWNER_CONTACT = process.env.AGENT_OWNER_CONTACT ?? '';
@@ -79,20 +98,19 @@ const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 120);
 const SIGNUP_LIMIT_PER_HOUR = Number(process.env.SIGNUP_LIMIT_PER_HOUR ?? 12);
 const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, 'data', 'earnings.db');
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, 'data');
+const TENANTS_DIR = process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 const CORS_ALLOW_ORIGIN = process.env.CORS_ALLOW_ORIGIN ?? '';
 const ALLOW_PRIVATE_NETWORK_URLS = process.env.ALLOW_PRIVATE_NETWORK_URLS === '1';
 const TRUST_PROXY_HEADERS = process.env.TRUST_PROXY_HEADERS === '1';
+const RUNNING_ON_RENDER = process.env.RENDER === 'true';
+const REQUIRE_PERSISTENT_VOLUME = process.env.REQUIRE_PERSISTENT_VOLUME === '1' || RUNNING_ON_RENDER;
 
 // Oldschool channels
 const PAYPAL_ME = process.env.PAYPAL_ME ?? '';
-const BUY_ME_A_COFFEE = process.env.BUY_ME_A_COFFEE ?? '';
-const KO_FI = process.env.KO_FI ?? '';
 const BIT_PHONE = process.env.BIT_PHONE ?? '';
-const GITHUB_SPONSORS = process.env.GITHUB_SPONSORS ?? '';
-const GUMROAD_URL = process.env.GUMROAD_URL ?? '';
 
-// Bank invoice
+// Bank transfer details
 const PAYEE_NAME = process.env.PAYEE_NAME ?? '';
 const BANK_NAME = process.env.BANK_NAME ?? '';
 const BANK_BRANCH = process.env.BANK_BRANCH ?? '';
@@ -108,7 +126,20 @@ const LLM_BASE_URL = process.env.LLM_BASE_URL ?? '';
 
 // --- Named constants ------------------------------------------------------
 
-const UNLIMITED_CALLS = 999_999_999;
+const configuredMonthlyCallLimit = Number(process.env.MONTHLY_CHAT_LIMIT ?? 2_000);
+const DEFAULT_MONTHLY_CALL_LIMIT = Number.isFinite(configuredMonthlyCallLimit)
+  ? Math.max(100, Math.min(Math.trunc(configuredMonthlyCallLimit), 1_000_000))
+  : 2_000;
+const configuredMonthlyProviderCallLimit = Number(process.env.MONTHLY_PROVIDER_CALL_LIMIT ?? 2_000);
+const DEFAULT_MONTHLY_PROVIDER_CALL_LIMIT = Number.isFinite(configuredMonthlyProviderCallLimit)
+  ? Math.max(1, Math.min(Math.trunc(configuredMonthlyProviderCallLimit), 1_000_000))
+  : 2_000;
+const PRODUCT_ANALYTICS_ENABLED = process.env.PRODUCT_ANALYTICS !== '0';
+const configuredAnalyticsRetention = Number(process.env.PRODUCT_ANALYTICS_RETENTION_DAYS ?? 90);
+const PRODUCT_ANALYTICS_RETENTION_DAYS = Number.isFinite(configuredAnalyticsRetention)
+  ? Math.max(7, Math.min(Math.trunc(configuredAnalyticsRetention), 365))
+  : 90;
+const OWNER_COOKIE_SECURE = process.env.NODE_ENV === 'production' || PUBLIC_BASE_URL.startsWith('https://');
 const BODY_TINY = 1024 * 16;
 const BODY_SMALL = 1024 * 64;
 const BODY_LARGE = 1024 * 256;
@@ -119,17 +150,27 @@ const CSV_EXPORT_LIMIT = 1000;
 const ADMIN_KEYS_LIMIT = 200;
 const ADMIN_AUDIT_LIMIT = 200;
 const ASSETS_CACHE_MAX_AGE = 86400;
+const PUBLIC_STATS_REFRESH_MS = 60_000;
 const DEFAULT_RENT_DAYS = 30;
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 0);
-const EMBED_ALLOW_PUBLIC = process.env.EMBED_ALLOW_PUBLIC !== '0';
+const EMBED_ALLOW_PUBLIC = process.env.EMBED_ALLOW_PUBLIC === '1';
+const embedLimit = (name, fallback, max = 100_000) => {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.max(1, Math.min(Math.trunc(value), max)) : fallback;
+};
+const EMBED_SESSION_IP_WORKER_HOURLY = embedLimit('EMBED_SESSION_IP_WORKER_HOURLY', 20);
+const EMBED_SESSION_WORKER_HOURLY = embedLimit('EMBED_SESSION_WORKER_HOURLY', 200);
+const EMBED_CHAT_SESSION_HOURLY = embedLimit('EMBED_CHAT_SESSION_HOURLY', 60);
+const EMBED_CHAT_IP_WORKER_HOURLY = embedLimit('EMBED_CHAT_IP_WORKER_HOURLY', 120);
+const EMBED_CHAT_WORKER_HOURLY = embedLimit('EMBED_CHAT_WORKER_HOURLY', 500);
 const EMBED_ALLOWED_ORIGINS = new Set(
-  String(process.env.EMBED_ALLOWED_ORIGINS ?? '*')
+  String(process.env.EMBED_ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
 );
 if (!process.env.EMBED_ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
-  console.warn('[security] EMBED_ALLOWED_ORIGINS is not set; embed widget accepts requests from any origin. Set to a comma-separated list or "*" explicitly.');
+  console.warn('[security] EMBED_ALLOWED_ORIGINS is not set; cross-origin embed remains disabled. Configure exact HTTPS origins before enabling it.');
 }
 const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
 const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
@@ -214,9 +255,82 @@ db.exec(`
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_whatsapp_routes_tenant ON whatsapp_routes(tenant_id);
+  CREATE TABLE IF NOT EXISTS whatsapp_events (
+    message_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processing',
+    tenant_id TEXT,
+    worker_id TEXT,
+    customer_id TEXT,
+    reply_text TEXT,
+    runtime TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_whatsapp_events_received ON whatsapp_events(received_at);
+  CREATE TABLE IF NOT EXISTS tenant_monthly_usage (
+    tenant_id TEXT NOT NULL,
+    period TEXT NOT NULL,
+    chat_calls INTEGER NOT NULL DEFAULT 0,
+    provider_calls INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, period)
+  );
+  CREATE TABLE IF NOT EXISTS tenant_provider_limits (
+    tenant_id TEXT PRIMARY KEY,
+    calls_limit INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS payment_reference_ledger (
+    provider TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    entitled_at TEXT,
+    PRIMARY KEY (provider, reference)
+  );
+  CREATE INDEX IF NOT EXISTS idx_payment_reference_target
+    ON payment_reference_ledger(tenant_id, worker_id, provider);
+  CREATE TABLE IF NOT EXISTS embed_abuse_usage (
+    scope_key TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (scope_key, window_start, event_kind)
+  );
+  CREATE INDEX IF NOT EXISTS idx_embed_abuse_window ON embed_abuse_usage(window_start);
+  CREATE TABLE IF NOT EXISTS product_event_counts (
+    day TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    last_at TEXT NOT NULL,
+    PRIMARY KEY (day, event_name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_product_event_counts_day ON product_event_counts(day);
 `);
 try { db.exec(`ALTER TABLE api_keys ADD COLUMN tenant_id TEXT`); } catch {}
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN updated_at TEXT`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN status TEXT NOT NULL DEFAULT 'processing'`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN tenant_id TEXT`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN worker_id TEXT`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN customer_id TEXT`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN reply_text TEXT`); } catch {}
+try { db.exec(`ALTER TABLE whatsapp_events ADD COLUMN runtime TEXT`); } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_whatsapp_events_owner ON whatsapp_events(tenant_id, worker_id)`); } catch {}
+try { db.exec(`ALTER TABLE tenant_monthly_usage ADD COLUMN provider_calls INTEGER NOT NULL DEFAULT 0`); } catch {}
+initOwnerSessions(db);
+initEmbedSessions(db);
+
+const retentionScheduler = workers.startTenantRetentionScheduler({
+  tenantIdsProvider: () => db.prepare(
+    `SELECT tenant_id AS tenantId FROM tenant_accounts
+     UNION
+     SELECT tenant_id AS tenantId FROM api_keys WHERE tenant_id IS NOT NULL`
+  ).all().map((row) => row.tenantId),
+});
 
 // --- Helpers --------------------------------------------------------------
 
@@ -225,25 +339,461 @@ const hashKey = (k) => crypto.createHash('sha256').update(k).digest('hex');
 
 integrations.initOAuth({ db, publicBaseUrl: PUBLIC_BASE_URL, newId });
 
-// API key validation: check the key exists in the api_keys table (not just any sk_ string)
-// Also enforces quota: every authenticated call consumes one unit; over-limit returns null
-// with lastQuotaError available to the caller for HTTP 402 responses.
+// API key validation checks that the key exists in SQLite (not just that it has
+// an sk_ prefix). Chat quota is enforced at the actual inference boundary so
+// dashboard reads and configuration edits never burn a customer's allowance.
 let lastQuotaError = null;
-function requireAuth(req) {
+function authenticateTenant(req, { consumeKey = false } = {}) {
+  lastQuotaError = null;
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
-  if (!token.startsWith('sk_')) return null;
-  const check = validateApiKey(token);
-  if (!check.valid) return null;
-  const consumed = consumeApiCall(hashKey(token));
-  if (!consumed.valid) {
-    lastQuotaError = consumed;
-    return null;
+  if (token.startsWith('sk_')) {
+    const check = validateApiKey(token);
+    if (!check.valid) return null;
+    if (consumeKey) {
+      const consumed = consumeApiCall(hashKey(token));
+      if (!consumed.valid) {
+        lastQuotaError = consumed;
+        return null;
+      }
+    }
+    return { ...check, tenantId: check.tenantId, authMethod: 'api_key', token };
   }
-  return check.tenantId;
+
+  const unsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(String(req.method ?? 'GET').toUpperCase());
+  const session = authenticateOwnerSession(db, req, { requireCsrf: unsafeMethod });
+  if (!session.ok) return null;
+  const account = getOwnerAccount(db, session.tenantId);
+  return {
+    tenantId: session.tenantId,
+    authMethod: 'session',
+    session,
+    account,
+    valid: true,
+  };
+}
+function requireAuth(req) {
+  return authenticateTenant(req)?.tenantId ?? null;
 }
 function getLastQuotaError() { return lastQuotaError; }
 function clearLastQuotaError() { lastQuotaError = null; }
+
+function isRegisteredTenantId(value) {
+  const tenantId = String(value ?? '');
+  if (!/^[A-Za-z0-9_]{8,80}$/.test(tenantId)) return false;
+  return !!db.prepare(
+    `SELECT 1 AS found FROM tenant_accounts WHERE tenant_id = ?
+     UNION ALL
+     SELECT 1 AS found FROM api_keys WHERE tenant_id = ?
+     LIMIT 1`
+  ).get(tenantId, tenantId);
+}
+
+function deleteWorkerGlobalArtifacts(tenantId, workerId) {
+  const deleted = {};
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    deleted.embedSessions = db.prepare(
+      `DELETE FROM embed_sessions WHERE tenant_id = ? AND worker_id = ?`
+    ).run(tenantId, workerId).changes;
+    deleted.whatsappRoutes = db.prepare(
+      `DELETE FROM whatsapp_routes WHERE tenant_id = ? AND worker_id = ?`
+    ).run(tenantId, workerId).changes;
+    deleted.whatsappEvents = db.prepare(
+      `DELETE FROM whatsapp_events WHERE tenant_id = ? AND worker_id = ?`
+    ).run(tenantId, workerId).changes;
+    deleted.activationRequests = db.prepare(
+      `DELETE FROM activation_requests WHERE tenant_id = ? AND worker_id = ?`
+    ).run(tenantId, workerId).changes;
+    db.exec('COMMIT');
+    return deleted;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
+
+const EMBED_ABUSE_HASH_KEY = process.env.INTEGRATIONS_SECRET || ADMIN_TOKEN || 'development-embed-abuse-key';
+function embedAbuseHash(value) {
+  return crypto.createHmac('sha256', EMBED_ABUSE_HASH_KEY).update(String(value ?? '')).digest('hex');
+}
+
+function embedAbuseWindow(date = new Date()) {
+  return date.toISOString().slice(0, 13) + ':00:00.000Z';
+}
+
+function embedAbuseStatus({ includeCounters = false } = {}) {
+  const status = {
+    enabled: EMBED_ALLOW_PUBLIC,
+    window: 'hourly',
+    limits: {
+      sessionPerIpWorker: EMBED_SESSION_IP_WORKER_HOURLY,
+      sessionsPerWorker: EMBED_SESSION_WORKER_HOURLY,
+      chatsPerSession: EMBED_CHAT_SESSION_HOURLY,
+      chatsPerIpWorker: EMBED_CHAT_IP_WORKER_HOURLY,
+      chatsPerWorker: EMBED_CHAT_WORKER_HOURLY,
+    },
+  };
+  if (!includeCounters) return status;
+  const windowStart = embedAbuseWindow();
+  const rows = db.prepare(
+    `SELECT event_kind AS eventKind, COALESCE(SUM(event_count), 0) AS eventCount
+       FROM embed_abuse_usage WHERE window_start = ? GROUP BY event_kind`
+  ).all(windowStart);
+  return {
+    ...status,
+    windowStart,
+    counters: Object.fromEntries(rows.map((row) => [row.eventKind, Number(row.eventCount ?? 0)])),
+  };
+}
+
+function consumeEmbedAbuseBudget(scopes, now = new Date()) {
+  const windowStart = embedAbuseWindow(now);
+  const updatedAt = now.toISOString();
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    for (const scope of scopes) {
+      const current = Number(db.prepare(
+        `SELECT event_count AS count FROM embed_abuse_usage
+          WHERE scope_key = ? AND window_start = ? AND event_kind = ?`
+      ).get(scope.key, windowStart, scope.kind)?.count ?? 0);
+      if (current >= scope.limit) {
+        db.exec('ROLLBACK');
+        return { ok: false, error: 'embed_abuse_limited', limit: scope.limit, kind: scope.kind, windowStart };
+      }
+      db.prepare(
+        `INSERT INTO embed_abuse_usage (scope_key, window_start, event_kind, event_count, updated_at)
+         VALUES (?, ?, ?, 1, ?)
+         ON CONFLICT(scope_key, window_start, event_kind) DO UPDATE SET
+           event_count = embed_abuse_usage.event_count + 1,
+           updated_at = excluded.updated_at`
+      ).run(scope.key, windowStart, scope.kind, updatedAt);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    console.error('[embed-abuse] budget update failed', error instanceof Error ? error.message : error);
+    return { ok: false, error: 'embed_abuse_unavailable' };
+  }
+  try {
+    const cutoff = new Date(now.getTime() - 48 * 60 * 60_000).toISOString().slice(0, 13) + ':00:00.000Z';
+    db.prepare(`DELETE FROM embed_abuse_usage WHERE window_start < ?`).run(cutoff);
+  } catch {}
+  return { ok: true, windowStart };
+}
+
+function embedAbuseIpKey(req) {
+  return embedAbuseHash(clientIp(req));
+}
+
+function claimWhatsAppInbound(inbound) {
+  const provider = cleanText(inbound?.provider, 30);
+  const providerMessageId = cleanText(inbound?.messageId, 200);
+  if (!providerMessageId || !provider) return false;
+  const messageId = `${provider}:${providerMessageId}`;
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - 10 * 60_000).toISOString();
+  const existing = db.prepare(
+    `SELECT status, updated_at AS updatedAt, tenant_id AS tenantId, worker_id AS workerId,
+            customer_id AS customerId, reply_text AS replyText, runtime, provider
+       FROM whatsapp_events WHERE message_id = ?`
+  ).get(messageId);
+  if (existing) {
+    if (existing.status === 'done') return false;
+    if (existing.status === 'reply_ready' && existing.replyText) {
+      db.prepare(`UPDATE whatsapp_events SET updated_at = ? WHERE message_id = ?`).run(now.toISOString(), messageId);
+      return { mode: 'send', cached: existing };
+    }
+    if (existing.status === 'processing' && String(existing.updatedAt ?? '') >= staleBefore) return false;
+    db.prepare(
+      `UPDATE whatsapp_events SET provider = ?, status = 'processing', updated_at = ? WHERE message_id = ?`
+    ).run(provider, now.toISOString(), messageId);
+    return { mode: 'process' };
+  }
+  db.prepare(
+    `INSERT INTO whatsapp_events (message_id, provider, received_at, updated_at, status)
+     VALUES (?, ?, ?, ?, 'processing')`
+  ).run(messageId, provider, now.toISOString(), now.toISOString());
+  return { mode: 'process' };
+}
+
+function persistWhatsAppInboundOutcome(inbound, outcome) {
+  const provider = cleanText(inbound?.provider, 30);
+  const providerMessageId = cleanText(inbound?.messageId, 200);
+  if (!provider || !providerMessageId || !outcome?.replyText) return false;
+  const messageId = `${provider}:${providerMessageId}`;
+  const result = db.prepare(
+    `UPDATE whatsapp_events
+        SET status = 'reply_ready', tenant_id = ?, worker_id = ?, customer_id = ?,
+            reply_text = ?, runtime = ?, updated_at = ?
+      WHERE message_id = ? AND status = 'processing'`
+  ).run(
+    cleanText(outcome.tenantId, 100),
+    cleanText(outcome.workerId, 100),
+    cleanText(outcome.customerId, 160),
+    String(outcome.replyText).slice(0, 4096),
+    cleanText(outcome.runtime, 80),
+    new Date().toISOString(),
+    messageId,
+  );
+  return Number(result.changes ?? 0) === 1;
+}
+
+function completeWhatsAppInbound(inbound, ok, result = {}) {
+  const provider = cleanText(inbound?.provider, 30);
+  const providerMessageId = cleanText(inbound?.messageId, 200);
+  if (!provider || !providerMessageId) return;
+  const messageId = `${provider}:${providerMessageId}`;
+  if (ok) {
+    db.prepare(
+      `UPDATE whatsapp_events
+          SET status = 'done', reply_text = NULL, updated_at = ?
+        WHERE message_id = ?`
+    ).run(new Date().toISOString(), messageId);
+  } else {
+    const current = db.prepare(`SELECT status FROM whatsapp_events WHERE message_id = ?`).get(messageId);
+    if (current?.status !== 'reply_ready' && result?.outcomeCached !== true) {
+      db.prepare(`DELETE FROM whatsapp_events WHERE message_id = ?`).run(messageId);
+    }
+  }
+  try {
+    const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    db.prepare(`DELETE FROM whatsapp_events WHERE received_at < ?`).run(cutoff);
+  } catch {}
+}
+
+const PRODUCT_EVENT_NAMES = new Set([
+  'landing_view',
+  'marketplace_view',
+  'magic_started',
+  'signup_completed',
+  'worker_created',
+  'setup_reviewed',
+  'checkout_opened',
+  'activation_requested',
+  'chat_succeeded',
+]);
+
+function utcUsagePeriod(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+function tenantChatLimit(tenantId) {
+  const row = db.prepare(
+    `SELECT calls_limit AS callsLimit
+       FROM api_keys
+      WHERE tenant_id = ? AND revoked_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 1`
+  ).get(tenantId);
+  const configured = Number(row?.callsLimit ?? DEFAULT_MONTHLY_CALL_LIMIT);
+  return Number.isFinite(configured)
+    ? Math.max(1, Math.min(Math.trunc(configured), 1_000_000))
+    : DEFAULT_MONTHLY_CALL_LIMIT;
+}
+
+function getTenantChatUsage(tenantId, now = new Date()) {
+  const period = utcUsagePeriod(now);
+  const limit = tenantChatLimit(tenantId);
+  const row = db.prepare(
+    `SELECT chat_calls AS used FROM tenant_monthly_usage WHERE tenant_id = ? AND period = ?`
+  ).get(tenantId, period);
+  const used = Number(row?.used ?? 0);
+  return { period, used, limit, remaining: Math.max(0, limit - used) };
+}
+
+function consumeTenantChat(tenantId, { count = true } = {}) {
+  const usage = getTenantChatUsage(tenantId);
+  if (!count) return { ok: true, ...usage };
+  if (usage.used >= usage.limit) return { ok: false, error: 'quota_exceeded', ...usage };
+  const now = new Date().toISOString();
+  const result = db.prepare(
+    `INSERT INTO tenant_monthly_usage (tenant_id, period, chat_calls, updated_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(tenant_id, period) DO UPDATE SET
+       chat_calls = tenant_monthly_usage.chat_calls + 1,
+       updated_at = excluded.updated_at
+     WHERE tenant_monthly_usage.chat_calls < ?`
+  ).run(tenantId, usage.period, now, usage.limit);
+  const current = getTenantChatUsage(tenantId);
+  if (Number(result.changes ?? 0) !== 1) return { ok: false, error: 'quota_exceeded', ...current };
+  try {
+    db.prepare(`UPDATE api_keys SET calls_used = ? WHERE tenant_id = ? AND revoked_at IS NULL`).run(current.used, tenantId);
+  } catch {}
+  return { ok: true, ...current };
+}
+
+function tenantProviderCallLimit(tenantId) {
+  const row = db.prepare(
+    `SELECT calls_limit AS callsLimit FROM tenant_provider_limits WHERE tenant_id = ?`
+  ).get(tenantId);
+  const configured = Number(row?.callsLimit ?? DEFAULT_MONTHLY_PROVIDER_CALL_LIMIT);
+  return Number.isFinite(configured)
+    ? Math.max(1, Math.min(Math.trunc(configured), 1_000_000))
+    : DEFAULT_MONTHLY_PROVIDER_CALL_LIMIT;
+}
+
+function getTenantProviderUsage(tenantId, now = new Date()) {
+  const period = utcUsagePeriod(now);
+  const limit = tenantProviderCallLimit(tenantId);
+  const row = db.prepare(
+    `SELECT provider_calls AS used FROM tenant_monthly_usage WHERE tenant_id = ? AND period = ?`
+  ).get(tenantId, period);
+  const used = Number(row?.used ?? 0);
+  return { period, used, limit, remaining: Math.max(0, limit - used) };
+}
+
+// Reserve one unit immediately before each outbound LLM request. This single
+// conditional UPSERT is atomic in SQLite, including when multiple app
+// processes share the same database. Reservations are intentionally not
+// refunded after a network error because the provider may already have
+// accepted the request.
+function reserveTenantProviderCall({ tenantId } = {}) {
+  const tenant = String(tenantId ?? '').trim();
+  if (!tenant) return { ok: false, error: 'provider_budget_unavailable' };
+  const usage = getTenantProviderUsage(tenant);
+  if (usage.used >= usage.limit) {
+    return { ok: false, error: 'provider_budget_exhausted', ...usage };
+  }
+  const now = new Date().toISOString();
+  const result = db.prepare(
+    `INSERT INTO tenant_monthly_usage (tenant_id, period, chat_calls, provider_calls, updated_at)
+     VALUES (?, ?, 0, 1, ?)
+     ON CONFLICT(tenant_id, period) DO UPDATE SET
+       provider_calls = tenant_monthly_usage.provider_calls + 1,
+       updated_at = excluded.updated_at
+     WHERE tenant_monthly_usage.provider_calls < ?`
+  ).run(tenant, usage.period, now, usage.limit);
+  const current = getTenantProviderUsage(tenant);
+  if (Number(result.changes ?? 0) !== 1) {
+    return { ok: false, error: 'provider_budget_exhausted', ...current };
+  }
+  return { ok: true, ...current };
+}
+
+function paymentLedgerProvider(value) {
+  const provider = String(value ?? '').trim().toLowerCase();
+  return provider === 'bit' || provider === 'paypal' ? provider : null;
+}
+
+// The platform database is the authority for Bit/PayPal references. Tenant
+// databases still keep rental history, but cannot detect cross-tenant reuse.
+function claimPaymentReference({ provider, reference, tenantId, workerId } = {}) {
+  const normalizedProvider = paymentLedgerProvider(provider);
+  const normalizedReference = String(reference ?? '').trim().slice(0, 200);
+  const tenant = String(tenantId ?? '').trim();
+  const worker = String(workerId ?? '').trim();
+  if (!normalizedProvider || !normalizedReference || !tenant || !worker) {
+    return { ok: false, error: 'payment_ledger_input_invalid' };
+  }
+  const now = new Date().toISOString();
+  try {
+    db.prepare(
+      `INSERT INTO payment_reference_ledger
+        (provider, reference, tenant_id, worker_id, first_seen_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(normalizedProvider, normalizedReference, tenant, worker, now);
+    return { ok: true, replay: false, provider: normalizedProvider, reference: normalizedReference };
+  } catch (error) {
+    const existing = db.prepare(
+      `SELECT tenant_id AS tenantId, worker_id AS workerId, entitled_at AS entitledAt
+         FROM payment_reference_ledger WHERE provider = ? AND reference = ?`
+    ).get(normalizedProvider, normalizedReference);
+    if (existing?.tenantId === tenant && existing?.workerId === worker) {
+      return {
+        ok: true,
+        replay: true,
+        entitled: !!existing.entitledAt,
+        provider: normalizedProvider,
+        reference: normalizedReference,
+      };
+    }
+    if (existing) return { ok: false, error: 'payment_reference_already_used' };
+    console.error('[payment-ledger] claim failed:', error?.message ?? error);
+    return { ok: false, error: 'payment_ledger_unavailable' };
+  }
+}
+
+function markPaymentReferenceEntitled({ provider, reference, tenantId, workerId } = {}) {
+  const normalizedProvider = paymentLedgerProvider(provider);
+  const normalizedReference = String(reference ?? '').trim().slice(0, 200);
+  if (!normalizedProvider || !normalizedReference) return false;
+  const result = db.prepare(
+    `UPDATE payment_reference_ledger SET entitled_at = COALESCE(entitled_at, ?)
+      WHERE provider = ? AND reference = ? AND tenant_id = ? AND worker_id = ?`
+  ).run(
+    new Date().toISOString(),
+    normalizedProvider,
+    normalizedReference,
+    String(tenantId ?? '').trim(),
+    String(workerId ?? '').trim()
+  );
+  return Number(result.changes ?? 0) === 1;
+}
+
+function existingPaymentEntitlement({ tenantId, workerId } = {}) {
+  const worker = workers.getWorker(tenantId, workerId);
+  if (!worker) return { ok: false, error: 'worker_not_found' };
+  const readiness = workers.getWorkerReadiness(worker);
+  return {
+    ok: true,
+    alreadyRecorded: true,
+    paidUntil: worker.paidUntil ?? null,
+    paused: !!worker.paused,
+    activationPendingSetup: !readiness.ready,
+    readiness,
+    autoActivated: false,
+    autoRenewed: false,
+  };
+}
+
+function recordProductEvent(eventName) {
+  if (!PRODUCT_ANALYTICS_ENABLED || !PRODUCT_EVENT_NAMES.has(eventName)) return false;
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  db.prepare(
+    `INSERT INTO product_event_counts (day, event_name, event_count, last_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(day, event_name) DO UPDATE SET
+       event_count = product_event_counts.event_count + 1,
+       last_at = excluded.last_at`
+  ).run(day, eventName, now.toISOString());
+  try {
+    const cutoff = new Date(now.getTime() - PRODUCT_ANALYTICS_RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10);
+    db.prepare(`DELETE FROM product_event_counts WHERE day < ?`).run(cutoff);
+  } catch {}
+  return true;
+}
+
+function productMetrics(days = 30) {
+  const boundedDays = Math.max(1, Math.min(Number(days) || 30, PRODUCT_ANALYTICS_RETENTION_DAYS));
+  const from = new Date(Date.now() - (boundedDays - 1) * 86_400_000).toISOString().slice(0, 10);
+  const rows = db.prepare(
+    `SELECT day, event_name AS eventName, event_count AS eventCount, last_at AS lastAt
+       FROM product_event_counts
+      WHERE day >= ?
+      ORDER BY day ASC, event_name ASC`
+  ).all(from);
+  const totals = Object.fromEntries([...PRODUCT_EVENT_NAMES].map((name) => [name, 0]));
+  for (const row of rows) totals[row.eventName] = (totals[row.eventName] ?? 0) + Number(row.eventCount ?? 0);
+  const ratio = (numerator, denominator) => denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 100 : null;
+  return {
+    enabled: PRODUCT_ANALYTICS_ENABLED,
+    approximate: true,
+    privacy: 'aggregate_counts_only',
+    retentionDays: PRODUCT_ANALYTICS_RETENTION_DAYS,
+    from,
+    totals,
+    conversionPercent: {
+      marketplaceToSignup: ratio(totals.signup_completed, totals.marketplace_view),
+      signupToWorker: ratio(totals.worker_created, totals.signup_completed),
+      workerToSetupReviewed: ratio(totals.setup_reviewed, totals.worker_created),
+      setupToCheckout: ratio(totals.checkout_opened, totals.setup_reviewed),
+      checkoutToActivationRequest: ratio(totals.activation_requested, totals.checkout_opened),
+    },
+    daily: rows,
+  };
+}
 
 function recordCall(o) {
   db.prepare('INSERT INTO calls (at, endpoint, network, amount_usdc, payer, tx_hash, mock, input_chars, auth_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
@@ -411,7 +961,7 @@ function issueSelfServeTenant({ businessName, contact }) {
   const contactClean = cleanText(contact, 120);
   const issued = issueApiKey({
     plan: 'worker-tenant',
-    callsLimit: UNLIMITED_CALLS,
+    callsLimit: DEFAULT_MONTHLY_CALL_LIMIT,
     paymentChannel: 'self-serve-signup',
     paymentReference: contactClean || null,
     label,
@@ -557,11 +1107,12 @@ const chatLocks = new Map();
 async function withChatLock(workerId, fn) {
   const prev = chatLocks.get(workerId) || Promise.resolve();
   const next = prev.then(fn, fn);
-  chatLocks.set(workerId, next.catch(() => {}));
+  const stored = next.catch(() => {});
+  chatLocks.set(workerId, stored);
   try {
     return await next;
   } finally {
-    if (chatLocks.get(workerId) === next.catch(() => {})) chatLocks.delete(workerId);
+    if (chatLocks.get(workerId) === stored) chatLocks.delete(workerId);
   }
 }
 
@@ -628,7 +1179,7 @@ function replaceTenantKey({ tenantId, label }) {
   const issued = issueApiKey({
     tenantId: tenant,
     plan: template?.plan ?? 'worker-tenant',
-    callsLimit: template?.callsLimit ?? UNLIMITED_CALLS,
+    callsLimit: template?.callsLimit ?? DEFAULT_MONTHLY_CALL_LIMIT,
     callsUsed: template?.callsUsed ?? 0,
     periodEnd: template?.periodEnd ?? null,
     paymentChannel: 'admin-recovery',
@@ -638,6 +1189,37 @@ function replaceTenantKey({ tenantId, label }) {
   const now = new Date().toISOString();
   db.prepare('UPDATE api_keys SET revoked_at = ? WHERE tenant_id = ? AND id <> ? AND revoked_at IS NULL').run(now, tenant, issued.id);
   return { ok: true, ...issued, revokedExisting: true };
+}
+
+function tenantAccountSnapshot(tenantId) {
+  const key = db.prepare(
+    `SELECT id AS keyId, label, plan, calls_used AS callsUsed, calls_limit AS callsLimit,
+            period_end AS periodEnd
+       FROM api_keys
+      WHERE tenant_id = ?
+      ORDER BY revoked_at IS NULL DESC, created_at DESC
+      LIMIT 1`
+  ).get(tenantId) ?? {};
+  const account = getOwnerAccount(db, tenantId);
+  const usage = getTenantChatUsage(tenantId);
+  const providerUsage = getTenantProviderUsage(tenantId);
+  return {
+    tenantId,
+    keyId: key.keyId ?? null,
+    label: account?.businessName || key.label || 'העסק שלי',
+    email: account?.email ?? null,
+    plan: key.plan || 'starter',
+    callsUsed: usage.used,
+    callsLimit: usage.limit,
+    callsRemaining: usage.remaining,
+    usagePeriod: usage.period,
+    providerCallsUsed: providerUsage.used,
+    providerCallsLimit: providerUsage.limit,
+    providerCallsRemaining: providerUsage.remaining,
+    providerUsagePeriod: providerUsage.period,
+    providerUsage,
+    periodEnd: key.periodEnd ?? null,
+  };
 }
 
 function gatherWorkerStats() {
@@ -652,15 +1234,15 @@ function gatherWorkerStats() {
   return { activeWorkers: active.length, tenantCount: uniqueTenants.size, monthlyRevenueIls };
 }
 
-function getPublicMarketplaceStats() {
-  const prices = workers.TEMPLATES.map((t) => t.buyPriceIls).filter((n) => Number.isFinite(n));
+function collectPublicMarketplaceStats() {
+  const prices = workers.TEMPLATES.map((t) => t.rentPriceIls).filter((n) => Number.isFinite(n));
   let tenantCount = 0;
   let workerCount = 0;
   let messageCount = 0;
   let leadCount = 0;
   let escCount = 0;
   try {
-    const dataDir = path.join(DATA_DIR, 'tenants');
+    const dataDir = path.resolve(TENANTS_DIR);
     if (fs.existsSync(dataDir)) {
       const dirs = fs.readdirSync(dataDir, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name.startsWith('ten_'));
       tenantCount = dirs.length;
@@ -691,6 +1273,34 @@ function getPublicMarketplaceStats() {
   };
 }
 
+// Public landing and embed requests must stay O(1) even when the service has
+// many tenants. Refresh the materialized snapshot out of band instead of
+// opening every tenant database from an untrusted request path.
+let publicMarketplaceStats = {
+  templateCount: workers.TEMPLATES.length,
+  categoryCount: new Set(workers.TEMPLATES.map((t) => t.category).filter(Boolean)).size,
+  startingPriceIls: 0,
+  paymentChannelCount: 0,
+  tenantCount: 0,
+  workerCount: 0,
+  messageCount: 0,
+  leadCount: 0,
+  escCount: 0,
+};
+
+function refreshPublicMarketplaceStats() {
+  try {
+    publicMarketplaceStats = Object.freeze(collectPublicMarketplaceStats());
+  } catch (error) {
+    console.error('[public-stats] refresh failed', error instanceof Error ? error.message : error);
+  }
+  return publicMarketplaceStats;
+}
+
+function getPublicMarketplaceStats() {
+  return publicMarketplaceStats;
+}
+
 // --- HTTP helpers ---------------------------------------------------------
 
 function vercelAnalyticsScripts() {
@@ -710,35 +1320,36 @@ const CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
 ].join('; ');
 
+function normalizedOrigin(value) {
+  try { return new URL(String(value ?? '')).origin.toLowerCase(); }
+  catch { return ''; }
+}
+
+function requestEmbedOrigin(req) {
+  return normalizedOrigin(req.headers.origin ?? '');
+}
+
+function embedOriginAllowed(req) {
+  const origin = requestEmbedOrigin(req);
+  if (!origin) return false;
+  const ownOrigin = normalizedOrigin(resolveBaseUrl(req));
+  if (origin === ownOrigin) return true;
+  if (!EMBED_ALLOW_PUBLIC) return false;
+  return EMBED_ALLOWED_ORIGINS.has(origin);
+}
+
 function embedCorsHeaders(req) {
-  if (CORS_ALLOW_ORIGIN) {
-    return {
-      'access-control-allow-origin': CORS_ALLOW_ORIGIN,
-      'access-control-allow-headers': 'content-type, authorization',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-    };
-  }
-  if (!EMBED_ALLOW_PUBLIC) return {};
-  const origin = req.headers.origin;
-  if (!origin) return {};
-  // Embed is a public widget: by default we reflect any origin. Operators can lock
-  // it down with EMBED_ALLOWED_ORIGINS=<csv> or "*".
-  const allowAll = EMBED_ALLOWED_ORIGINS.has('*');
-  const allowOrigin = allowAll || EMBED_ALLOWED_ORIGINS.has(origin);
-  if (!allowOrigin) {
-    // Explicit deny: echo a non-functional origin so the browser blocks the response.
-    return {
-      'access-control-allow-origin': 'null',
-      'access-control-allow-headers': 'content-type, authorization',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-      'vary': 'Origin',
-    };
-  }
-  return {
-    'access-control-allow-origin': allowAll ? '*' : origin,
-    'access-control-allow-headers': 'content-type, authorization',
+  const origin = requestEmbedOrigin(req);
+  if (!origin || !embedOriginAllowed(req)) return {
+    'access-control-allow-headers': 'content-type, authorization, x-idempotency-key',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    ...(allowAll ? {} : { 'vary': 'Origin' }),
+    'vary': 'Origin',
+  };
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-headers': 'content-type, authorization, x-idempotency-key',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'vary': 'Origin',
   };
 }
 
@@ -758,7 +1369,7 @@ function send(res, status, body, h = {}) {
   };
   const corsHeaders = CORS_ALLOW_ORIGIN ? {
     'access-control-allow-origin': CORS_ALLOW_ORIGIN,
-    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-headers': 'content-type, authorization, x-idempotency-key',
     'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   } : {};
   res.writeHead(status, {
@@ -777,7 +1388,7 @@ function clientIp(req) {
 
 // Resolve the public base URL for the current request.
 // Trusts X-Forwarded-* headers (set by Cloudflare Tunnel, Fly, Render, Railway)
-// so the dashboard and invoice always show the real public URL, not localhost.
+// so the dashboard and payment information always show the real public URL, not localhost.
 function resolveBaseUrl(req) {
   const host = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-host'] ?? req.headers.host) : req.headers.host;
   const proto = TRUST_PROXY_HEADERS ? (req.headers['x-forwarded-proto'] ?? 'http') : 'http';
@@ -785,9 +1396,10 @@ function resolveBaseUrl(req) {
   return PUBLIC_BASE_URL;
 }
 async function readBody(req, max = 1024 * 64) {
+  const contentType = String(req.headers['content-type'] ?? '');
   const cs = []; let t = 0;
-  for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true }; cs.push(c); }
-  return { text: Buffer.concat(cs).toString('utf8') };
+  for await (const c of req) { t += c.length; if (t > max) return { tooLarge: true, contentType }; cs.push(c); }
+  return { text: Buffer.concat(cs).toString('utf8'), contentType };
 }
 
 const MAX_USER_MESSAGE_CHARS = 4000;
@@ -799,17 +1411,307 @@ function rejectOversizedMessage(res, body) {
   return false;
 }
 
+function requestIdFor(req, scope) {
+  const supplied = Array.isArray(req.headers['x-idempotency-key'])
+    ? req.headers['x-idempotency-key'][0]
+    : req.headers['x-idempotency-key'];
+  const normalized = String(supplied ?? '').trim();
+  const key = /^[A-Za-z0-9._:-]{8,160}$/.test(normalized) ? normalized : crypto.randomUUID();
+  return `${scope}:${key}`;
+}
+
 function buildAcquireChannels() {
   const list = [];
-  if (PAYPAL_ME) list.push({ kind: 'paypal', url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
-  if (paddleEnabled()) list.push({ kind: 'paddle', url: `${PUBLIC_BASE_URL}/marketplace`, note: 'Credit card checkout via Paddle (auto-activation)' });
-  if (BUY_ME_A_COFFEE) list.push({ kind: 'buymeacoffee', url: BUY_ME_A_COFFEE });
-  if (KO_FI) list.push({ kind: 'kofi', url: KO_FI });
-  if (BIT_PHONE) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
-  if (GITHUB_SPONSORS) list.push({ kind: 'github-sponsors', url: `https://github.com/sponsors/${GITHUB_SPONSORS}` });
-  if (GUMROAD_URL) list.push({ kind: 'gumroad', url: GUMROAD_URL });
-  if (BANK_ACCOUNT) list.push({ kind: 'bank-transfer', payee: PAYEE_NAME, bank: BANK_NAME, branch: BANK_BRANCH, account: BANK_ACCOUNT, iban: IBAN || null, swift: SWIFT || null, note: 'Israeli-friendly bank transfer (masheh)' });
+  if (validAccountSlug(PAYPAL_ME)) list.push({ kind: 'paypal', account: PAYPAL_ME, url: `https://paypal.me/${PAYPAL_ME}`, howToGetKey: 'Create a marketplace key, pay, then submit activation proof from the worker paywall', note: 'Admin approves activation after payment review' });
+  if (paddleOperational()) list.push({ kind: 'paddle', url: `${PUBLIC_BASE_URL}/marketplace`, note: 'Credit card checkout via Paddle (auto-activation)' });
+  if (validIsraeliMobile(BIT_PHONE)) list.push({ kind: 'bit', url: `https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}`, phone: BIT_PHONE });
+  if (bankTransferOperational()) {
+    list.push({
+      kind: 'bank-transfer',
+      payee: normalizePaymentLabel(PAYEE_NAME),
+      bank: normalizePaymentLabel(BANK_NAME),
+      branch: String(BANK_BRANCH).trim(),
+      account: String(BANK_ACCOUNT).trim(),
+      iban: normalizeIban(IBAN) || null,
+      swift: normalizeSwift(SWIFT) || null,
+      note: 'Israeli-friendly bank transfer',
+    });
+  }
   return list;
+}
+
+function looksLikePlaceholder(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return true;
+  return text.includes('...')
+    || /x{3,}/i.test(text)
+    || /[<>\[\]]/.test(text)
+    || /(?:your[-_ ]?(?:service|website|customer|domain|business|paypal)|yourdomain|placeholder|change[-_ ]?me|replace[-_ ]?me|\btodo\b|\btbd\b)/i.test(text)
+    || /^your(?:[-_. ]+(?:user(?:name)?|name|handle|account|slug))+$/i.test(text)
+    || /(?:^|\.)example\.(?:com|org|net)$/i.test(text)
+    || /@local$/i.test(text);
+}
+
+function configuredValue(value, minLength = 1) {
+  const text = String(value ?? '').trim();
+  return text.length >= minLength && !looksLikePlaceholder(text);
+}
+
+function validAccountSlug(value) {
+  const text = String(value ?? '').trim();
+  return configuredValue(text, 2) && /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/i.test(text);
+}
+
+function validPublicHttpsUrl(value) {
+  if (!configuredValue(value, 8)) return false;
+  try {
+    const parsed = new URL(String(value).trim());
+    return parsed.protocol === 'https:'
+      && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      && !parsed.hostname.endsWith('.invalid')
+      && !/(?:^|\.)example\.(?:com|org|net)$/.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function validIsraeliMobile(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return configuredValue(value, 10) && /^(?:05\d{8}|9725\d{8})$/.test(digits);
+}
+
+function normalizePaymentLabel(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function normalizeIban(value) {
+  const normalized = String(value ?? '').replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(normalized) ? normalized : '';
+}
+
+function normalizeSwift(value) {
+  const normalized = String(value ?? '').replace(/\s+/g, '').toUpperCase();
+  return /^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$/.test(normalized) ? normalized : '';
+}
+
+function bankTransferOperational() {
+  const account = String(BANK_ACCOUNT ?? '').trim();
+  const branch = String(BANK_BRANCH ?? '').trim();
+  return configuredValue(normalizePaymentLabel(PAYEE_NAME), 2)
+    && configuredValue(normalizePaymentLabel(BANK_NAME), 2)
+    && /^\d{4,20}$/.test(account)
+    && account !== '123456'
+    && /^\d{1,6}$/.test(branch);
+}
+
+function paddleOperational() {
+  if (!paddleEnabled()) return false;
+  if (process.env.NODE_ENV !== 'production') return true;
+  const status = paddleConfigStatus();
+  return status.environment === 'production'
+    && status.apiKeySet
+    && status.webhookSecretSet
+    && paddlePriceMapStatus().complete
+    && configuredValue(process.env.PADDLE_CLIENT_TOKEN, 8)
+    && configuredValue(process.env.PADDLE_API_KEY, 8)
+    && configuredValue(process.env.PADDLE_WEBHOOK_SECRET, 16);
+}
+
+function pathIsInside(root, candidate) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function decodeMountInfoPath(value) {
+  return String(value).replace(/\\([0-7]{3})/g, (_match, octal) => String.fromCharCode(Number.parseInt(octal, 8)));
+}
+
+function mountPointStatus(target) {
+  let resolved;
+  try {
+    resolved = fs.realpathSync(target);
+  } catch {
+    return { supported: false, mounted: false };
+  }
+
+  if (process.platform === 'linux') {
+    try {
+      const mountInfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+      const mounted = mountInfo.split('\n').some((line) => {
+        const fields = line.trim().split(' ');
+        return fields.length > 4 && decodeMountInfoPath(fields[4]) === resolved;
+      });
+      return { supported: true, mounted };
+    } catch {
+      return { supported: false, mounted: false };
+    }
+  }
+
+  try {
+    const current = fs.statSync(resolved);
+    const parent = fs.statSync(path.dirname(resolved));
+    return { supported: true, mounted: current.dev !== parent.dev };
+  } catch {
+    return { supported: false, mounted: false };
+  }
+}
+
+function persistenceStatus() {
+  const root = path.resolve(DATA_DIR);
+  const dbPath = path.resolve(DB_PATH);
+  const tenantsDir = path.resolve(TENANTS_DIR);
+  const pathsAligned = pathIsInside(root, dbPath) && pathIsInside(root, tenantsDir);
+  let writable = false;
+  let dbOk = false;
+
+  try {
+    fs.accessSync(root, fs.constants.R_OK | fs.constants.W_OK);
+    writable = true;
+  } catch {}
+
+  try {
+    dbOk = db.prepare('SELECT 1 AS ok').get()?.ok === 1;
+  } catch {}
+
+  const mount = mountPointStatus(root);
+  const ok = pathsAligned && writable && dbOk && (!REQUIRE_PERSISTENT_VOLUME || mount.mounted);
+  return {
+    ok,
+    required: REQUIRE_PERSISTENT_VOLUME,
+    root,
+    dbPath,
+    tenantsDir,
+    pathsAligned,
+    writable,
+    dbOk,
+    mountCheckSupported: mount.supported,
+    mounted: mount.mounted,
+  };
+}
+
+function backupStatus() {
+  const statusPath = path.join(DATA_DIR, '.backup-status');
+  const configuredMaxAge = Number(process.env.BACKUP_MAX_AGE_HOURS ?? 48);
+  const maxAgeHours = Number.isFinite(configuredMaxAge)
+    ? Math.max(1, Math.min(Math.trunc(configuredMaxAge), 24 * 30))
+    : 48;
+  let values = {};
+  try {
+    values = Object.fromEntries(
+      fs.readFileSync(statusPath, 'utf8')
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => {
+          const splitAt = line.indexOf('=');
+          return splitAt > 0 ? [line.slice(0, splitAt), line.slice(splitAt + 1)] : ['', ''];
+        })
+        .filter(([key]) => key)
+    );
+  } catch {
+    return {
+      present: false,
+      encryptedLocal: false,
+      manifestSigned: false,
+      offsiteVerified: false,
+      fresh: false,
+      maxAgeHours,
+    };
+  }
+  const compact = String(values.created_at ?? '');
+  const match = compact.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  const createdAt = match
+    ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`
+    : null;
+  const createdMs = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+  const ageHours = Number.isFinite(createdMs)
+    ? Math.round(((Date.now() - createdMs) / 3_600_000) * 10) / 10
+    : null;
+  const encryptedLocal = values.encrypted === 'true';
+  const manifestSigned = values.manifest_signed === 'true';
+  const offsiteVerified = values.state === 'offsite_verified';
+  return {
+    present: true,
+    state: ['encrypted_local', 'offsite_verified'].includes(values.state) ? values.state : 'unknown',
+    archive: cleanText(values.archive, 180),
+    createdAt,
+    ageHours,
+    maxAgeHours,
+    encryptedLocal,
+    manifestSigned,
+    offsiteVerified,
+    fresh: encryptedLocal && manifestSigned && offsiteVerified
+      && ageHours !== null && ageHours >= 0 && ageHours <= maxAgeHours,
+  };
+}
+
+function productionPublicUrlConfigured() {
+  if (process.env.NODE_ENV !== 'production') return true;
+  try {
+    const parsed = new URL(PUBLIC_BASE_URL);
+    return parsed.protocol === 'https:'
+      && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      && !/(?:^|\.)example\.(?:com|org|net)$/.test(parsed.hostname)
+      && !parsed.hostname.includes('your-service');
+  } catch {
+    return false;
+  }
+}
+
+function ownerContactConfigured() {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const value = String(AGENT_OWNER_CONTACT ?? '').trim();
+  if (!configuredValue(value, 5)) return false;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    const domain = value.split('@').pop().toLowerCase();
+    return !domain.endsWith('.invalid') && !/^example\.(?:com|org|net)$/.test(domain);
+  }
+  return validIsraeliMobile(value) || validPublicHttpsUrl(value);
+}
+
+function embedOriginsConfigured() {
+  if (process.env.NODE_ENV !== 'production' || !EMBED_ALLOW_PUBLIC) return true;
+  if (!Object.hasOwn(process.env, 'EMBED_ALLOWED_ORIGINS')) return false;
+  const values = String(process.env.EMBED_ALLOWED_ORIGINS ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (values.length === 0) return false;
+  if (values.includes('*')) return false;
+  return values.every((value) => {
+    if (!validPublicHttpsUrl(value)) return false;
+    const parsed = new URL(value);
+    return value.replace(/\/$/, '') === parsed.origin;
+  });
+}
+
+function readinessConfiguration() {
+  const channels = buildAcquireChannels().map((channel) => channel.kind);
+  const llmEndpointConfigured = !String(LLM_BASE_URL).trim() || validPublicHttpsUrl(LLM_BASE_URL);
+  const configuration = {
+    adminEnabled: configuredValue(ADMIN_TOKEN, 24),
+    integrationsEncryptionConfigured: configuredValue(process.env.INTEGRATIONS_SECRET, 24),
+    llmConfigured: configuredValue(LLM_API_KEY, 8)
+      && configuredValue(LLM_MODEL, 2)
+      && ['openai_compatible', 'anthropic'].includes(LLM_PROVIDER)
+      && llmEndpointConfigured,
+    paymentChannelConfigured: channels.length > 0,
+    ownerContactConfigured: ownerContactConfigured(),
+    publicBaseUrlConfigured: productionPublicUrlConfigured(),
+    embedOriginsConfigured: embedOriginsConfigured(),
+    privateNetworkFetchDisabled: !ALLOW_PRIVATE_NETWORK_URLS,
+    paymentAutoVerifyDisabled: !paymentConfigStatus().autoVerifyEnabled,
+  };
+  return { channels, configuration, ok: Object.values(configuration).every(Boolean) };
+}
+
+function readinessStatus() {
+  const persistence = persistenceStatus();
+  const config = readinessConfiguration();
+  return {
+    ok: config.ok && persistence.ok,
+    configurationOk: config.ok,
+    configuration: config.configuration,
+    channels: config.channels,
+    persistence,
+  };
 }
 
 // --- HTML pages -----------------------------------------------------------
@@ -823,18 +1725,17 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Nightdesk — עובדי AI שלא ישנים | ₪199 לחודש</title>
-  <meta name="description" content="עובד דיגיטלי שעונה ללקוחות 24/7, שומר לידים ומעביר דחופים — בלי משכורת, בלי חופשות. ₪199 לחודש, פחות מ-₪7 ליום." />
-  <meta property="og:title" content="Nightdesk — עובדי AI שלא ישנים" />
-  <meta property="og:description" content="עובד דיגיטלי 24/7 לעסק שלך. ₪199 לחודש, פחות מ-₪7 ליום." />
-  <meta property="og:image" content="/brand/og-nightdesk.png" />
+  <title>AI Workers ישראל — עובדים דיגיטליים לעסקים</title>
+  <meta name="description" content="עובד דיגיטלי שמקבל פניות גם מחוץ לשעות, שומר לידים ומעביר דחופים. מחיר החל מ-₪199 לחודש." />
+  <meta property="og:title" content="AI Workers ישראל — עובדים דיגיטליים לעסקים" />
+  <meta property="og:description" content="עובד דיגיטלי שמקבל פניות גם מחוץ לשעות. מחיר החל מ-₪199 לחודש." />
   <meta name="theme-color" content="#080b10" />
   <link rel="icon" type="image/svg+xml" href="/brand/logo-nightdesk-icon.svg" />
   <link rel="apple-touch-icon" href="/brand/logo-nightdesk-icon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700;900&family=Heebo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/material3-theme.css?v=nightdesk10">
+  <link rel="stylesheet" href="/assets/material3-theme.css?v=aiworkers11">
   <style>
     :root {
       color-scheme: dark;
@@ -1056,23 +1957,23 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <a href="/marketplace">שוק העובדים</a>
         <a href="/marketplace#/workers">העובדים שלי</a>
         <a href="#pricing">מחירים</a>
-        <a href="/marketplace#/magic" class="nav-cta">התחל ניסיון</a>
+        <a href="/marketplace#/magic" class="nav-cta">${TRIAL_DAYS > 0 ? 'התחל ניסיון' : 'נסה דוגמה'}</a>
       </div>
     </nav>
 
     <div class="hero anim anim-1 section-order-hero-cta hero-split">
       <div class="hero-copy">
-      <div class="badge">Nightdesk · עברית · תשלום מקומי</div>
-      <h1>עובד שעונה ללקוחות שלך <strong class="highlight">24/7</strong> — בלי משכורת, בלי חופשות</h1>
-      <p class="subtitle">עובד דיגיטלי שלא ישן: מקבל פניות ב-23:00, עונה בעברית, שומר לידים ומעביר רק מה שדחוף. <strong>₪199 לחודש</strong> — פחות מ-₪7 ליום.</p>
+      <div class="badge">AI Workers Israel · עברית · תשלום מקומי</div>
+      <h1>עובד שמקבל פניות <strong class="highlight">גם אחרי שעות העבודה</strong></h1>
+      <p class="subtitle">עובד דיגיטלי שמקבל פניות גם מחוץ לשעות כשהמערכת זמינה, עונה בעברית על ידע שאישרתם, שומר לידים ומעביר מה שדורש אדם. <strong>מחיר החל מ-₪199 לחודש.</strong></p>
       <div class="cta-group">
         <a href="/marketplace#/magic" class="cta">גייס עובד ב-3 דקות ←</a>
         <a href="/marketplace" class="cta-secondary">לשוק העובדים ←</a>
       </div>
       <div class="proof-strip">
-        <span class="proof-item">✓ בלי כרטיס אשראי — מתחילים תוך דקה</span>
+        <span class="proof-item">✓ דמו והגדרה ראשונית לפני תשלום</span>
         <span class="proof-item">✓ דוגמה חיה לפני תשלום</span>
-        <span class="proof-item">✓ ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'} ללא תשלום</span>
+        ${TRIAL_DAYS > 0 ? `<span class="proof-item">✓ ניסיון ${TRIAL_DAYS} ימים ללא תשלום</span>` : ''}
       </div>
       <div class="hero-stat-eyebrow">דוגמה · כך זה נראה בלילה</div>
       <div class="hero-stat-row" aria-label="נתוני משמרת הלילה — דוגמה">
@@ -1092,7 +1993,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <span class="sb-clock" id="landing-shift-feed-clock">23:14</span>
         </div>
         <div class="sb-feed" id="landing-shift-feed">
-          <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בוואטסאפ — נענה</span></div>
+          <div class="sb-event"><time>23:11</time><span class="sb-check">✓</span><span>לקוח כתב בצ׳אט באתר — נענה</span></div>
           <div class="sb-event"><time>23:12</time><span class="sb-check">✓</span><span>תור נקבע למחר ב-10:00</span></div>
           <div class="sb-event"><time>23:14</time><span class="sb-check">✓</span><span>ליד חם הועבר לבעל העסק</span></div>
         </div>
@@ -1142,53 +2043,53 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     </section>
 
     <section class="anim anim-3 section-order-case-studies" id="case-studies">
-      <h2 class="section-title">סיפורי לקוחות (פיילוט)</h2>
-      <p class="section-sub">תיקי עובדים מעסקים ישראליים — תוצאות ראשונות</p>
+      <h2 class="section-title">תרחישי שימוש להמחשה</h2>
+      <p class="section-sub">הדוגמאות הבאות אינן תוצאות של לקוחות. נתוני פיילוט אמיתיים יפורסמו רק לאחר אימות ואישור.</p>
       <div class="proof-stats">
-        <div class="proof-stat"><div class="proof-stat-n">${stats.tenantCount}+</div><div class="proof-stat-l">עסקים פעילים</div></div>
-        <div class="proof-stat"><div class="proof-stat-n">${stats.workerCount}</div><div class="proof-stat-l">עובדי AI פעילים</div></div>
-        <div class="proof-stat"><div class="proof-stat-n">${(stats.messageCount || 0).toLocaleString('he-IL')}</div><div class="proof-stat-l">שיחות עם לקוחות</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.tenantCount}</div><div class="proof-stat-l">חשבונות בסביבה הזו</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${stats.workerCount}</div><div class="proof-stat-l">עובדים שנוצרו בסביבה</div></div>
+        <div class="proof-stat"><div class="proof-stat-n">${(stats.messageCount || 0).toLocaleString('he-IL')}</div><div class="proof-stat-l">הודעות שנשמרו בסביבה</div></div>
         <div class="proof-stat"><div class="proof-stat-n">${stats.templateCount}</div><div class="proof-stat-l">תבניות מוכנות</div></div>
       </div>
       <div class="employee-files">
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · קליניקה</div>
+          <div class="ef-tab">תרחיש לדוגמה · קליניקה</div>
           <div class="ef-body">
-            <h3>קליניקת שיניים — תל אביב</h3>
-            <p>מזכירה וירטואלית ענתה על 340 פניות בחודש הראשון. 78% קבעו תור ללא שיחה עם אדם.</p>
-            <div class="ef-result">−62% עומס טלפוני</div>
+            <h3>מזכירה וירטואלית לקליניקה</h3>
+            <p>עונה על שעות ומדיניות, אוספת פרטים לבקשת תור ומעבירה מצב דחוף לאדם — ללא ייעוץ רפואי.</p>
+            <div class="ef-result">נמדוד: זמן תגובה והעברות לאדם</div>
           </div>
         </div>
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · נדל״ן</div>
+          <div class="ef-tab">תרחיש לדוגמה · נדל״ן</div>
           <div class="ef-body">
-            <h3>משרד תיווך — חיפה</h3>
-            <p>סוכן נדל״ן סינן 120 לידים בחודש. 31 לידים חמים הועברו לסוכן עם תקציב ואזור מוגדרים.</p>
-            <div class="ef-result">3× יותר פגישות</div>
+            <h3>סינון לידים למשרד תיווך</h3>
+            <p>אוסף אזור, תקציב וסוג נכס ומעביר לסוכן ליד מסודר עם הפרטים שהלקוח מסר.</p>
+            <div class="ef-result">נמדוד: לידים מלאים ופגישות שנקבעו</div>
           </div>
         </div>
         <div class="employee-file">
-          <div class="ef-tab">תיק עובד · מסעדה</div>
+          <div class="ef-tab">תרחיש לדוגמה · מסעדה</div>
           <div class="ef-body">
-            <h3>מסעדת שף — ירושלים</h3>
-            <p>מנהל מסעדה טיפל בהזמנות ושאלות תפריט בערב שישי. 94% מהשאלות נענו ללא הסלמה.</p>
-            <div class="ef-result">הפעלה תוך יום עסקים</div>
+            <h3>מענה למסעדה מחוץ לשעות עומס</h3>
+            <p>עונה מתוך הידע שהעסק הגדיר על שעות ותפריט ואוסף בקשות להזמנה או לאירוע.</p>
+            <div class="ef-result">נמדוד: שאלות שנענו ובקשות שנאספו</div>
           </div>
         </div>
       </div>
 
       <div class="testimonials">
         <div class="testimonial">
-          <div class="t-quote">"העובד שלנו עונה ללקוחות גם בשבת בלי שאני צריך לפתוח טלפון. סגרנו 3 מנויים בשבת הראשונה."</div>
-          <div class="t-attr">— ש. כהן, מנכ״ל סטודיו לעיצוב</div>
+          <div class="t-quote">יעד פיילוט: מענה מהיר לפניות שמגיעות כשהעסק סגור.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
         <div class="testimonial">
-          <div class="t-quote">"חיסכון של 5 שעות בשבוע של מזכירה. הלידים שמגיעים אליי כבר מסוננים ועם תקציב."</div>
-          <div class="t-attr">— ד. לוי, סוכנת נדל״ן</div>
+          <div class="t-quote">יעד פיילוט: לידים עם פרטי קשר, צורך ותקציב לפני מעבר לבעל העסק.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
         <div class="testimonial">
-          <div class="t-quote">"הלקוחות לא יודעים שזה AI. חשבו שהמזכירה שלי במשרד. רק שהיא זמינה 24/7."</div>
-          <div class="t-attr">— ר. אברהם, רופא שיניים</div>
+          <div class="t-quote">יעד פיילוט: לזהות מתי אין ביטחון בתשובה ולהעביר את הפנייה לאדם.</div>
+          <div class="t-attr">מדד מתוכנן — טרם נאסף</div>
         </div>
       </div>
     </section>
@@ -1204,14 +2105,14 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <ul>
             <li><span class="price-check">✓</span> הזנת נתונים, מבנה JSON/CSV</li>
             <li><span class="price-check">✓</span> זיכרון לקוח ו-webhook</li>
-            <li><span class="price-check">✓</span> צ'אט 24/7 לאחר אישור</li>
+            <li><span class="price-check">✓</span> צ'אט באתר גם מחוץ לשעות, כשהשירות פעיל</li>
           </ul>
-          <a href="/marketplace#/magic" class="price-cta">התחל ניסיון ←</a>
+          <a href="/marketplace#/magic" class="price-cta">${TRIAL_DAYS > 0 ? 'התחל ניסיון' : 'נסה דוגמה'} ←</a>
         </div>
         <div class="price-card featured">
-          <div class="price-ribbon">הכי נבחר</div>
-          <div class="amount">₪249–299<span>/חודש</span></div>
-          <div class="price-cat">מכירות · שירות · נדל״ן · מסעדות</div>
+          <div class="price-ribbon">תפקידים מתקדמים</div>
+          <div class="amount">₪249–349<span>/חודש</span></div>
+          <div class="price-cat">מכירות · שירות · נדל״ן · מסעדות · תוכן</div>
           <ul>
             <li><span class="price-check">✓</span> תבנית מותאמת לתחום</li>
             <li><span class="price-check">✓</span> לידים, תורים, escalation</li>
@@ -1220,12 +2121,12 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
           <a href="/marketplace#/magic" class="price-cta">התחל עכשיו ←</a>
         </div>
       </div>
-      <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">חשבונית</a>.</p>
+      <p class="text-center muted" style="margin-top:16px;font-size:13px">רכישה חד-פעמית: לרוב ₪0 (SaaS חודשי). פרטים מלאים ב-<a href="/invoice">מחירון ואפשרויות תשלום</a>.</p>
     </section>
 
     <section class="anim anim-3 section-order-how">
       <h2 class="section-title">איך מתחילים</h2>
-      <p class="section-sub">שלושה צעדים — בלי מפתחות API ובלי מפתח</p>
+      <p class="section-sub">שלושה צעדים — בלי מפתח LLM אישי; חיבורים חיצוניים מוגדרים לפי הספק</p>
       <div class="timeline-steps">
         <div class="timeline-step">
           <div class="ts-marker">🏢</div>
@@ -1240,7 +2141,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         <div class="timeline-step">
           <div class="ts-marker">💬</div>
           <h3>שיחה ראשונה</h3>
-          <p>דוגמה חיה לפני תשלום — ניסיון ${TRIAL_DAYS > 0 ? TRIAL_DAYS + ' ימים' : '14 ימים'}.</p>
+          <p>${TRIAL_DAYS > 0 ? `דוגמה חיה לפני תשלום — ניסיון ${TRIAL_DAYS} ימים.` : 'בודקים שיחה חיה לפני שמחליטים על הפעלה.'}</p>
         </div>
       </div>
     </section>
@@ -1297,15 +2198,15 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       <div class="faq-grid">
         <details class="faq-item">
           <summary>מה זה "עובד AI"?</summary>
-          <div class="content">עובד AI הוא עובד וירטואלי שמבוסס על בינה מלאכותית. הוא מנהל שיחות עם לקוחות, עונה על שאלות, מסנן לידים, מתאם פגישות ומבצע משימות שירות — בדיוק כמו עובד אנושי, אבל זול בהרבה ועובד 24/7.</div>
+          <div class="content">עובד AI הוא עוזר וירטואלי שמבוסס על בינה מלאכותית. הוא יכול לנהל שיחות, לענות על מידע שהעסק אישר, לסנן לידים ולתאם פגישות גם מחוץ לשעות. השירות החינמי אינו כולל התחייבות לזמינות רציפה, ותשובות חשובות דורשות בקרה אנושית.</div>
         </details>
         <details class="faq-item">
           <summary>כמה זה עולה?</summary>
-          <div class="content">מנוי חודשי מ-199 ₪ (תפעול) עד 299 ₪ (מרפאות). לרוב אין דמי הקמה. תשלום ב-PayPal, Bit או העברה בנקאית. פירוט מלא בדף החשבונית.</div>
+          <div class="content">מנוי חודשי מ-199 ₪ עד 349 ₪, לפי התפקיד והכלים. כרגע אין דמי הקמה בתבניות הקטלוג. אפשרויות התשלום שהמפעיל אימת מוצגות בעת ההפעלה ובדף פרטי התשלום.</div>
         </details>
         <details class="faq-item">
           <summary>האם אני צריך כרטיס אשראי?</summary>
-          <div class="content">לא. אנחנו תומכים ב-PayPal, Bit, והעברה בנקאית. מתאים במיוחד לבעלי עסקים בישראל.</div>
+          <div class="content">לא בהכרח. לפני תשלום מוצגות רק האפשרויות שהוגדרו ואומתו בפועל; ייתכן תשלום ידני או סליקה מאובטחת אצל ספק חיצוני.</div>
         </details>
         <details class="faq-item">
           <summary>איך העובד לומד על העסק שלי?</summary>
@@ -1313,7 +2214,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
         </details>
         <details class="faq-item">
           <summary>האם העובד זוכר לקוחות?</summary>
-          <div class="content">כן! העובד זוכר עובדות על לקוחות לאורך שיחות — העדפות, פרטי קשר, היסטוריית רכישות. הכל מאובטח בשרת שלך.</div>
+          <div class="content">בהתאם להגדרות, העובד יכול לשמור עובדות שמסרתם לאורך שיחות. הנתונים נשמרים בתשתית שמפעיל השירות מנהל, ותוכן עשוי להישלח לספק ה-LLM שהוגדר לצורך יצירת תשובה. פרטים נוספים במדיניות הפרטיות.</div>
         </details>
       </div>
     </section>
@@ -1321,10 +2222,10 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
 
   <div class="footer">
     <div class="footer-brand">
-      <img src="/brand/logo-nightdesk-mono.svg" alt="Nightdesk" width="44" height="44" />
+      <img src="/brand/logo-nightdesk-mono.svg" alt="AI Workers" width="44" height="44" />
       <div>
-        <div class="footer-brand-name">Nightdesk</div>
-        <div class="footer-brand-tag">עובדים דיגיטליים שלא ישנים</div>
+        <div class="footer-brand-name">AI Workers Israel</div>
+        <div class="footer-brand-tag">עובדים דיגיטליים לעסקים בישראל</div>
       </div>
     </div>
     <div class="fm">
@@ -1335,11 +2236,10 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       ${AGENT_OWNER_CONTACT ? `<a href="mailto:${escapeHtml(AGENT_OWNER_CONTACT)}">צור קשר</a>` : ''}
     </div>
     <p>${escapeHtml(AGENT_NAME)} · ${escapeHtml(AGENT_DESCRIPTION)}</p>
-    <p class="footer-legal-note">תשלום בכרטיס אשראי (Paddle), Bit, PayPal או העברה בנקאית</p>
+    <p class="footer-legal-note">אפשרויות התשלום הזמינות מוצגות בעת ההפעלה</p>
   </div>
 
   <script>
-    function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
     function animateValue(el, start, end, suffix, duration) {
       if (!el) return;
       let startTime = null;
@@ -1367,19 +2267,31 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
     }
     async function loadTemplates() {
       try {
-        const r = await fetch('/api/workers/templates'); const j = await r.json();
-        const tpls = j.templates ?? [];
-        const container = document.getElementById('tpl-list');
-        if (!tpls.length) { container.innerHTML = '<div style="text-align:center;grid-column:1/-1;color:var(--muted);padding:40px">אין תבניות כרגע</div>'; return; }
-        container.innerHTML = tpls.map((t, i) => \`
-          <div class="tpl-card anim" style="animation-delay:\${i * ${TEMPLATE_ANIM_DELAY}}s">
-            <div class="icon">\${esc(t.icon)}</div>
-            <h4>\${esc(t.nameHe || t.name)}</h4>
-            <div class="desc">\${esc(t.description)}</div>
-            <div class="price">שכירות: <b>\${t.rentPriceIls} ₪/חודש</b>\${t.buyPriceIls > 0 ? ' · הקמה: ' + t.buyPriceIls + ' ₪' : ''}</div>
-            <a href="/marketplace" class="cta-sm">הוסף לעסק ←</a>
-          </div>
-        \`).join('');
+	        const r = await fetch('/api/workers/templates'); const j = await r.json();
+	        const tpls = j.templates ?? [];
+	        const container = document.getElementById('tpl-list');
+	        container.replaceChildren();
+	        if (!tpls.length) {
+	          const empty = document.createElement('div');
+	          empty.style.cssText = 'text-align:center;grid-column:1/-1;color:var(--muted);padding:40px';
+	          empty.textContent = 'אין תבניות כרגע';
+	          container.appendChild(empty);
+	          return;
+	        }
+	        for (const [i, t] of tpls.entries()) {
+	          const card = document.createElement('div');
+	          card.className = 'tpl-card anim';
+	          card.style.animationDelay = (i * ${TEMPLATE_ANIM_DELAY}) + 's';
+	          const icon = document.createElement('div'); icon.className = 'icon'; icon.textContent = t.icon || '';
+	          const title = document.createElement('h4'); title.textContent = t.nameHe || t.name || '';
+	          const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = t.description || '';
+	          const price = document.createElement('div'); price.className = 'price'; price.append('שכירות: ');
+	          const rent = document.createElement('b'); rent.textContent = Number(t.rentPriceIls || 0) + ' ₪/חודש'; price.appendChild(rent);
+	          if (Number(t.buyPriceIls) > 0) price.append(' · הקמה: ' + Number(t.buyPriceIls) + ' ₪');
+	          const link = document.createElement('a'); link.href = '/marketplace'; link.className = 'cta-sm'; link.textContent = 'הוסף לעסק ←';
+	          card.append(icon, title, desc, price, link);
+	          container.appendChild(card);
+	        }
       } catch (e) { console.error(e); }
     }
     loadStats(); setInterval(loadStats, ${STATS_POLL_MS});
@@ -1396,7 +2308,7 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       }
       if (!feed || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
       const events = [
-        { t: '23:11', m: 'לקוח כתב בוואטסאפ — נענה' },
+        { t: '23:11', m: 'לקוח כתב בצ׳אט באתר — נענה' },
         { t: '23:12', m: 'תור נקבע למחר ב-10:00' },
         { t: '23:14', m: 'ליד חם הועבר לבעל העסק' },
         { t: '23:16', m: 'אישור הזמנה נשלח ב-SMS' },
@@ -1404,10 +2316,13 @@ function buildDashboard(baseUrl = PUBLIC_BASE_URL) {
       ];
       let i = 3;
       setInterval(function() {
-        i = (i + 1) % events.length;
-        var el = document.createElement('div');
-        el.className = 'sb-event sb-event-new';
-        el.innerHTML = '<time>' + events[i].t + '</time><span class="sb-check">✓</span><span>' + events[i].m + '</span>';
+	        i = (i + 1) % events.length;
+	        var el = document.createElement('div');
+	        el.className = 'sb-event sb-event-new';
+	        var time = document.createElement('time'); time.textContent = events[i].t;
+	        var check = document.createElement('span'); check.className = 'sb-check'; check.textContent = '✓';
+	        var message = document.createElement('span'); message.textContent = events[i].m;
+	        el.append(time, check, message);
         feed.insertBefore(el, feed.firstChild);
         while (feed.children.length > 4) feed.lastChild.remove();
       }, 4600);
@@ -1486,12 +2401,15 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   const tplRows = TEMPLATES.map((t) =>
     `  ${(t.name + ' (' + t.nameHe + ')').padEnd(50)}  buy ${String(t.buyPriceIls).padStart(4)} ILS  |  rent ${String(t.rentPriceIls).padStart(4)} ILS/mo`
   ).join('\n');
+  const paymentChannels = buildAcquireChannels();
+  const bankChannel = paymentChannels.find((channel) => channel.kind === 'bank-transfer');
+  const oneLine = (value) => String(value ?? '').replace(/[\r\n\t]+/g, ' ').trim();
 
   const lines = [];
-  lines.push(`INVOICE / HATZAMAT HESHBON`);
+  lines.push('ORDER AND PAYMENT INFORMATION — NOT A TAX DOCUMENT');
   lines.push('='.repeat(60));
   lines.push(`From:    ${AGENT_NAME}`);
-  if (PAYEE_NAME) lines.push(`Payee:   ${PAYEE_NAME}`);
+  if (bankChannel?.payee) lines.push(`Payee:   ${oneLine(bankChannel.payee)}`);
   if (AGENT_OWNER_CONTACT) lines.push(`Email:   ${AGENT_OWNER_CONTACT}`);
   if (baseUrl) lines.push(`URL:     ${baseUrl}`);
   lines.push(`Date:    ${new Date().toISOString().slice(0, 10)}`);
@@ -1502,25 +2420,23 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
   lines.push('');
   lines.push('PAYMENT OPTIONS');
   lines.push('-'.repeat(60));
-  if (PAYPAL_ME) lines.push(`  PayPal:       https://paypal.me/${PAYPAL_ME}`);
-  if (BUY_ME_A_COFFEE) lines.push(`  Buy Me Coffee: ${BUY_ME_A_COFFEE}`);
-  if (KO_FI) lines.push(`  Ko-fi:        ${KO_FI}`);
-  if (BIT_PHONE) lines.push(`  Bit:          https://www.bitpay.co.il/app/me/${BIT_PHONE.replace(/\D/g,'')}  (${BIT_PHONE})`);
-  if (GITHUB_SPONSORS) lines.push(`  GitHub:       https://github.com/sponsors/${GITHUB_SPONSORS}`);
-  if (GUMROAD_URL) lines.push(`  Gumroad:      ${GUMROAD_URL}`);
-  lines.push('');
-  if (BANK_ACCOUNT) {
-    lines.push('BANK TRANSFER (Israeli-friendly)');
-    lines.push('-'.repeat(60));
-    if (PAYEE_NAME) lines.push(`  Payee name:   ${PAYEE_NAME}`);
-    if (BANK_NAME) lines.push(`  Bank:         ${BANK_NAME}`);
-    if (BANK_BRANCH) lines.push(`  Branch:       ${BANK_BRANCH}`);
-    if (BANK_ACCOUNT) lines.push(`  Account #:    ${BANK_ACCOUNT}`);
-    if (IBAN) lines.push(`  IBAN:         ${IBAN}`);
-    if (SWIFT) lines.push(`  SWIFT/BIC:    ${SWIFT}`);
-    lines.push('  Reference:    include the template id (e.g. "real-estate-il") so I can match the payment.');
-    lines.push('');
+  if (paymentChannels.length === 0) lines.push('  No verified payment channel is configured yet. Contact the operator.');
+  for (const channel of paymentChannels) {
+    if (channel.kind === 'paypal') lines.push(`  PayPal:       ${oneLine(channel.url)}`);
+    else if (channel.kind === 'paddle') lines.push(`  Card checkout: ${oneLine(channel.url)}`);
+    else if (channel.kind === 'bit') lines.push(`  Bit:          ${oneLine(channel.url)}  (${oneLine(channel.phone)})`);
+    else if (channel.kind === 'bank-transfer') {
+      lines.push('  Bank transfer:');
+      lines.push(`    Payee:      ${oneLine(channel.payee)}`);
+      lines.push(`    Bank:       ${oneLine(channel.bank)}`);
+      lines.push(`    Branch:     ${oneLine(channel.branch)}`);
+      lines.push(`    Account:    ${oneLine(channel.account)}`);
+      if (channel.iban) lines.push(`    IBAN:       ${oneLine(channel.iban)}`);
+      if (channel.swift) lines.push(`    SWIFT/BIC:  ${oneLine(channel.swift)}`);
+      lines.push('    Reference: include the worker/template id so the operator can match the payment.');
+    }
   }
+  lines.push('');
   lines.push('HOW TO ORDER');
   lines.push('-'.repeat(60));
   lines.push(`  1. Open the marketplace and create your tenant key: ${baseUrl}/marketplace`);
@@ -1534,55 +2450,66 @@ function buildInvoiceText(baseUrl = PUBLIC_BASE_URL) {
 function buildWorkerInvoiceHtml({ worker, tenantId, template, baseUrl }) {
   const date = new Date().toISOString().slice(0, 10);
   const rent = template?.rentPriceIls ?? 0;
-  const vatRate = process.env.VAT_RATE ?? '17';
-  const vatNote = process.env.VAT_REGISTERED === '1'
-    ? `מע"מ ${vatRate}% יחושב בחשבונית מס`
-    : 'מע"מ: לפי סטטוס עוסק (מורשה / פטור) — יש למלא בחשבונית';
-  const paidUntil = worker.paidUntil ? new Date(worker.paidUntil).toLocaleDateString('he-IL') : '—';
+  const hasPaidUntilValue = String(worker.paidUntil ?? '').trim().length > 0;
+  const paidUntilDate = worker.paidUntil ? new Date(worker.paidUntil) : null;
+  const hasPaidUntil = paidUntilDate && !Number.isNaN(paidUntilDate.getTime());
+  const paidUntil = hasPaidUntil ? paidUntilDate.toLocaleDateString('he-IL') : '';
+  const paymentCurrent = hasPaidUntil && paidUntilDate > new Date();
+  let accessPeriod = 'ממתין לאימות תשלום';
+  if (worker.paused) {
+    if (paymentCurrent) accessPeriod = `מושהה · התשלום בתוקף עד ${paidUntil}`;
+    else if (hasPaidUntil) accessPeriod = `מושהה · התוקף הסתיים ב-${paidUntil}`;
+    else accessPeriod = 'מושהה ללא תאריך סיום';
+  } else if (worker.status === 'active') {
+    if (paymentCurrent) accessPeriod = `פעיל עד ${paidUntil}`;
+    else if (!hasPaidUntilValue) accessPeriod = 'פעיל ללא תאריך סיום (רשומת legacy)';
+    else if (hasPaidUntil) accessPeriod = `התוקף הסתיים ב-${paidUntil}`;
+    else accessPeriod = 'סטטוס פעיל · תאריך התשלום דורש בדיקה';
+  } else if (hasPaidUntil && !paymentCurrent) {
+    accessPeriod = `התוקף הסתיים ב-${paidUntil}`;
+  }
   const safeWorkerName = escapeHtml(worker.name ?? '');
   const safeWorkerId = escapeHtml(worker.id ?? '');
-  const safeTplHe = escapeHtml(template?.nameHe ?? '');
-  const safeTplName = escapeHtml(template?.name ?? '');
-  const safePayee = PAYEE_NAME ? escapeHtml(PAYEE_NAME) : '';
+  const bankChannel = buildAcquireChannels().find((channel) => channel.kind === 'bank-transfer');
+  const safePayee = bankChannel?.payee ? escapeHtml(bankChannel.payee) : '';
   const safeContact = AGENT_OWNER_CONTACT ? escapeHtml(AGENT_OWNER_CONTACT) : '';
   const safeAgent = escapeHtml(AGENT_NAME ?? '');
-  const safeTenant = escapeHtml(tenantId ?? '');
   const safeBase = escapeHtml(baseUrl ?? '');
-  const safeVatNote = escapeHtml(vatNote);
   const itemName = template?.nameHe || template?.name || worker.name;
   const safeItem = escapeHtml(itemName ?? '');
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>חשבונית — ${safeWorkerName}</title>
+  <title>סיכום הזמנה — ${safeWorkerName}</title>
   <style>
     body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:24px;color:#111;line-height:1.6}
     h1{font-size:22px;margin:0 0 8px} .muted{color:#666;font-size:14px}
     table{width:100%;border-collapse:collapse;margin:20px 0} th,td{border:1px solid #ddd;padding:10px;text-align:right}
-    th{background:#f6f6f6} .total{font-size:18px;font-weight:700}
+    th{background:#f6f6f6} .total{font-size:18px;font-weight:700}.notice{padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;color:#7c2d12}
     @media print{body{margin:0}}
   </style>
 </head>
 <body>
-  <h1>חשבונית / קבלה — ${safeAgent}</h1>
+  <h1>סיכום הזמנה ותשלום — ${safeAgent}</h1>
   <p class="muted">תאריך: ${date} · מזהה עובד: ${safeWorkerId}</p>
-  ${safePayee ? `<p><strong>לכבוד:</strong> ${safePayee}</p>` : ''}
+  <p class="notice"><strong>זהו סיכום הזמנה בלבד.</strong> הוא אינו חשבונית מס, אינו קבלה ואינו אישור שהתשלום התקבל.</p>
+  ${safePayee ? `<p><strong>מקבל התשלום:</strong> ${safePayee}</p>` : ''}
   ${safeContact ? `<p><strong>יצירת קשר:</strong> ${safeContact}</p>` : ''}
   <table>
     <thead><tr><th>פריט</th><th>תקופה</th><th>סכום (₪)</th></tr></thead>
     <tbody>
       <tr>
         <td>${safeItem}</td>
-        <td>שכירות חודשית · בתוקף עד ${paidUntil}</td>
+        <td>שכירות חודשית · ${accessPeriod}</td>
         <td>${rent}</td>
       </tr>
     </tbody>
   </table>
-  <p class="total">סה"כ לפני מע"מ: ₪${rent}</p>
-  <p class="muted">${safeVatNote}</p>
-  <p class="muted">Tenant: ${safeTenant} · ${safeBase}</p>
-  <p class="muted" style="margin-top:24px">מסמך זה נוצר אוטומטית לצורכי תיעוד. לחשבונית מס רשמית פנו לתמיכה.</p>
+  <p class="total">מחיר חודשי מוצג: ₪${rent}</p>
+  <p class="muted">מע"מ, אם חל, ופרטי התשלום יופיעו במסמך המס הרשמי.</p>
+  <p class="muted">${safeBase}</p>
+  <p class="muted" style="margin-top:24px">לאחר אימות התשלום, פנו לתמיכה לקבלת מסמך מס רשמי בהתאם לסטטוס העסק.</p>
 </body>
 </html>`;
 }
@@ -1594,7 +2521,12 @@ function isAdmin(req, parsedUrl) {
   const auth = req.headers['authorization'];
   if (auth?.startsWith('Bearer ')) {
     const token = auth.slice('Bearer '.length);
-    const ok = token.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+    const supplied = Buffer.from(token, 'utf8');
+    const expected = Buffer.from(ADMIN_TOKEN, 'utf8');
+    let ok = false;
+    if (supplied.length === expected.length) {
+      try { ok = crypto.timingSafeEqual(supplied, expected); } catch { ok = false; }
+    }
     if (!ok) recordAdminAudit(req, { action: 'admin_auth_failed', status: 'denied', metadata: { reason: 'invalid_bearer' } });
     return ok;
   }
@@ -1610,41 +2542,97 @@ function isAdmin(req, parsedUrl) {
 // --- Routes ---------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
+  try {
   const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
   if (req.method === 'OPTIONS') {
     const embedPath = url.pathname.startsWith('/api/embed/');
     const preflight = embedPath ? embedCorsHeaders(req) : (CORS_ALLOW_ORIGIN ? {
       'access-control-allow-origin': CORS_ALLOW_ORIGIN,
-      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-headers': 'content-type, authorization, x-aiw-csrf, x-idempotency-key',
       'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     } : {});
     return send(res, 204, '', preflight);
   }
-  if (url.pathname !== '/health' && !rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
+  if (!['/health', '/infra-ready', '/ready'].includes(url.pathname) && !rateLimit(clientIp(req))) return send(res, 429, { error: 'rate_limited' });
 
-  if (req.method === 'GET' && url.pathname === '/') {
-    return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
-  }
   if (req.method === 'GET' && url.pathname === '/health') {
+    const persistence = persistenceStatus();
+    const readinessConfig = readinessConfiguration();
     return send(res, 200, {
       ok: true, agent: AGENT_NAME,
-      statusHe: LLM_API_KEY ? 'מוכן לעבודה' : 'צריך הגדרה',
-      channels: buildAcquireChannels().map((c) => c.kind),
-      adminEnabled: !!ADMIN_TOKEN,
-      llmConfigured: !!LLM_API_KEY,
+      statusHe: readinessConfig.ok && persistence.ok ? 'מוכן לעבודה' : 'צריך הגדרה',
+      channels: readinessConfig.channels,
+      adminEnabled: readinessConfig.configuration.adminEnabled,
+      llmConfigured: readinessConfig.configuration.llmConfigured,
       llmProvider: LLM_PROVIDER,
       llmModel: LLM_MODEL,
       publicBaseUrl: resolveBaseUrl(req),
       dbPath: DB_PATH,
-      tenantsDir: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
-      persistentStorage: !DB_PATH.includes('/tmp'),
+      tenantsDir: TENANTS_DIR,
+      persistentStorage: persistence.ok,
+      persistence,
       whatsapp: whatsappConfigStatus(),
+      workerDirectory: workers.workerDirectoryStatus(),
+      embedProtection: embedAbuseStatus(),
       integrationsCatalog: integrations.listCatalog().length,
       payment: { ...paymentConfigStatus(), paddle: paddleConfigStatus() },
       trialDays: TRIAL_DAYS,
+      monthlyChatLimit: DEFAULT_MONTHLY_CALL_LIMIT,
+      monthlyProviderCallLimit: DEFAULT_MONTHLY_PROVIDER_CALL_LIMIT,
+      productAnalytics: {
+        enabled: PRODUCT_ANALYTICS_ENABLED,
+        privacy: 'aggregate_counts_only',
+        retentionDays: PRODUCT_ANALYTICS_RETENTION_DAYS,
+      },
+      customerDataRetention: (() => {
+        const status = workers.getRetentionSweepStatus();
+        return {
+          status: status.status,
+          lastRunAt: status.lastRunAt,
+          nextRunAt: status.nextRunAt,
+          failed: status.failed,
+          overdue: status.overdue,
+          alert: status.alert,
+        };
+      })(),
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/infra-ready') {
+    const persistence = persistenceStatus();
+    return send(res, persistence.ok ? 200 : 503, {
+      ok: persistence.ok,
+      agent: AGENT_NAME,
+      persistence,
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/ready') {
+    const readiness = readinessStatus();
+    return send(res, readiness.ok ? 200 : 503, {
+      ...readiness,
+      agent: AGENT_NAME,
+      publicBaseUrl: resolveBaseUrl(req),
     });
   }
   if (handleLegalRoutes(req, res, url, send)) return;
+
+  // The infrastructure health check can succeed once SQLite and the
+  // persistent mount work, but production traffic remains fail-closed until
+  // the separate business/configuration gate is fully ready.
+  if (process.env.NODE_ENV === 'production') {
+    const readiness = readinessStatus();
+    if (!readiness.ok) {
+      return send(res, 503, {
+        error: 'service_not_ready',
+        messageHe: 'השירות עדיין בהגדרה ואינו פתוח ללקוחות.',
+        ...readiness,
+      });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    recordProductEvent('landing_view');
+    return send(res, 200, buildDashboard(resolveBaseUrl(req)), { 'content-type': 'text/html; charset=utf-8' });
+  }
 
   if (await handlePaddleWebhook(req, res, url, { send, readBody, recordAdminAudit })) return;
 
@@ -1654,18 +2642,50 @@ const server = http.createServer(async (req, res) => {
     markActivationRequestReviewed,
     recordAdminAudit,
     findPendingActivation,
+    claimPaymentReference,
+    markPaymentReferenceEntitled,
   })) return;
 
   // WhatsApp inbound webhook (no tenant auth — provider verification)
   if (await handleWhatsAppWebhook(req, res, url, {
     send,
     readBody,
-    processInbound: (inbound) => processWhatsAppInbound(db, {
-      chatWithWorker: workers.chatWithWorker,
+      publicBaseUrl: resolveBaseUrl(req),
+      claimInbound: claimWhatsAppInbound,
+      completeInbound: completeWhatsAppInbound,
+      persistInboundOutcome: persistWhatsAppInboundOutcome,
+      processInbound: (inbound) => processWhatsAppInbound(db, {
+      chatWithWorker: async (params) => {
+        const quota = consumeTenantChat(params.tenantId);
+        if (!quota.ok) {
+          return {
+            ok: false,
+            status: 402,
+            error: 'quota_exceeded',
+            used: quota.used,
+            limit: quota.limit,
+            period: quota.period,
+            message: 'Monthly chat allowance reached.',
+          };
+        }
+        const result = await workers.chatWithWorker(params);
+        if (result?.ok !== false && Number(result?.status ?? 200) < 400) recordProductEvent('chat_succeeded');
+        return result;
+      },
       logAgentActions: workers.logAgentActions,
       getWorker: workers.getWorker,
+      persistInboundOutcome: persistWhatsAppInboundOutcome,
     }, inbound),
   })) return;
+
+  if (req.method === 'POST' && url.pathname === '/api/public/product-event') {
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (body.event !== 'magic_started') return send(res, 400, { error: 'unsupported_event' });
+    recordProductEvent('magic_started');
+    return send(res, 202, { ok: true });
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/public/stats') {
     return send(res, 200, getPublicMarketplaceStats());
@@ -1689,13 +2709,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/earnings.csv') {
     if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
-    const escCsv = (v) => {
-      const s = String(v ?? '');
-      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
     const rows = getRecentCalls(CSV_EXPORT_LIMIT);
     const header = 'id,at,endpoint,network,amount_usdc,payer,tx_hash,mock,input_chars,auth_method\n';
-    const body = rows.map((r) => [r.id, r.at, r.endpoint, r.network, r.amountUsdc, r.payer, r.txHash, r.mock, r.inputChars, r.authMethod].map(escCsv).join(',')).join('\n');
+    const body = rows.map((r) => csvRow([r.id, r.at, r.endpoint, r.network, r.amountUsdc, r.payer, r.txHash, r.mock, r.inputChars, r.authMethod])).join('\n');
     return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
   }
   if (req.method === 'GET' && url.pathname === '/invoice') {
@@ -1727,33 +2743,88 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/embed/config') {
+    const cors = embedCorsHeaders(req);
+    if (!embedOriginAllowed(req)) return send(res, 403, { error: 'embed_origin_denied' }, cors);
     const workerId = url.searchParams.get('workerId') ?? '';
     const found = workers.adminFindWorker(workerId);
-    if (!found) return send(res, 404, { error: 'not_found' }, embedCorsHeaders(req));
+    if (!found) return send(res, 404, { error: 'not_found' }, cors);
     const worker = workers.getWorker(found.tenantId, found.id);
-    if (!EMBED_ALLOW_PUBLIC && !worker.isActive) return send(res, 403, { error: 'embed_disabled' }, embedCorsHeaders(req));
-    return send(res, 200, { workerId, name: worker.name, isActive: worker.isActive, templateId: worker.templateId }, embedCorsHeaders(req));
+    if (!worker?.isActive) return send(res, 402, { error: 'worker_not_active' }, cors);
+    return send(res, 200, { workerId, name: worker.name, isActive: true, templateId: worker.templateId }, cors);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/embed/session') {
+    const cors = embedCorsHeaders(req);
+    if (!embedOriginAllowed(req)) return send(res, 403, { error: 'embed_origin_denied' }, cors);
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' }, cors);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }, cors); }
+    const workerId = cleanText(body.workerId, 100);
+    const found = workers.adminFindWorker(workerId);
+    if (!found) return send(res, 404, { error: 'not_found' }, cors);
+    const worker = workers.getWorker(found.tenantId, found.id);
+    if (!worker?.isActive) return send(res, 402, { error: 'worker_not_active' }, cors);
+    const ipKey = embedAbuseIpKey(req);
+    const abuse = consumeEmbedAbuseBudget([
+      { kind: 'session_ip_worker', key: embedAbuseHash(`${ipKey}:${found.id}`), limit: EMBED_SESSION_IP_WORKER_HOURLY },
+      { kind: 'session_worker', key: embedAbuseHash(found.id), limit: EMBED_SESSION_WORKER_HOURLY },
+    ]);
+    if (!abuse.ok) return send(res, 429, { error: 'embed_abuse_limited', retryAfter: abuse.windowStart }, { ...cors, 'retry-after': '3600' });
+    pruneEmbedSessions(db);
+    const session = issueEmbedSession(db, {
+      tenantId: found.tenantId,
+      workerId: found.id,
+      origin: requestEmbedOrigin(req),
+    });
+    return send(res, 201, {
+      ok: true,
+      sessionToken: session.token,
+      expiresAt: session.expiresAt,
+    }, { ...cors, 'cache-control': 'no-store' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/embed/chat') {
     const cors = embedCorsHeaders(req);
+    if (!embedOriginAllowed(req)) return send(res, 403, { error: 'embed_origin_denied' }, cors);
+    const session = authenticateEmbedSession(db, req, { origin: requestEmbedOrigin(req) });
+    if (!session.ok) return send(res, 401, { error: session.error }, cors);
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }, cors); }
-    if (!body.workerId || !body.message) return send(res, 400, { error: 'workerId_and_message_required' }, cors);
-    const tenantFromKey = requireAuth(req);
-    const found = workers.adminFindWorker(body.workerId);
-    if (!found) return send(res, 404, { error: 'not_found' }, cors);
-    if (tenantFromKey && tenantFromKey !== found.tenantId) return send(res, 403, { error: 'forbidden' }, cors);
-    const worker = workers.getWorker(found.tenantId, found.id);
-    if (!worker.isActive && !EMBED_ALLOW_PUBLIC) return send(res, 402, { error: 'payment_required', message: 'Worker is not active' }, cors);
+    if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' }, cors);
+    if (body.message.length > MAX_USER_MESSAGE_CHARS) {
+      return send(res, 400, { error: 'message_too_long', max: MAX_USER_MESSAGE_CHARS, length: body.message.length }, cors);
+    }
+    const worker = workers.getWorker(session.tenantId, session.workerId);
+    if (!worker?.isActive) return send(res, 402, { error: 'worker_not_active' }, cors);
+    const ipKey = embedAbuseIpKey(req);
+    const abuse = consumeEmbedAbuseBudget([
+      { kind: 'chat_session', key: session.tokenHash, limit: EMBED_CHAT_SESSION_HOURLY },
+      { kind: 'chat_ip_worker', key: embedAbuseHash(`${ipKey}:${session.workerId}`), limit: EMBED_CHAT_IP_WORKER_HOURLY },
+      { kind: 'chat_worker', key: embedAbuseHash(session.workerId), limit: EMBED_CHAT_WORKER_HOURLY },
+    ]);
+    if (!abuse.ok) return send(res, 429, { error: 'embed_abuse_limited' }, { ...cors, 'retry-after': '3600' });
+    const quota = consumeTenantChat(session.tenantId);
+    if (!quota.ok) return send(res, 402, {
+      error: 'quota_exceeded',
+      used: quota.used,
+      limit: quota.limit,
+      period: quota.period,
+      messageHe: 'מכסת השיחות החודשית הסתיימה.',
+    }, cors);
     const res2 = await workers.chatWithWorker({
-      tenantId: found.tenantId,
-      workerId: found.id,
+      tenantId: session.tenantId,
+      workerId: session.workerId,
       userMessage: body.message,
-      customerId: body.customerId ?? 'embed_visitor',
-      demoMode: !worker.isActive,
+      customerId: session.customerId,
+      requestId: requestIdFor(req, `embed:${session.workerId}:${session.tokenHash.slice(0, 16)}`),
+      demoMode: false,
+      actor: 'public',
+      channel: 'embed',
     });
-    return send(res, res2.status ?? 200, { reply: res2.reply ?? res2.message, ...res2 }, cors);
+    if (res2?.ok !== false && Number(res2?.status ?? 200) < 400) recordProductEvent('chat_succeeded');
+    return send(res, res2.status ?? 200, res2.ok === false
+      ? { error: res2.error || 'chat_failed', message: res2.message }
+      : { reply: res2.reply ?? res2.message }, cors);
   }
 
   // Admin: issue an API key for a new tenant
@@ -1762,7 +2833,7 @@ const server = http.createServer(async (req, res) => {
     const { text: raw } = await readBody(req, BODY_TINY);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     const issued = issueApiKey({
-      plan: 'worker-tenant', callsLimit: UNLIMITED_CALLS,
+      plan: 'worker-tenant', callsLimit: DEFAULT_MONTHLY_CALL_LIMIT,
       paymentChannel: body.channel ?? 'manual', paymentReference: body.reference ?? null,
       label: body.label ?? `Tenant (${body.channel ?? 'manual'})`,
     });
@@ -1832,25 +2903,89 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, thanks: true });
   }
 
-  // Self-serve tenant signup. The key can create/configure workers, but chat
-  // remains payment-gated until an admin approves a rental.
+  if (req.method === 'GET' && url.pathname === '/api/session') {
+    const auth = authenticateTenant(req, { consumeKey: false });
+    if (!auth) return send(res, 401, { authenticated: false, error: 'auth_required' }, { 'cache-control': 'no-store' });
+    const snapshot = tenantAccountSnapshot(auth.tenantId);
+    return send(res, 200, {
+      authenticated: true,
+      tenantId: auth.tenantId,
+      label: snapshot.label,
+      email: snapshot.email,
+      authMethod: auth.authMethod,
+    }, { 'cache-control': 'no-store' });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/logout') {
+    const session = authenticateOwnerSession(db, req, { requireCsrf: true });
+    if (session.ok) revokeOwnerSession(db, req);
+    return send(res, 200, { ok: true }, {
+      'set-cookie': clearOwnerSessionCookie({ secure: OWNER_COOKIE_SECURE }),
+      'cache-control': 'no-store',
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/account/recover') {
+    if (!signupRateLimit(clientIp(req))) return send(res, 429, { error: 'recovery_rate_limited' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const email = normalizeOwnerEmail(body.email);
+    const recoveryCode = cleanText(body.recoveryCode, 180);
+    if (!email || !recoveryCode) return send(res, 400, { error: 'email_and_recovery_code_required' });
+    const recovered = recoverOwnerAccount(db, { email, recoveryCode });
+    if (!recovered.ok) return send(res, 401, { error: 'invalid_recovery' });
+    const session = issueOwnerSession(db, recovered.tenantId);
+    recordAdminAudit(req, {
+      action: 'owner_account_recovered',
+      targetType: 'tenant',
+      targetId: recovered.tenantId,
+      metadata: { email: recovered.email },
+    });
+    return send(res, 200, {
+      ok: true,
+      authenticated: true,
+      tenantId: recovered.tenantId,
+      label: recovered.businessName,
+      recoveryCode: recovered.recoveryCode,
+      note: 'Store the new recovery code. The previous code and browser sessions were revoked.',
+    }, {
+      'set-cookie': ownerSessionCookie(session, { secure: OWNER_COOKIE_SECURE }),
+      'cache-control': 'no-store',
+    });
+  }
+
+  // Self-serve tenant signup. Browser ownership is represented by an HttpOnly
+  // session. The tenant API key remains an explicit, separately rotated secret.
   if (req.method === 'POST' && url.pathname === '/api/signup') {
     if (!signupRateLimit(clientIp(req))) return send(res, 429, { error: 'signup_rate_limited' });
     const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
     if (tooLarge) return send(res, 413, { error: 'body_too_large' });
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
     const businessName = cleanText(body.businessName, 80);
-    const contact = cleanText(body.contact, 160);
+    const contact = normalizeOwnerEmail(body.contact);
     if (!businessName) return send(res, 400, { error: 'business_name_required' });
-    if (!contact) return send(res, 400, { error: 'contact_required' });
+    if (!contact) return send(res, 400, { error: 'valid_email_required' });
+    if (findOwnerAccountByEmail(db, contact)) return send(res, 409, { error: 'account_exists', messageHe: 'כבר קיים חשבון למייל הזה. השתמשו בקוד השחזור.' });
     const issued = issueSelfServeTenant({ businessName, contact });
-    return send(res, 200, {
+    const account = createOwnerAccount(db, { tenantId: issued.tenantId, businessName, email: contact });
+    if (!account.ok) {
+      db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run(new Date().toISOString(), issued.id);
+      return send(res, account.error === 'account_exists' ? 409 : 500, { error: account.error });
+    }
+    const session = issueOwnerSession(db, issued.tenantId);
+    recordProductEvent('signup_completed');
+    return send(res, 201, {
       ok: true,
-      key: issued.key,
-      keyId: issued.id,
+      authenticated: true,
       tenantId: issued.tenantId,
       label: issued.label,
-      note: 'Store this key locally. It lets you configure workers; activation still requires payment approval.',
+      email: contact,
+      recoveryCode: account.recoveryCode,
+      note: 'Store the recovery code once. The browser session is held in an HttpOnly cookie.',
+    }, {
+      'set-cookie': ownerSessionCookie(session, { secure: OWNER_COOKIE_SECURE }),
+      'cache-control': 'no-store',
     });
   }
 
@@ -1865,17 +3000,22 @@ const server = http.createServer(async (req, res) => {
   }
   // HTML pages
   if (req.method === 'GET' && (url.pathname === '/marketplace' || url.pathname === '/builder' || url.pathname.startsWith('/workers/') || url.pathname === '/workers')) {
+    if (url.pathname === '/marketplace') recordProductEvent('marketplace_view');
     let html = fs.readFileSync(path.join(__dirname, 'workers-ui.html'), 'utf8');
+    const paymentChannels = buildAcquireChannels();
+    const bitChannel = paymentChannels.find((channel) => channel.kind === 'bit');
+    const paypalChannel = paymentChannels.find((channel) => channel.kind === 'paypal');
+    const bankChannel = paymentChannels.find((channel) => channel.kind === 'bank-transfer');
     const payCfg = JSON.stringify({
-      bitPhone: BIT_PHONE || '',
-      paypalMe: PAYPAL_ME || '',
-      bankName: BANK_NAME || '',
-      bankBranch: BANK_BRANCH || '',
-      bankAccount: BANK_ACCOUNT || '',
-      payeeName: PAYEE_NAME || '',
+      bitPhone: bitChannel?.phone || '',
+      paypalMe: paypalChannel?.account || '',
+      bankName: bankChannel?.bank || '',
+      bankBranch: bankChannel?.branch || '',
+      bankAccount: bankChannel?.account || '',
+      payeeName: bankChannel?.payee || '',
       activationSlaHe: activationSlaTextHe(),
       trialDays: TRIAL_DAYS,
-      paddleEnabled: paddleEnabled(),
+      paddleEnabled: paddleOperational(),
       ownerContact: AGENT_OWNER_CONTACT || '',
     }).replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
     html = html.replace('</body>', `${VERCEL_INLINE_SCRIPT}<script>const PAYMENT_CONFIG = ${payCfg};const BIT_PHONE=PAYMENT_CONFIG.bitPhone;const PAYPAL_ME=PAYMENT_CONFIG.paypalMe;const BANK_NAME=PAYMENT_CONFIG.bankName;const BANK_BRANCH=PAYMENT_CONFIG.bankBranch;const BANK_ACCOUNT=PAYMENT_CONFIG.bankAccount;const PAYEE_NAME=PAYMENT_CONFIG.payeeName;const ACTIVATION_SLA_HE=PAYMENT_CONFIG.activationSlaHe;const TRIAL_DAYS=PAYMENT_CONFIG.trialDays;const PADDLE_ENABLED=PAYMENT_CONFIG.paddleEnabled;const AGENT_OWNER_CONTACT=PAYMENT_CONFIG.ownerContact;</script></body>`);
@@ -1926,7 +3066,8 @@ const server = http.createServer(async (req, res) => {
     if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
     const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId, paymentChannel: body.paymentChannel, paymentReference: body.paymentReference });
     if (!res2.ok) return send(res, 400, res2);
-    return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Pay via /invoice and ask the admin to mark the worker paid.' });
+    recordProductEvent('worker_created');
+    return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Review payment options at /invoice and ask the admin to verify payment.' });
   }
 
   // API: create worker from template (used by Builder "new" flow)
@@ -1940,10 +3081,12 @@ const server = http.createServer(async (req, res) => {
     if (!res2.ok) return send(res, 400, res2);
     const updated = workers.updateWorker(tenantId, res2.workerId, {
       name: body.name, persona: body.persona, tasks: body.tasks,
-      knowledge: body.knowledge, tools: body.tools, agentMode: body.agentMode,
-      llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
+      knowledge: body.knowledge,
+      knowledgeReviewed: body.knowledgeReviewed === true,
+      tools: body.tools, agentMode: body.agentMode,
     });
     if (!updated.ok) return send(res, 500, { error: 'update_failed', reason: updated.error, workerId: res2.workerId });
+    recordProductEvent('worker_created');
     return send(res, 200, { ok: true, workerId: res2.workerId });
   }
 
@@ -1955,46 +3098,43 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/account') {
-    const auth = req.headers['authorization'] || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
-    const check = token ? validateApiKey(token) : { valid: false };
-    if (!check.valid) return send(res, 401, { error: 'auth_required' });
+    const auth = authenticateTenant(req, { consumeKey: false });
+    if (!auth) return send(res, 401, { error: 'auth_required' });
+    const account = tenantAccountSnapshot(auth.tenantId);
     let totalMessages = 0, totalLeads = 0, totalHotLeads = 0, totalEscalations = 0;
     let workerCount = 0, liveWorkerCount = 0;
     try {
-      const db = workers.getTenantDb(check.tenantId);
-      workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
-      liveWorkerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active' AND paused=0`).get()?.c ?? 0;
-      totalMessages = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
-      totalLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
-      totalHotLeads = db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE score>=7`).get()?.c ?? 0;
-      totalEscalations = db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
+      const tenantDb = workers.getTenantDb(auth.tenantId);
+      workerCount = tenantDb.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+      liveWorkerCount = tenantDb.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active' AND paused=0`).get()?.c ?? 0;
+      totalMessages = tenantDb.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+      totalLeads = tenantDb.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+      totalHotLeads = tenantDb.prepare(`SELECT COUNT(*) AS c FROM leads WHERE score>=7`).get()?.c ?? 0;
+      totalEscalations = tenantDb.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE status='open'`).get()?.c ?? 0;
     } catch {}
     return send(res, 200, {
-      keyId: check.keyId,
-      tenantId: check.tenantId,
-      label: check.label,
-      plan: check.plan,
-      callsUsed: check.calls_used,
-      callsLimit: check.calls_limit,
+      ...account,
+      authMethod: auth.authMethod,
+      embedProtection: embedAbuseStatus(),
       stats: { workerCount, liveWorkerCount, totalMessages, totalLeads, totalHotLeads, totalEscalations },
-    });
+    }, { 'cache-control': 'no-store' });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/account/rotate-key') {
-    const auth = req.headers['authorization'] || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
-    if (!token.startsWith('sk_')) return send(res, 401, { error: 'auth_required' });
-    const rotated = rotateApiKey(token);
-    if (!rotated.valid) return send(res, 401, { error: 'auth_required', reason: rotated.reason });
+    const auth = authenticateTenant(req, { consumeKey: false });
+    if (!auth) return send(res, 401, { error: 'auth_required' });
+    const rotated = auth.authMethod === 'api_key'
+      ? rotateApiKey(auth.token)
+      : replaceTenantKey({ tenantId: auth.tenantId, label: auth.account?.businessName });
+    if (!(rotated.valid || rotated.ok)) return send(res, 401, { error: 'auth_required', reason: rotated.reason || rotated.error });
     return send(res, 200, {
       ok: true,
       key: rotated.key,
       keyId: rotated.id,
       tenantId: rotated.tenantId,
       oldKeyId: rotated.oldKeyId,
-      note: 'Replace your stored key with this new key. The old key has been revoked.',
-    });
+      note: 'This API key is shown once. Store it in a password manager; the browser session is unchanged.',
+    }, { 'cache-control': 'no-store' });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/workers/tools') {
@@ -2013,6 +3153,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, {
       worker: w,
       health: workers.getWorkerHealth(w),
+      readiness: workers.getWorkerReadiness(w),
       suggestions: workers.getTemplateSuggestions(w.templateId),
     });
   }
@@ -2035,6 +3176,7 @@ const server = http.createServer(async (req, res) => {
     }
     const res2 = workers.updateWorker(tenantId, getWorkerMatch[1], body);
     if (!res2.ok) return send(res, res2.error === 'not_found' ? 404 : 400, res2);
+    if (body.knowledgeReviewed === true) recordProductEvent('setup_reviewed');
     return send(res, 200, { ok: true });
   }
 
@@ -2044,7 +3186,8 @@ const server = http.createServer(async (req, res) => {
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
     const ok = workers.deleteWorker(tenantId, getWorkerMatch[1]);
     if (!ok) return send(res, 404, { error: 'not_found' });
-    return send(res, 200, { ok: true });
+    const globalCleanup = deleteWorkerGlobalArtifacts(tenantId, getWorkerMatch[1]);
+    return send(res, 200, { ok: true, deleted: globalCleanup });
   }
 
   // API: list messages
@@ -2075,14 +3218,16 @@ const server = http.createServer(async (req, res) => {
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
     if (rejectOversizedMessage(res, body)) return;
-    if (!body.testMode && !body.demoMode) {
-      const pre = workers.getWorker(tenantId, chatStreamMatch[1]);
-      if (!pre) return send(res, 404, { error: 'not_found' });
-      const prePaid = pre.paidUntil && new Date(pre.paidUntil) > new Date();
-      if (pre.status !== 'active' || !prePaid || pre.paused) {
-        return send(res, 402, { error: 'not_paid_or_paused', message: 'worker is paused or not paid', paused: !!pre.paused, paidUntil: pre.paidUntil, status: pre.status });
-      }
+    const pre = workers.getWorker(tenantId, chatStreamMatch[1]);
+    if (!pre) return send(res, 404, { error: 'not_found' });
+    if (!pre.isActive) {
+      return send(res, 402, { error: 'not_paid_or_paused', message: 'worker is paused or not paid', paused: !!pre.paused, paidUntil: pre.paidUntil, status: pre.status });
     }
+    const quota = consumeTenantChat(tenantId);
+    if (!quota.ok) return send(res, 402, {
+      error: 'quota_exceeded', used: quota.used, limit: quota.limit, period: quota.period,
+      messageHe: 'מכסת השיחות החודשית הסתיימה.',
+    });
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache',
@@ -2097,9 +3242,13 @@ const server = http.createServer(async (req, res) => {
         workerId: chatStreamMatch[1],
         userMessage: body.message,
         customerId: body.customerId ?? '',
-        testMode: !!body.testMode,
-        demoMode: !!body.demoMode,
+        requestId: requestIdFor(req, `dashboard-stream:${tenantId}:${chatStreamMatch[1]}`),
+        testMode: false,
+        demoMode: false,
+        actor: 'owner',
+        channel: 'dashboard',
       }, writeSse);
+      recordProductEvent('chat_succeeded');
     } catch (e) {
       writeSse('error', { message: 'שגיאה בשליחה — נסו שוב בעוד רגע.' });
     }
@@ -2122,14 +3271,28 @@ const server = http.createServer(async (req, res) => {
       if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
       if (rejectOversizedMessage(res, body)) return;
       const workerId = chatMatch[1];
+      const pre = workers.getWorker(tenantId, workerId);
+      if (!pre) return send(res, 404, { error: 'not_found' });
+      if (!pre.isActive) {
+        return send(res, 402, { error: 'not_paid_or_paused', message: 'worker is paused or not paid', paused: !!pre.paused, paidUntil: pre.paidUntil, status: pre.status });
+      }
+      const quota = consumeTenantChat(tenantId);
+      if (!quota.ok) return send(res, 402, {
+        error: 'quota_exceeded', used: quota.used, limit: quota.limit, period: quota.period,
+        messageHe: 'מכסת השיחות החודשית הסתיימה.',
+      });
       const res2 = await withChatLock(workerId, () => workers.chatWithWorker({
         tenantId,
         workerId,
         userMessage: body.message,
         customerId: body.customerId ?? '',
-        testMode: !!body.testMode,
-        demoMode: !!body.demoMode,
+        requestId: requestIdFor(req, `dashboard:${tenantId}:${workerId}`),
+        testMode: false,
+        demoMode: false,
+        actor: 'owner',
+        channel: 'dashboard',
       }));
+      if (res2?.ok !== false && Number(res2?.status ?? 200) < 400) recordProductEvent('chat_succeeded');
       return send(res, res2.status ?? 200, res2);
     } catch (e) {
       console.error('[chat-error]', e);
@@ -2147,7 +3310,22 @@ const server = http.createServer(async (req, res) => {
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
     if (!body.message || typeof body.message !== 'string') return send(res, 400, { error: 'message_required' });
     if (rejectOversizedMessage(res, body)) return;
-    const res2 = await workers.chatWithWorker({ tenantId, workerId: testAgentMatch[1], userMessage: body.message, customerId: body.customerId ?? 'test_customer', testMode: true });
+    if (!workers.getWorker(tenantId, testAgentMatch[1])) return send(res, 404, { error: 'not_found' });
+    const quota = consumeTenantChat(tenantId);
+    if (!quota.ok) return send(res, 402, {
+      error: 'quota_exceeded', used: quota.used, limit: quota.limit, period: quota.period,
+      messageHe: 'מכסת השיחות החודשית הסתיימה.',
+    });
+    const res2 = await workers.chatWithWorker({
+      tenantId,
+      workerId: testAgentMatch[1],
+      userMessage: body.message,
+      customerId: body.customerId ?? 'test_customer',
+      testMode: true,
+      demoMode: true,
+      actor: 'owner',
+      channel: 'dashboard',
+    });
     return send(res, res2.status ?? 200, res2);
   }
 
@@ -2176,7 +3354,14 @@ const server = http.createServer(async (req, res) => {
     if (!workerId) return send(res, 400, { error: 'workerId_required' });
     const worker = workers.getWorker(tenantId, workerId);
     if (!worker) return send(res, 404, { error: 'not_found' });
-    const cfg = buildPaddleCheckoutConfig({ workerId, tenantId, templateId: worker.templateId });
+    const readiness = workers.getWorkerReadiness(worker);
+    if (!readiness.ready) return send(res, 409, {
+      error: 'worker_not_ready_for_checkout',
+      messageHe: 'לפני התשלום צריך להשלים ולאשר את פרטי העסק.',
+      readiness,
+    });
+    const cfg = await buildPaddleCheckoutConfig({ workerId, tenantId, templateId: worker.templateId });
+    if (cfg.ok) recordProductEvent('checkout_opened');
     return send(res, cfg.ok ? 200 : 400, cfg);
   }
 
@@ -2202,26 +3387,50 @@ const server = http.createServer(async (req, res) => {
       note: body.note,
       amountIls: tpl?.rentPriceIls ?? 0,
     });
+    recordProductEvent('activation_requested');
     const verify = tryAutoVerifyActivationProof({ reference: body.reference, channel: body.channel });
     if (verify.verified) {
-      const activated = autoActivateWorker({
-        workerId: worker.id,
-        tenantId,
-        channel: body.channel || verify.channel,
+      const ledgerProvider = paymentLedgerProvider(body.channel || verify.channel);
+      const ledger = ledgerProvider ? claimPaymentReference({
+        provider: ledgerProvider,
         reference: body.reference,
-        days: DEFAULT_RENT_DAYS,
-        amountIls: tpl?.rentPriceIls ?? 0,
-        source: 'auto-verify-stub',
-      });
+        tenantId,
+        workerId: worker.id,
+      }) : { ok: true };
+      if (!ledger.ok) {
+        return send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+      }
+      const activated = ledger.replay && ledger.entitled
+        ? existingPaymentEntitlement({ tenantId, workerId: worker.id })
+        : autoActivateWorker({
+          workerId: worker.id,
+          tenantId,
+          channel: body.channel || verify.channel,
+          reference: body.reference,
+          days: DEFAULT_RENT_DAYS,
+          amountIls: tpl?.rentPriceIls ?? 0,
+          source: 'auto-verify-stub',
+        });
       if (activated.ok) {
+        if (ledgerProvider) markPaymentReferenceEntitled({
+          provider: ledgerProvider,
+          reference: body.reference,
+          tenantId,
+          workerId: worker.id,
+        });
         markActivationRequestReviewed(req2.id, 'approved');
+        const pendingSetup = activated.activationPendingSetup === true;
         return send(res, 200, {
           ok: true,
           requestId: req2.id,
-          status: 'approved',
-          autoActivated: true,
+          status: pendingSetup ? 'paid_pending_setup' : 'approved',
+          autoActivated: activated.autoActivated === true,
+          activationPendingSetup: pendingSetup,
+          readiness: activated.readiness,
           paidUntil: activated.paidUntil,
-          message: 'Payment auto-verified — worker is now active.',
+          message: pendingSetup
+            ? 'Payment verified. Complete and approve the business knowledge before the worker can serve customers.'
+            : 'Payment auto-verified — worker is now active.',
         });
       }
     }
@@ -2258,12 +3467,8 @@ const server = http.createServer(async (req, res) => {
     const tenantId = requireAuth(req);
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
     const leads = workers.getLeads(tenantId, leadsCsvMatch[1]);
-    const escCsv = (v) => {
-      const s = String(v ?? '');
-      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
     const header = 'id,full_name,company,phone,email,notes,created_at\n';
-    const body = leads.map((r) => [r.id, r.full_name, r.company, r.phone, r.email, r.notes, r.created_at].map(escCsv).join(',')).join('\n');
+    const body = leads.map((r) => csvRow([r.id, r.full_name, r.company, r.phone, r.email, r.notes, r.created_at])).join('\n');
     return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
   }
 
@@ -2279,13 +3484,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && escCsvMatch) {
     const tenantId = requireAuth(req);
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
-    const escCsv = (v) => {
-      const s = String(v ?? '');
-      return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
     const escalations = workers.getEscalations(tenantId, escCsvMatch[1]);
     const header = 'id,urgency,reason,status,created_at\n';
-    const body = escalations.map((r) => [r.id, r.urgency, r.reason, r.status, r.created_at].map(escCsv).join(',')).join('\n');
+    const body = escalations.map((r) => csvRow([r.id, r.urgency, r.reason, r.status, r.created_at])).join('\n');
     return send(res, 200, header + body, { 'content-type': 'text/csv; charset=utf-8' });
   }
 
@@ -2355,13 +3556,13 @@ const server = http.createServer(async (req, res) => {
     return res.end(workers.formatWeeklyDigestHtml(digest));
   }
 
-  const waRouteMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/whatsapp-route$/);
-  if (req.method === 'POST' && waRouteMatch) {
-    const tenantId = requireAuth(req);
-    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+  if (req.method === 'POST' && url.pathname === '/api/admin/whatsapp-route') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
     const { text: raw } = await readBody(req, BODY_TINY);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
-    const workerId = waRouteMatch[1];
+    const tenantId = cleanText(body.tenantId, 100);
+    const workerId = cleanText(body.workerId, 100);
+    if (!tenantId || !workerId) return send(res, 400, { error: 'tenant_and_worker_required' });
     const w = workers.getWorker(tenantId, workerId);
     if (!w) return send(res, 404, { error: 'not_found' });
     const route = registerWhatsAppRoute(db, {
@@ -2371,8 +3572,41 @@ const server = http.createServer(async (req, res) => {
       workerId,
       provider: body.provider || 'meta',
     });
-    if (!route.ok) return send(res, 400, route);
-    return send(res, 200, { ok: true, phoneKey: route.phoneKey, webhookUrl: `${resolveBaseUrl(req)}/api/webhooks/whatsapp` });
+    if (!route.ok) {
+      recordAdminAudit(req, {
+        action: 'whatsapp_route_provision',
+        targetType: 'worker',
+        targetId: workerId,
+        status: route.error === 'route_already_claimed' ? 'conflict' : 'rejected',
+        metadata: { tenantId, provider: body.provider || 'meta', error: route.error },
+      });
+      return send(res, route.status || 400, { ok: false, error: route.error });
+    }
+    recordAdminAudit(req, {
+      action: 'whatsapp_route_provision',
+      targetType: 'worker',
+      targetId: workerId,
+      status: route.idempotent ? 'idempotent' : 'created',
+      metadata: { tenantId, provider: body.provider || 'meta', phoneKey: route.phoneKey },
+    });
+    return send(res, 200, {
+      ok: true,
+      phoneKey: route.phoneKey,
+      idempotent: route.idempotent,
+      webhookUrl: `${resolveBaseUrl(req)}/api/webhooks/whatsapp`,
+    });
+  }
+
+  const waRouteMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/whatsapp-route$/);
+  if (req.method === 'POST' && waRouteMatch) {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    if (!workers.getWorker(tenantId, waRouteMatch[1])) return send(res, 404, { error: 'not_found' });
+    return send(res, 403, {
+      ok: false,
+      error: 'admin_provisioning_required',
+      messageHe: 'נתיב WhatsApp נכנס מוגדר רק לאחר אימות בעלות על ידי מנהל המערכת.',
+    });
   }
 
   const outboxMatch = url.pathname.match(/^\/api\/workers\/([A-Za-z0-9_]+)\/outbox$/);
@@ -2407,6 +3641,83 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/admin/summary') {
     if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
     return send(res, 200, { summary: workers.adminSummary() });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/product-metrics') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { metrics: productMetrics(url.searchParams.get('days') ?? 30) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/operations') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, {
+      at: new Date().toISOString(),
+      readiness: readinessStatus(),
+      backup: backupStatus(),
+      retention: workers.getRetentionSweepStatus(),
+      workerDirectory: workers.workerDirectoryStatus(),
+      whatsapp: whatsappConfigStatus(),
+      embedProtection: embedAbuseStatus({ includeCounters: true }),
+      payment: { ...paymentConfigStatus(), paddle: paddleConfigStatus() },
+      limits: {
+        monthlyChat: DEFAULT_MONTHLY_CALL_LIMIT,
+        monthlyProviderCalls: DEFAULT_MONTHLY_PROVIDER_CALL_LIMIT,
+        customerDataRetentionDays: Number(process.env.CUSTOMER_DATA_RETENTION_DAYS ?? 180),
+        productAnalyticsRetentionDays: PRODUCT_ANALYTICS_RETENTION_DAYS,
+      },
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/set-tenant-chat-limit') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const tenantId = cleanText(body.tenantId, 100);
+    const limit = Number(body.limit);
+    if (!tenantId) return send(res, 400, { error: 'tenantId_required' });
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000_000) {
+      return send(res, 400, { error: 'invalid_limit', min: 1, max: 1_000_000 });
+    }
+    const result = db.prepare(`UPDATE api_keys SET calls_limit = ? WHERE tenant_id = ?`).run(limit, tenantId);
+    if (Number(result.changes ?? 0) === 0) return send(res, 404, { error: 'unknown_tenant' });
+    const usage = getTenantChatUsage(tenantId);
+    recordAdminAudit(req, {
+      action: 'admin_set_tenant_chat_limit',
+      targetType: 'tenant',
+      targetId: tenantId,
+      metadata: { limit, used: usage.used, period: usage.period },
+    });
+    return send(res, 200, { ok: true, tenantId, ...usage });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/set-tenant-provider-limit') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const tenantId = cleanText(body.tenantId, 100);
+    const limit = Number(body.limit);
+    if (!tenantId) return send(res, 400, { error: 'tenantId_required' });
+    if (!isRegisteredTenantId(tenantId)) return send(res, 404, { error: 'unknown_tenant' });
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000_000) {
+      return send(res, 400, { error: 'invalid_limit', min: 1, max: 1_000_000 });
+    }
+    db.prepare(
+      `INSERT INTO tenant_provider_limits (tenant_id, calls_limit, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET
+         calls_limit = excluded.calls_limit,
+         updated_at = excluded.updated_at`
+    ).run(tenantId, limit, new Date().toISOString());
+    const usage = getTenantProviderUsage(tenantId);
+    recordAdminAudit(req, {
+      action: 'admin_set_tenant_provider_limit',
+      targetType: 'tenant',
+      targetId: tenantId,
+      metadata: { limit, used: usage.used, period: usage.period },
+    });
+    return send(res, 200, { ok: true, tenantId, ...usage });
   }
 
   if (req.method === 'GET' && url.pathname.startsWith('/api/admin/worker-health/')) {
@@ -2453,12 +3764,37 @@ const server = http.createServer(async (req, res) => {
       });
       return send(res, 400, activationCheck);
     }
-    const res2 = workers.adminMarkPaid({
-      workerId: body.workerId, tenantId: body.tenantId,
-      days: Number(body.days) || DEFAULT_RENT_DAYS,
-      paymentChannel: body.paymentChannel, paymentReference: body.paymentReference,
-      amountIls: body.amountIls,
-    });
+    if (!workers.getWorker(body.tenantId, body.workerId)) {
+      return send(res, 404, { error: 'worker_not_found' });
+    }
+    const ledgerProvider = paymentLedgerProvider(body.paymentChannel);
+    if (ledgerProvider && !String(body.paymentReference ?? '').trim()) {
+      return send(res, 400, { error: 'payment_reference_required' });
+    }
+    const ledger = ledgerProvider ? claimPaymentReference({
+      provider: ledgerProvider,
+      reference: body.paymentReference,
+      tenantId: body.tenantId,
+      workerId: body.workerId,
+    }) : { ok: true };
+    if (!ledger.ok) {
+      recordAdminAudit(req, {
+        action: 'admin_mark_worker_paid',
+        targetType: 'worker',
+        targetId: body.workerId,
+        status: 'failed',
+        metadata: { tenantId: body.tenantId, paymentChannel: body.paymentChannel, error: ledger.error },
+      });
+      return send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+    }
+    const res2 = ledger.replay && ledger.entitled
+      ? existingPaymentEntitlement({ tenantId: body.tenantId, workerId: body.workerId })
+      : workers.adminMarkPaid({
+        workerId: body.workerId, tenantId: body.tenantId,
+        days: Number(body.days) || DEFAULT_RENT_DAYS,
+        paymentChannel: body.paymentChannel, paymentReference: body.paymentReference,
+        amountIls: body.amountIls,
+      });
     if (!res2.ok) {
       recordAdminAudit(req, {
         action: 'admin_mark_worker_paid',
@@ -2469,6 +3805,12 @@ const server = http.createServer(async (req, res) => {
       });
       return send(res, 400, res2);
     }
+    if (ledgerProvider) markPaymentReferenceEntitled({
+      provider: ledgerProvider,
+      reference: body.paymentReference,
+      tenantId: body.tenantId,
+      workerId: body.workerId,
+    });
     markActivationRequestReviewed(body.activationRequestId, 'approved');
     recordAdminAudit(req, {
       action: 'admin_mark_worker_paid',
@@ -2482,6 +3824,7 @@ const server = http.createServer(async (req, res) => {
         amountIls: body.amountIls,
         activationRequestId: body.activationRequestId,
         paidUntil: res2.paidUntil,
+        activationPendingSetup: res2.activationPendingSetup === true,
       },
     });
     return send(res, 200, res2);
@@ -2559,15 +3902,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/integrations/oauth/start') {
-    const tenantId = requireAuth(req);
-    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    // OAuth account linking is browser-owner only. The unsafe start request
+    // needs the first-party CSRF header, and its state is bound to this exact
+    // opaque session rather than to a transferable tenant API key.
+    const ownerSession = authenticateOwnerSession(db, req, { requireCsrf: true });
+    if (!ownerSession.ok || !getOwnerAccount(db, ownerSession.tenantId)) {
+      return send(res, 401, { error: 'owner_session_required' });
+    }
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
     if (!body.type) return send(res, 400, { error: 'type_required' });
-    const result = integrations.createOAuthStart(tenantId, {
+    const result = integrations.createOAuthStart(ownerSession.tenantId, {
       type: body.type,
       returnPath: body.returnPath || '/marketplace',
       extra: body.extra ?? {},
+      sessionTokenHash: ownerSession.tokenHash,
     });
     return send(res, result.ok ? 200 : 400, result);
   }
@@ -2576,7 +3925,19 @@ const server = http.createServer(async (req, res) => {
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
     const oauthError = url.searchParams.get('error');
-    const result = await integrations.handleOAuthCallback({ code, state, error: oauthError });
+    // A provider redirect cannot carry our custom CSRF header. SameSite=Lax
+    // permits the top-level cookie, while the one-time state is additionally
+    // bound to that exact still-valid owner session and tenant.
+    const ownerSession = authenticateOwnerSession(db, req, { requireCsrf: false });
+    const result = ownerSession.ok && getOwnerAccount(db, ownerSession.tenantId)
+      ? await integrations.handleOAuthCallback({
+          code,
+          state,
+          error: oauthError,
+          tenantId: ownerSession.tenantId,
+          sessionTokenHash: ownerSession.tokenHash,
+        })
+      : { ok: false, error: 'owner_session_required', messageHe: 'יש להתחבר מחדש לחשבון העסק.' };
     if (!result.ok) {
       const failPath = '/marketplace?oauth=error&msg=' + encodeURIComponent(result.messageHe || result.error || 'oauth_failed');
       res.writeHead(302, { location: failPath });
@@ -2588,22 +3949,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const validateIntegrationConfigUrls = async (type, rawConfig) => {
+    if (rawConfig == null) return { ok: true, config: {} };
+    if (typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+      return { ok: false, error: 'invalid_integration_config' };
+    }
+
+    const config = { ...rawConfig };
+    const typeDef = integrations.getIntegrationType(type);
+    const urlFields = new Set(
+      (typeDef?.fields ?? []).filter((field) => field.type === 'url').map((field) => field.key),
+    );
+    // Some supported execution paths use legacy/provider aliases that are not
+    // rendered in the current catalog. Validate them too if a tenant submits
+    // them, including webhook and provider base URLs.
+    for (const key of Object.keys(config)) {
+      if (/(?:url|uri|endpoint|link|webhook)$/i.test(key)) urlFields.add(key);
+    }
+
+    for (const field of urlFields) {
+      const value = config[field];
+      if (value === undefined || value === null || String(value).trim() === '') continue;
+      const checked = await validatePublicHttpUrl(value);
+      if (!checked.ok) {
+        return { ok: false, error: 'unsafe_url', reason: checked.error, field };
+      }
+      config[field] = checked.url;
+    }
+    return { ok: true, config };
+  };
+
   if (req.method === 'POST' && url.pathname === '/api/integrations/connect') {
     const tenantId = requireAuth(req);
     if (!tenantId) return send(res, 401, { error: 'auth_required' });
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
     if (!body.type) return send(res, 400, { error: 'type_required' });
-    const userConfig = body.config ?? {};
-    if (userConfig.url) {
-      const checked = await validatePublicHttpUrl(userConfig.url);
-      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
+    if (body.type === 'whatsapp' && body.workerId && !workers.getWorker(tenantId, body.workerId)) {
+      return send(res, 404, { error: 'worker_not_found' });
     }
-    if (userConfig.bookingLink) {
-      const checked = await validatePublicHttpUrl(userConfig.bookingLink);
-      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
-      userConfig.bookingLink = checked.url;
-    }
+    const urlValidation = await validateIntegrationConfigUrls(body.type, body.config ?? {});
+    if (!urlValidation.ok) return send(res, 400, urlValidation);
+    const userConfig = urlValidation.config;
     if (body.type === 'mcp' && userConfig.preset) {
       const preset = MCP_PRESETS[userConfig.preset];
       if (!preset) return send(res, 400, { error: 'unknown_mcp_preset' });
@@ -2622,32 +4009,21 @@ const server = http.createServer(async (req, res) => {
     if (!result.ok) return send(res, 400, result);
     const list = integrations.listIntegrations(tenantId);
     const connected = list.find((i) => i.id === result.id);
-    if (body.type === 'whatsapp' && body.workerId) {
-      const phoneNumberId = userConfig.phoneNumberId || connected?.config?.phoneNumberId;
-      const twilioTo = userConfig.twilioFrom || connected?.config?.twilioFrom;
-      if (phoneNumberId || twilioTo) {
-        registerWhatsAppRoute(db, {
-          phoneNumberId,
-          twilioTo,
-          tenantId,
-          workerId: body.workerId,
-          provider: userConfig.provider || connected?.config?.provider || 'meta',
-        });
-      } else if (process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID) {
-        registerWhatsAppRoute(db, {
-          phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID,
-          tenantId,
-          workerId: body.workerId,
-          provider: 'meta',
-        });
-      }
-    }
-    return send(res, result.updated ? 200 : 201, { ok: true, integration: connected, id: result.id, hookUrl: connected?.config?.hookUrl });
+    return send(res, result.updated ? 200 : 201, {
+      ok: true,
+      integration: connected,
+      id: result.id,
+      hookUrl: connected?.config?.hookUrl,
+      ...(body.type === 'whatsapp' && body.workerId
+        ? { inboundRoute: { configured: false, requiresAdminProvisioning: true } }
+        : {}),
+    });
   }
 
   const hookMatch = url.pathname.match(/^\/api\/hooks\/([^/]+)\/([a-f0-9]+)$/);
   if (req.method === 'POST' && hookMatch) {
     const [, tenantId, secret] = hookMatch;
+    if (!isRegisteredTenantId(tenantId)) return send(res, 403, { error: 'invalid_hook' });
     const row = integrations.getIntegrationsByType(tenantId, 'webhook')[0];
     if (!row || row.config?.secret !== secret) return send(res, 403, { error: 'invalid_hook' });
     const { text: raw } = await readBody(req, BODY_SMALL);
@@ -2672,18 +4048,12 @@ const server = http.createServer(async (req, res) => {
     const { text: raw } = await readBody(req, BODY_SMALL);
     let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
     if (!body.type) return send(res, 400, { error: 'type_required' });
-    if (body.config?.url) {
-      const checked = await validatePublicHttpUrl(body.config.url);
-      if (!checked.ok) return send(res, 400, { error: 'unsafe_url', reason: checked.error });
-    }
-    if (body.type === 'mcp' && body.config?.url) {
-      const checked = await validatePublicHttpUrl(body.config.url);
-      if (!checked.ok) return send(res, 400, { error: 'unsafe_mcp_url', reason: checked.error });
-    }
+    const urlValidation = await validateIntegrationConfigUrls(body.type, body.config ?? {});
+    if (!urlValidation.ok) return send(res, 400, urlValidation);
     const result = integrations.connectIntegration(tenantId, {
       type: body.type,
       label: body.label,
-      config: body.config ?? {},
+      config: urlValidation.config,
       meta: body.meta,
     });
     if (!result.ok) return send(res, 400, result);
@@ -2734,6 +4104,7 @@ const server = http.createServer(async (req, res) => {
     const pathTenantId = parts[3];
     const filename = parts[4];
     if (!pathTenantId || !filename) return send(res, 400, { error: 'bad_request' });
+    if (!isRegisteredTenantId(pathTenantId)) return send(res, 404, { error: 'not_found' });
     const filePath = workers.resolveMediaFile(pathTenantId, filename);
     if (!filePath) return send(res, 404, { error: 'not_found' });
     try {
@@ -2794,34 +4165,47 @@ const server = http.createServer(async (req, res) => {
   }
 
   return send(res, 404, { error: 'not_found', path: url.pathname });
+  } catch (error) {
+    const safePath = String(req.url ?? '').split('?')[0].slice(0, 300);
+    console.error('[request-error]', req.method, safePath, error instanceof Error ? error.stack : error);
+    if (!res.headersSent) return send(res, 500, { error: 'internal_error' });
+    if (!res.writableEnded) res.end();
+  }
 });
 
 workers.setServerLlmConfig({
   apiKey: LLM_API_KEY, provider: LLM_PROVIDER,
   model: LLM_MODEL, baseUrl: LLM_BASE_URL,
+  reserveProviderCall: reserveTenantProviderCall,
 });
 console.log(`${AGENT_NAME} — platform-provided LLM (no BYOK)`);
 if (LLM_API_KEY) console.log(`  LLM: ${LLM_PROVIDER} / ${LLM_MODEL} (configured)`);
 else console.warn(`  WARN: no LLM_API_KEY set — workers will use mock replies`);
 
+// The initial scan is a bounded startup task, never work performed on behalf
+// of a public HTTP request. Subsequent requests read the materialized object.
+workers.initializeWorkerDirectory();
+refreshPublicMarketplaceStats();
+
 function startServer() {
+  setInterval(refreshPublicMarketplaceStats, PUBLIC_STATS_REFRESH_MS).unref?.();
   server.listen(PORT, () => {
     console.log(`${AGENT_NAME} listening on ${PUBLIC_BASE_URL}`);
     console.log(`  Marketplace: ${PUBLIC_BASE_URL}/marketplace`);
     console.log(`  Payment channels:`);
     if (PAYPAL_ME) console.log(`    - PayPal.me/${PAYPAL_ME}`);
-    if (BUY_ME_A_COFFEE) console.log(`    - Buy Me a Coffee: ${BUY_ME_A_COFFEE}`);
-    if (KO_FI) console.log(`    - Ko-fi: ${KO_FI}`);
     if (BIT_PHONE) console.log(`    - Bit: ${BIT_PHONE}`);
-    if (GITHUB_SPONSORS) console.log(`    - GitHub Sponsors: ${GITHUB_SPONSORS}`);
-    if (GUMROAD_URL) console.log(`    - Gumroad: ${GUMROAD_URL}`);
     if (BANK_ACCOUNT) console.log(`    - Bank transfer: ${BANK_NAME} branch ${BANK_BRANCH} acct ${BANK_ACCOUNT}`);
     console.log(`  Admin: ${ADMIN_TOKEN ? 'ENABLED' : 'DISABLED (set ADMIN_TOKEN to enable)'}`);
-    console.log(`  Invoice: ${PUBLIC_BASE_URL}/invoice`);
+    console.log(`  Payment info: ${PUBLIC_BASE_URL}/invoice`);
   });
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { console.log(`\n${sig}, shutting down`); server.close(() => { db.close(); process.exit(0); }); });
+    process.on(sig, () => {
+      console.log(`\n${sig}, shutting down`);
+      retentionScheduler.stop();
+      server.close(() => { db.close(); process.exit(0); });
+    });
   }
 }
 

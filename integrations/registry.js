@@ -226,9 +226,49 @@ export function listCatalog() {
   }));
 }
 
+/**
+ * Return the canonical Shopify-owned shop hostname, or an empty string when
+ * the tenant input is not a single-store `*.myshopify.com` host.  The
+ * normalization deliberately drops an optional http(s) wrapper because every
+ * server-side Shopify request is rebuilt with HTTPS after this check.
+ */
+export function normalizeShopifyShopHost(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw || /[\u0000-\u001f\u007f]/.test(raw)) return '';
+
+  let parsed;
+  try {
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+    parsed = new URL(hasScheme ? raw : `https://${raw}`);
+  } catch {
+    return '';
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username
+      || parsed.password
+      || parsed.port
+      || (parsed.pathname && parsed.pathname !== '/')
+      || parsed.search
+      || parsed.hash) {
+    return '';
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  const shopLabel = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+  return new RegExp(`^${shopLabel}\\.myshopify\\.com$`).test(hostname) ? hostname : '';
+}
+
 export function validateConfig(typeId, config = {}) {
   const def = getIntegrationType(typeId);
   if (!def) return { ok: false, error: 'unknown_integration_type' };
+
+  if (typeId === 'shopify') {
+    const shopDomain = normalizeShopifyShopHost(config.shopDomain ?? config.shop);
+    if (!shopDomain) return { ok: false, error: 'invalid_shop_domain', field: 'shopDomain' };
+    config = { ...config, shopDomain };
+    delete config.shop;
+  }
 
   // OAuth / platform-generated configs skip manual field validation
   if (config.authMethod === 'oauth' || config.authMethod === 'generated' || config.authMethod === 'platform') {

@@ -6,6 +6,7 @@ node_modules/
 *.log
 .DS_Store
 data/
+backups/
 server.out
 server.err
 landing_raw.txt
@@ -14,5 +15,9 @@ _check.cjs
 .codex-audit/**/*.db
 .gh-auth.log
 .vercel-auth.log
+
+# Local agent/security-scan state
+.claude/
+.claude-flow/
 
 .vercel

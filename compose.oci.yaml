@@ -1,0 +1,71 @@
+name: ai-workers
+
+# Zero-cost hosting target: one Oracle Cloud Always Free A1 VM.
+# Keep the OCI account on Free Tier and create only resources explicitly marked
+# "Always Free Eligible". This file itself does not provision Oracle resources.
+services:
+  app:
+    build:
+      context: .
+      args:
+        INSTALL_TUNNEL: "0"
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "8765"
+      PUBLIC_BASE_URL: "https://${AI_WORKERS_DOMAIN:?Set AI_WORKERS_DOMAIN in .env}"
+      DATA_DIR: /app/data
+      DB_PATH: /app/data/earnings.db
+      TENANTS_DIR: /app/data/tenants
+      REQUIRE_PERSISTENT_VOLUME: "1"
+      TRUST_PROXY_HEADERS: "1"
+      ALLOW_PRIVATE_NETWORK_URLS: "0"
+      PAYMENT_AUTO_VERIFY: "0"
+      TRIAL_DAYS: "0"
+      EMBED_ALLOW_PUBLIC: ${EMBED_ALLOW_PUBLIC:-0}
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+      EMBED_SESSION_TTL_MINUTES: ${EMBED_SESSION_TTL_MINUTES:-60}
+      MONTHLY_CHAT_LIMIT: ${MONTHLY_CHAT_LIMIT:-2000}
+      MONTHLY_PROVIDER_CALL_LIMIT: ${MONTHLY_PROVIDER_CALL_LIMIT:-2000}
+      OWNER_SESSION_TTL_DAYS: ${OWNER_SESSION_TTL_DAYS:-30}
+      PRODUCT_ANALYTICS: ${PRODUCT_ANALYTICS:-1}
+      PRODUCT_ANALYTICS_RETENTION_DAYS: ${PRODUCT_ANALYTICS_RETENTION_DAYS:-90}
+      CUSTOMER_DATA_RETENTION_DAYS: ${CUSTOMER_DATA_RETENTION_DAYS:-180}
+      LLM_REQUEST_TIMEOUT_MS: ${LLM_REQUEST_TIMEOUT_MS:-30000}
+    expose:
+      - "8765"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      AI_WORKERS_DOMAIN: "${AI_WORKERS_DOMAIN:?Set AI_WORKERS_DOMAIN in .env}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/oci/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

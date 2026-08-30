@@ -29,8 +29,6 @@ export function getAutoToolNamesForTenant(tenantId) {
 }
 
 export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
-  const { validatePublicHttpUrl, pinnedLookup } = deps;
-
   const defs = [
     {
       name: 'sync_lead_to_crm',
@@ -49,7 +47,7 @@ export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
       },
       handler: async (args, ctx) => {
         const crmType = firstCrmType(ctx.tenantId);
-        if (!crmType) return { result: 'No CRM connected. Use create_crm_note or export_leads_csv instead.' };
+        if (!crmType) return { ok: false, error: 'crm_not_connected', result: 'No CRM is connected; the lead was not synced.' };
         const config = getFirstIntegrationConfig(ctx.tenantId, crmType);
         const res = await runAction(crmType, 'sync_lead', args, config, ctx);
         return {
@@ -72,12 +70,14 @@ export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
       handler: async (args, ctx) => {
         const config = getFirstIntegrationConfig(ctx.tenantId, 'google_calendar') || {};
         const res = await runAction('google_calendar', 'check_availability', args, config, ctx);
-        if (!res.ok) return { result: 'Calendar not configured.', slots: [] };
+        if (!res.ok) return { ...res, result: res.message || 'Live calendar availability is not configured.', slots: [] };
         const lines = (res.slots ?? []).map((s) => `  - ${s}`).join('\n');
         return {
           result: res.slots?.length
             ? `Suggested slots (Israel time):\n${lines}${res.bookingLink ? `\nBooking link: ${res.bookingLink}` : ''}`
-            : 'No slots available in the suggested window.',
+            : res.bookingLink
+              ? `Live availability was not checked. The customer must choose and confirm a slot at: ${res.bookingLink}`
+              : 'Live availability was not checked.',
           slots: res.slots,
           bookingLink: res.bookingLink,
         };
@@ -105,25 +105,38 @@ export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
           phone: args.phone,
           reason: args.reason,
         }, config, ctx);
-        return { result: res.message || 'Appointment request recorded.', ...res };
+        return {
+          result: res.message || (res.ok ? 'Appointment booked.' : 'Appointment was not booked.'),
+          ...res,
+        };
       },
     },
     {
       name: 'lookup_order',
-      description: 'Look up an e-commerce order by order number or customer email (Shopify / WooCommerce)',
+      description: 'Look up an e-commerce order only after the customer supplies both the order number and matching email (Shopify / WooCommerce)',
       parameters: {
         type: 'object',
         properties: {
           orderNumber: { type: 'string', description: 'Order number e.g. #1234' },
           email: { type: 'string', description: 'Customer email' },
         },
-        required: [],
+        required: ['orderNumber', 'email'],
       },
       handler: async (args, ctx) => {
+        const orderNumber = String(args.orderNumber || '').trim();
+        const email = String(args.email || '').trim().toLowerCase();
+        if (!orderNumber || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return {
+            ok: false,
+            error: 'order_number_and_valid_email_required',
+            result: 'כדי להגן על פרטיות הלקוח נדרשים גם מספר הזמנה וגם כתובת האימייל ששימשה בהזמנה.',
+            orders: [],
+          };
+        }
         const shopType = firstEcommType(ctx.tenantId);
-        if (!shopType) return { result: 'No e-commerce store connected. Ask the customer for order details manually.' };
+        if (!shopType) return { ok: false, error: 'store_not_connected', result: 'No e-commerce store is connected; no order lookup was performed.', orders: [] };
         const config = getFirstIntegrationConfig(ctx.tenantId, shopType);
-        const res = await runAction(shopType, 'lookup_order', args, config, ctx);
+        const res = await runAction(shopType, 'lookup_order', { ...args, orderNumber, email }, config, ctx);
         if (!res.ok) return { result: `Order lookup failed: ${res.error}`, orders: [] };
         return {
           result: res.message + (res.orders?.length ? '\n' + JSON.stringify(res.orders, null, 2) : ''),
@@ -144,9 +157,14 @@ export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
       },
       handler: async (args, ctx) => {
         const config = getFirstIntegrationConfig(ctx.tenantId, 'whatsapp') || {};
-        if (!config.provider) return { result: 'WhatsApp not connected. Configure WhatsApp Business in integrations.' };
+        if (!config.provider) return { ok: false, error: 'whatsapp_not_connected', result: 'WhatsApp is not connected; no message was sent.' };
         const res = await runAction('whatsapp', 'send', args, config, ctx);
-        return { result: res.message || 'WhatsApp message queued.', stub: res.stub };
+        return {
+          ...res,
+          result: res.ok
+            ? (res.message || 'WhatsApp message sent.')
+            : (res.message || `WhatsApp message was not sent: ${res.error || 'send_failed'}`),
+        };
       },
     },
   ];
@@ -172,18 +190,18 @@ export function registerIntegrationTools(TOOL_DEFS, deps = {}) {
         at: new Date().toISOString(),
       };
       try {
-        const checked = validatePublicHttpUrl ? await validatePublicHttpUrl(url) : { ok: true, url };
-        const target = checked.ok ? checked.url : url;
-        const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
-        if (checked.ok && pinnedLookup && checked.resolved) {
-          // use pinned lookup when available
-          const r = await fetch(target, { ...init, dispatcher: undefined });
-          return { result: r.ok ? `Webhook notified: ${args.event}` : `Webhook returned ${r.status}`, status: r.status };
-        }
-        const r = await fetch(target, init);
-        return { result: r.ok ? `Webhook notified: ${args.event}` : `Webhook returned ${r.status}`, status: r.status };
+        const delivery = await runAction('webhook', 'send', { payload: body }, { url }, ctx);
+        return delivery.ok
+          ? { ok: true, result: `Webhook notified: ${args.event}`, status: delivery.status }
+          : {
+              ok: false,
+              error: delivery.error || 'webhook_delivery_failed',
+              reason: delivery.error,
+              status: delivery.status || 0,
+              result: `Webhook was not sent: ${delivery.error || 'delivery_failed'}`,
+            };
       } catch (e) {
-        return { result: `Webhook failed: ${e?.message ?? e}` };
+        return { ok: false, error: 'webhook_delivery_failed', result: `Webhook failed: ${e?.message ?? e}` };
       }
     };
     notifyDef._integrationPatched = true;

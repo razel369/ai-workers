@@ -1,9 +1,8 @@
-# Railway (https://railway.app)
-# Drop this file at the repo root, then:
-#   1. Create a new Railway project from GitHub repo
-#   2. Add environment variables in the dashboard (see .env.example)
-#   3. Add a persistent volume mounted at /app/data for SQLite + tenant DBs
-#   4. Railway auto-detects the Dockerfile and deploys
+# HISTORICAL RAILWAY CONFIGURATION — not the current deployment path.
+# Do not use this file for a new production service. Use the reviewed Oracle
+# Always Free stack in compose.oci.yaml. These retained settings are fail-closed so an old
+# linked Railway project cannot become ready without its persistent volume and
+# complete production configuration.
 
 [build]
 builder = "DOCKERFILE"
@@ -11,12 +10,15 @@ dockerfilePath = "Dockerfile"
 
 [variables]
 DB_PATH = "/app/data/earnings.db"
+DATA_DIR = "/app/data"
 TENANTS_DIR = "/app/data/tenants"
 LLM_PROVIDER = "openai_compatible"
 TRUST_PROXY_HEADERS = "1"
-TRIAL_DAYS = "14"
-# Set in Railway dashboard (not committed):
-# PUBLIC_BASE_URL = "https://paid-agent-demo-production.up.railway.app"
+REQUIRE_PERSISTENT_VOLUME = "1"
+TRIAL_DAYS = "0"
+# Historical dashboard variables (not committed) must still be explicit:
+# PUBLIC_BASE_URL = "https://YOUR-SERVICE.up.railway.app"
+# EMBED_ALLOWED_ORIGINS = "https://your-business.example"
 # ADMIN_TOKEN = "<generate with: node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\">"
 # LLM_API_KEY = "sk-..."
 # BIT_PHONE or PAYPAL_ME = at least one payment channel
@@ -26,7 +28,7 @@ TRIAL_DAYS = "14"
 
 [deploy]
 startCommand = "node --experimental-sqlite --no-warnings server.js"
-healthcheckPath = "/health"
+healthcheckPath = "/ready"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

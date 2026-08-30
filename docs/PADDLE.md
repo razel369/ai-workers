@@ -2,16 +2,15 @@
 
 Paddle משמש כ-**Merchant of Record**: הם מוכרים רשמית, גובים מע"מ/מסות בחו"ל, ומעבירים אליך את הכסף. מתאים לפרטי בישראל **בלי חברה** — עדיין צריך לדווח הכנסה לרשות המיסים.
 
-## משתני סביבה (Railway)
+## משתני סביבה (קובץ `.env` המוגן בשרת)
 
 ```env
 PADDLE_ENVIRONMENT=sandbox          # sandbox | production
 PADDLE_CLIENT_TOKEN=test_...        # Client-side token (Paddle Dashboard)
-PADDLE_API_KEY=                     # אופציונלי — לפעולות שרת מתקדמות
+PADDLE_API_KEY=                     # חובה; הרשאת transaction.write מינימלית
 PADDLE_WEBHOOK_SECRET=pdl_ntfset_... # מ-Notification destination
-PADDLE_PRICE_ID=pri_...             # מחיר מנוי חודשי ברירת מחדל
-# אופציונלי — מחיר לפי תבנית:
-PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
+# חובה: price id מפורש לכל תבנית שמוצעת לרכישה. אין fallback משותף.
+PADDLE_PRICE_MAP={"sales-leads-il":"pri_sales","support-he":"pri_support"}
 ```
 
 ## הגדרה ב-Paddle (פעם אחת)
@@ -22,8 +21,10 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 
 ### 2. מוצר ומחיר
 1. **Catalog → Products** → צור מוצר "AI Worker Monthly"
-2. הוסף **Price** מנוי חודשי (למשל ₪249 / $69)
-3. העתק `price_id` (מתחיל ב-`pri_`) → `PADDLE_PRICE_ID`
+2. הוסף **Price** מנוי חודשי לכל מחיר שמופיע במוצר.
+3. העתק כל `price_id` (מתחיל ב-`pri_`) ל-`PADDLE_PRICE_MAP` תחת ה-template המתאים.
+4. production readiness נכשל אם אפילו תבנית מוצעת אחת חסרה במפה. כך ה-checkout
+   וה-webhook לא יכולים להשתמש בשני מחירים שונים.
 
 ### 3. Client token
 1. **Developer tools → Authentication**
@@ -31,12 +32,14 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 
 ### 4. Webhook
 1. **Developer tools → Notifications → New destination**
-2. URL: `https://paid-agent-demo-production.up.railway.app/api/webhooks/paddle`
+2. URL: `https://YOUR_DOMAIN/api/webhooks/paddle`
 3. Events:
-   - `subscription.created`
-   - `subscription.activated`
-   - `subscription.updated`
    - `transaction.completed`
+   - `subscription.created`
+   - `adjustment.created`
+   - `adjustment.updated`
+   - `subscription.canceled`
+   - `subscription.paused`
 4. העתק **Endpoint secret key** → `PADDLE_WEBHOOK_SECRET`
 
 ### 5. בדיקה (Sandbox)
@@ -44,16 +47,25 @@ PADDLE_PRICE_MAP={"support-he":"pri_xxx","default":"pri_yyy"}
 2. פתח מרקטפלייס → עובד → **להפעיל ללקוחות**
 3. לחץ **שלמו בכרטיס אשראי**
 4. השתמש בכרטיס בדיקה של Paddle
-5. אחרי webhook — העובד אמור להיות **פעיל** בלי אדמין
+5. אחרי webhook מאומת — יש לבצע polling לסטטוס העובד. רק תשובת שרת שבה
+   `isActive=true` מאפשרת להציג הצלחה.
 
 ## זרימה באתר
 
 ```
 לקוח → Paywall → Paddle Checkout (overlay)
-       → webhook subscription.created / transaction.completed
+       → השרת יוצר transaction ב-Paddle ושומר transaction_id → tenant/worker
+       → הדפדפן מקבל רק transactionId, בלי tenant/worker ב-customData
+       → webhook transaction.completed
+       → אימות חתימה + transaction ממופה + מחיר/כמות/סכום מדויקים בשקלים
        → autoActivateWorker (30 יום)
        → redirect לצ'אט
 ```
+
+אירוע webhook שאינו ממופה ל-transaction/subscription שנוצרו או נקשרו בשרת
+נכשל סגור ואינו משנה עובד. `custom_data` נשמר ב-Paddle לצורכי התאמה בלבד ואינו
+מקור סמכות. מיפויי הסליקה נשמרים ב-`DATA_DIR/paddle-authority.db`, ולכן יש לכלול
+את כל `DATA_DIR` בגיבוי.
 
 Bit / PayPal / בנק נשארים כ**גיבוי ידני** עם אישור אדמין.
 

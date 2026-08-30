@@ -113,7 +113,18 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
     headers = {},
     maxBytes = DEFAULT_PUBLIC_FETCH_MAX_BYTES,
     maxRedirects = MAX_PUBLIC_FETCH_REDIRECTS,
+    responseType = 'text',
+    allowedProtocols = ['http:', 'https:'],
   } = options;
+
+  const protocolValues = allowedProtocols instanceof Set
+    ? [...allowedProtocols]
+    : Array.isArray(allowedProtocols)
+      ? allowedProtocols
+      : [allowedProtocols];
+  const allowedProtocolSet = new Set(
+    protocolValues.map((protocol) => String(protocol ?? '').trim().toLowerCase()).filter(Boolean)
+  );
 
   let current = String(rawUrl ?? '').trim();
 
@@ -122,6 +133,9 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
     if (!checked.ok) return { ok: false, error: checked.error, url: current };
 
     const parsed = new URL(checked.url);
+    if (!allowedProtocolSet.has(parsed.protocol)) {
+      return { ok: false, error: 'protocol_not_allowed', url: checked.url };
+    }
     const lib = parsed.protocol === 'https:' ? await import('node:https') : await import('node:http');
     const lookup = pinnedLookup(checked.resolved);
 
@@ -146,19 +160,54 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
           }
           return;
         }
+
+        const contentType = cleanText(res.headers['content-type'] ?? '', 120);
+        const declaredLength = Number(res.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+          res.destroy();
+          resolve({
+            ok: false,
+            error: 'response_too_large',
+            status,
+            contentType,
+            url: checked.url,
+          });
+          return;
+        }
+
         const chunks = [];
         let size = 0;
+        let exceeded = false;
         res.on('data', (chunk) => {
+          if (exceeded) return;
           size += chunk.length;
-          if (size <= maxBytes) chunks.push(chunk);
+          if (size > maxBytes) {
+            exceeded = true;
+            res.destroy();
+            resolve({
+              ok: false,
+              error: 'response_too_large',
+              status,
+              contentType,
+              url: checked.url,
+            });
+            return;
+          }
+          chunks.push(chunk);
         });
         res.on('end', () => {
+          if (exceeded) return;
+          const buffer = Buffer.concat(chunks);
           resolve({
             ok: status >= 200 && status < 300,
             status,
-            body: Buffer.concat(chunks).toString('utf8'),
+            body: responseType === 'buffer' ? buffer : buffer.toString('utf8'),
+            contentType,
             url: checked.url,
           });
+        });
+        res.on('error', (error) => {
+          if (!exceeded) reject(error);
         });
       });
       req.on('error', reject);
@@ -175,9 +224,43 @@ export async function fetchPublicHttpContent(rawUrl, options = {}) {
   return { ok: false, error: 'too_many_redirects', url: current };
 }
 
+const OAUTH_MARKETPLACE_HASHES = [
+  /^#\/workers\/(?:connect|edit)\/[A-Za-z0-9_-]{1,100}$/,
+  /^#\/workers\/new\/[A-Za-z0-9_-]{1,100}$/,
+];
+
+/**
+ * Restrict post-OAuth navigation to the marketplace surfaces that can start an
+ * integration flow. Keeping this as a narrow relative allowlist prevents an
+ * OAuth callback from becoming an open redirect, including through URL parser
+ * normalization of backslashes, encoded delimiters, or dot segments.
+ */
+export function normalizeOAuthReturnPath(value) {
+  const raw = String(value ?? '');
+  if (!raw || raw.length > 300 || raw !== raw.trim()) return null;
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\\%]/.test(raw)) return null;
+  if (!raw.startsWith('/') || raw.startsWith('//')) return null;
+  if (/(?:^|\/)\.{1,2}(?:\/|$)/.test(raw)) return null;
+
+  let parsed;
+  try { parsed = new URL(raw, 'https://oauth-return.invalid'); }
+  catch { return null; }
+  if (parsed.origin !== 'https://oauth-return.invalid'
+      || parsed.pathname !== '/marketplace'
+      || parsed.search
+      || parsed.username
+      || parsed.password) {
+    return null;
+  }
+  if (parsed.hash && !OAUTH_MARKETPLACE_HASHES.some((pattern) => pattern.test(parsed.hash))) {
+    return null;
+  }
+  return `/marketplace${parsed.hash}`;
+}
+
 /** Put OAuth query params before the hash so SPA routers and location.search both work. */
 export function buildOAuthReturnUrl(returnPath, queryString) {
-  const path = returnPath || '/marketplace';
+  const path = normalizeOAuthReturnPath(returnPath) ?? '/marketplace';
   const hashIdx = path.indexOf('#');
   const base = hashIdx >= 0 ? path.slice(0, hashIdx) : path;
   const hash = hashIdx >= 0 ? path.slice(hashIdx) : '';

@@ -1,5 +1,7 @@
 /** OAuth provider definitions — credentials live in env vars only, never in user UI. */
 
+import { normalizeShopifyShopHost } from './registry.js';
+
 export const OAUTH_PROVIDERS = {
   google: {
     id: 'google',
@@ -59,7 +61,8 @@ export const OAUTH_PROVIDERS = {
     clientId: () => process.env.SHOPIFY_CLIENT_ID || process.env.SHOPIFY_API_KEY || '',
     clientSecret: () => process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_API_SECRET || '',
     buildAuthUrl({ shop, redirectUri, state, clientId, scopes }) {
-      const host = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const host = normalizeShopifyShopHost(shop);
+      if (!host) throw new TypeError('invalid_shop_domain');
       const params = new URLSearchParams({
         client_id: clientId,
         scope: scopes.join(','),
@@ -72,7 +75,7 @@ export const OAUTH_PROVIDERS = {
       return JSON.stringify({ client_id: clientId, client_secret: clientSecret, code });
     },
     mapConfig(tokens, _profile, extra) {
-      const host = String(extra.shop || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const host = normalizeShopifyShopHost(extra.shop);
       return {
         authMethod: 'oauth',
         shopDomain: host,

@@ -1,4 +1,4 @@
-// Payment webhook handlers — Bit, PayPal IPN stub, auto-activation helpers.
+// Payment webhook handlers — internal Bit/PayPal adapters and activation helpers.
 
 import crypto from 'node:crypto';
 import * as workers from './workers.js';
@@ -13,8 +13,8 @@ if (process.env.NODE_ENV === 'production') {
   if (!BIT_WEBHOOK_SECRET && !PAYMENT_WEBHOOK_SECRET) {
     console.warn('[startup] BIT_WEBHOOK_SECRET / PAYMENT_WEBHOOK_SECRET not set — bit webhook endpoint will reject all requests');
   }
-  if (!PAYPAL_WEBHOOK_SECRET) {
-    console.warn('[startup] PAYPAL_WEBHOOK_SECRET not set — paypal webhook endpoint will reject all requests');
+  if (!PAYPAL_WEBHOOK_SECRET && !PAYMENT_WEBHOOK_SECRET) {
+    console.warn('[startup] PAYPAL_WEBHOOK_SECRET / PAYMENT_WEBHOOK_SECRET not set — paypal webhook endpoint will reject all requests');
   }
 }
 
@@ -22,7 +22,7 @@ export function paymentConfigStatus() {
   return {
     autoVerifyEnabled: PAYMENT_AUTO_VERIFY,
     bitWebhookSecretSet: !!BIT_WEBHOOK_SECRET,
-    paypalWebhookSecretSet: !!PAYPAL_WEBHOOK_SECRET,
+    paypalWebhookSecretSet: !!(PAYPAL_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET),
     activationSlaHours: ACTIVATION_SLA_HOURS,
   };
 }
@@ -35,8 +35,14 @@ export function activationSlaTextHe() {
 }
 
 function timingSafeEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const left = Buffer.from(String(a ?? ''), 'utf8');
+  const right = Buffer.from(String(b ?? ''), 'utf8');
+  if (!left.length || left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
 }
 
 function verifySharedSecret(req, expected) {
@@ -61,7 +67,6 @@ function resolveWorkerTarget(body) {
 export function autoActivateWorker({ workerId, tenantId, channel, reference, days, amountIls, source }) {
   const w = workers.getWorker(tenantId, workerId);
   if (!w) return { ok: false, error: 'worker_not_found' };
-  if (w.isActive) return { ok: true, alreadyActive: true, paidUntil: w.paidUntil };
   const res = workers.adminMarkPaid({
     workerId,
     tenantId,
@@ -70,7 +75,58 @@ export function autoActivateWorker({ workerId, tenantId, channel, reference, day
     paymentReference: reference || source || 'webhook-auto',
     amountIls: amountIls ?? 0,
   });
-  return res.ok ? { ok: true, paidUntil: res.paidUntil, autoActivated: true } : res;
+  if (!res.ok) return res;
+  const pendingSetup = res.activationPendingSetup === true;
+  return {
+    ...res,
+    autoActivated: !pendingSetup && !w.isActive && !res.alreadyRecorded,
+    autoRenewed: !pendingSetup && w.isActive && !res.alreadyRecorded,
+    activationPendingSetup: pendingSetup,
+  };
+}
+
+function existingEntitlementResult({ workerId, tenantId }) {
+  const worker = workers.getWorker(tenantId, workerId);
+  if (!worker) return { ok: false, error: 'worker_not_found' };
+  const readiness = workers.getWorkerReadiness(worker);
+  return {
+    ok: true,
+    alreadyRecorded: true,
+    paidUntil: worker.paidUntil ?? null,
+    paused: !!worker.paused,
+    activationPendingSetup: !readiness.ready,
+    readiness,
+    autoActivated: false,
+    autoRenewed: false,
+  };
+}
+
+function paypalPaymentDetails(body) {
+  const resource = body?.resource && typeof body.resource === 'object' ? body.resource : {};
+  const amountObject = body?.amount && typeof body.amount === 'object' ? body.amount : {};
+  const resourceAmount = resource?.amount && typeof resource.amount === 'object' ? resource.amount : {};
+  const reference = String(
+    body?.txn_id ?? body?.transaction_id ?? body?.id ?? body?.reference ?? resource?.id ?? ''
+  ).trim().slice(0, 200);
+  const rawAmount = body?.mc_gross ?? body?.amountIls ?? amountObject.value ?? body?.amount ?? resourceAmount.value;
+  const amountIls = Number(rawAmount);
+  const currency = String(
+    body?.mc_currency ?? body?.currency ?? amountObject.currency_code ?? resourceAmount.currency_code ?? ''
+  ).trim().toUpperCase();
+  return { reference, amountIls, currency };
+}
+
+export function verifyRentAmount({ tenantId, workerId, amountIls, currency }) {
+  const worker = workers.getWorker(tenantId, workerId);
+  if (!worker) return { ok: false, error: 'worker_not_found' };
+  const expectedAmountIls = Number(workers.getTemplate(worker.templateId)?.rentPriceIls);
+  const amountMatches = Number.isFinite(amountIls)
+    && Number.isFinite(expectedAmountIls)
+    && Math.abs(amountIls - expectedAmountIls) < 0.01;
+  if (currency !== 'ILS' || !amountMatches) {
+    return { ok: false, error: 'payment_amount_mismatch', expectedAmountIls, expectedCurrency: 'ILS' };
+  }
+  return { ok: true, expectedAmountIls };
 }
 
 export function tryAutoVerifyActivationProof({ reference, channel }) {
@@ -87,7 +143,15 @@ export function tryAutoVerifyActivationProof({ reference, channel }) {
 /**
  * @returns {Promise<boolean>} true if handled
  */
-export async function handlePaymentWebhooks(req, res, url, { send, readBody, markActivationRequestReviewed, recordAdminAudit, findPendingActivation }) {
+export async function handlePaymentWebhooks(req, res, url, {
+  send,
+  readBody,
+  markActivationRequestReviewed,
+  recordAdminAudit,
+  findPendingActivation,
+  claimPaymentReference,
+  markPaymentReferenceEntitled,
+}) {
   if (url.pathname === '/api/webhooks/bit' && req.method === 'POST') {
     const bitSecret = BIT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET;
     if (!bitSecret) {
@@ -100,7 +164,11 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       send(res, 401, { error: 'invalid_webhook_secret' });
       return true;
     }
-    const { text: raw } = await readBody(req, 65536);
+    const { text: raw, tooLarge } = await readBody(req, 65536);
+    if (tooLarge) {
+      send(res, 413, { error: 'payload_too_large' });
+      return true;
+    }
     let body = {};
     try { body = raw ? JSON.parse(raw) : {}; } catch {
       send(res, 400, { error: 'invalid_json' });
@@ -112,16 +180,51 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       return true;
     }
     const reference = String(body.reference ?? body.transactionId ?? body.txId ?? '').trim();
-    const result = autoActivateWorker({
-      workerId: target.workerId,
+    if (!reference) {
+      send(res, 400, { error: 'payment_reference_required' });
+      return true;
+    }
+    const amountIls = Number(body.amount ?? body.amountIls);
+    const verifiedAmount = verifyRentAmount({ ...target, amountIls, currency: 'ILS' });
+    if (!verifiedAmount.ok) {
+      send(res, 400, verifiedAmount);
+      return true;
+    }
+    if (typeof claimPaymentReference !== 'function') {
+      send(res, 503, { error: 'payment_ledger_unavailable' });
+      return true;
+    }
+    const ledger = claimPaymentReference({
+      provider: 'bit',
+      reference,
       tenantId: target.tenantId,
-      channel: 'bit',
-      reference: reference || 'bit-webhook',
-      days: Number(body.days) || undefined,
-      amountIls: body.amount ?? body.amountIls,
-      source: 'bit-webhook',
+      workerId: target.workerId,
     });
-    if (findPendingActivation) {
+    if (!ledger.ok) {
+      recordAdminAudit?.(req, {
+        action: 'webhook_bit_payment',
+        targetType: 'worker',
+        targetId: target.workerId,
+        status: 'failed',
+        metadata: { tenantId: target.tenantId, reference, error: ledger.error },
+      });
+      send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+      return true;
+    }
+    const result = ledger.replay && ledger.entitled
+      ? existingEntitlementResult(target)
+      : autoActivateWorker({
+        workerId: target.workerId,
+        tenantId: target.tenantId,
+        channel: 'bit',
+        reference,
+        amountIls,
+        source: 'bit-webhook',
+      });
+    if (result.ok) markPaymentReferenceEntitled?.({
+      provider: 'bit', reference, tenantId: target.tenantId, workerId: target.workerId,
+    });
+    if (result.ok && findPendingActivation) {
       const pending = findPendingActivation({ tenantId: target.tenantId, workerId: target.workerId, reference });
       if (pending?.id) markActivationRequestReviewed(pending.id, 'approved');
     }
@@ -129,19 +232,29 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       action: 'webhook_bit_payment',
       targetType: 'worker',
       targetId: target.workerId,
-      metadata: { tenantId: target.tenantId, reference, result: result.ok ? 'activated' : result.error },
+      metadata: { tenantId: target.tenantId, reference, replay: ledger.replay, result: result.ok ? 'activated' : result.error },
     });
     send(res, result.ok ? 200 : 400, { ok: result.ok, ...result, stub: !secretOk });
     return true;
   }
 
   if (url.pathname === '/api/webhooks/paypal' && req.method === 'POST') {
-    const secretOk = verifySharedSecret(req, PAYPAL_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET);
-    if (!secretOk && (PAYPAL_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET)) {
+    const paypalSecret = PAYPAL_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET;
+    if (!paypalSecret) {
+      console.warn('[payment-webhooks] webhook_secret_not_configured — refusing unverified paypal webhook');
+      send(res, 503, { error: 'webhook_secret_not_configured' });
+      return true;
+    }
+    const secretOk = verifySharedSecret(req, paypalSecret);
+    if (!secretOk) {
       send(res, 401, { error: 'invalid_webhook_secret' });
       return true;
     }
-    const { text: raw, contentType } = await readBody(req, 65536);
+    const { text: raw, contentType, tooLarge } = await readBody(req, 65536);
+    if (tooLarge) {
+      send(res, 413, { error: 'payload_too_large' });
+      return true;
+    }
     let body = {};
     if (contentType?.includes('application/x-www-form-urlencoded')) {
       body = Object.fromEntries(new URLSearchParams(raw).entries());
@@ -151,29 +264,73 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
         return true;
       }
     }
-    // PayPal IPN stub: accept payment_status=Completed or event_type=PAYMENT.CAPTURE.COMPLETED
-    const status = String(body.payment_status ?? body.event_type ?? body.status ?? '').toLowerCase();
-    const completed = status.includes('completed') || status.includes('capture');
+    // Internal adapter: accept only an explicitly completed event, then verify
+    // reference, ILS amount, and template price before changing entitlement.
+    const status = String(body.payment_status ?? body.event_type ?? body.status ?? '').trim().toLowerCase();
+    const completed = status === 'completed'
+      || status === 'payment.capture.completed'
+      || status === 'capture.completed';
     const target = resolveWorkerTarget(body);
     if (!target) {
       send(res, 200, { ok: true, stub: true, note: 'paypal_ipn_received_no_worker', received: true });
       return true;
     }
-    if (!completed && PAYPAL_WEBHOOK_SECRET) {
+    if (!completed) {
       send(res, 200, { ok: true, ignored: true, status });
       return true;
     }
-    const reference = String(body.txn_id ?? body.transaction_id ?? body.id ?? body.reference ?? '').trim();
-    const result = autoActivateWorker({
-      workerId: target.workerId,
+    const { reference, amountIls, currency } = paypalPaymentDetails(body);
+    if (!reference) {
+      send(res, 400, { error: 'payment_reference_required' });
+      return true;
+    }
+    const verifiedAmount = verifyRentAmount({ ...target, amountIls, currency });
+    if (!verifiedAmount.ok) {
+      recordAdminAudit?.(req, {
+        action: 'webhook_paypal_payment',
+        targetType: 'worker',
+        targetId: target.workerId,
+        status: 'failed',
+        metadata: { tenantId: target.tenantId, reference, error: verifiedAmount.error },
+      });
+      send(res, 400, verifiedAmount);
+      return true;
+    }
+    if (typeof claimPaymentReference !== 'function') {
+      send(res, 503, { error: 'payment_ledger_unavailable' });
+      return true;
+    }
+    const ledger = claimPaymentReference({
+      provider: 'paypal',
+      reference,
       tenantId: target.tenantId,
-      channel: 'paypal',
-      reference: reference || 'paypal-webhook',
-      days: Number(body.days) || undefined,
-      amountIls: body.amount ?? body.mc_gross,
-      source: 'paypal-webhook',
+      workerId: target.workerId,
     });
-    if (findPendingActivation) {
+    if (!ledger.ok) {
+      recordAdminAudit?.(req, {
+        action: 'webhook_paypal_payment',
+        targetType: 'worker',
+        targetId: target.workerId,
+        status: 'failed',
+        metadata: { tenantId: target.tenantId, reference, error: ledger.error },
+      });
+      send(res, ledger.error === 'payment_reference_already_used' ? 400 : 503, ledger);
+      return true;
+    }
+    const result = ledger.replay && ledger.entitled
+      ? existingEntitlementResult(target)
+      : autoActivateWorker({
+        workerId: target.workerId,
+        tenantId: target.tenantId,
+        channel: 'paypal',
+        reference,
+        amountIls,
+        source: 'paypal-webhook',
+      });
+    if (result.ok) markPaymentReferenceEntitled?.({
+      provider: 'paypal', reference, tenantId: target.tenantId, workerId: target.workerId,
+    });
+    if (result.ok && findPendingActivation) {
       const pending = findPendingActivation({ tenantId: target.tenantId, workerId: target.workerId, reference });
       if (pending?.id) markActivationRequestReviewed(pending.id, 'approved');
     }
@@ -181,7 +338,7 @@ export async function handlePaymentWebhooks(req, res, url, { send, readBody, mar
       action: 'webhook_paypal_payment',
       targetType: 'worker',
       targetId: target.workerId,
-      metadata: { tenantId: target.tenantId, reference, status, result: result.ok ? 'activated' : result.error },
+      metadata: { tenantId: target.tenantId, reference, status, replay: ledger.replay, result: result.ok ? 'activated' : result.error },
     });
     send(res, result.ok ? 200 : 400, { ok: result.ok, ...result, stub: !secretOk });
     return true;

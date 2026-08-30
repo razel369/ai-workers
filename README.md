@@ -1,9 +1,29 @@
 # AI Workers — AI Employees for Israeli Businesses
 
-**Production:** https://paid-agent-demo-production.up.railway.app  
-**Marketplace:** https://paid-agent-demo-production.up.railway.app/marketplace
+**Production status (verified 2026-08-30): offline.** The recommended zero-cost
+hosting path is an Oracle Cloud **Always Free** A1 VM; no Oracle resource has been created
+or verified yet. The empty Render project has zero services, and its paid
+deployment path was rejected. The old Railway address is historical/offline:
+`https://paid-agent-demo-production.up.railway.app`.
 
-Hire AI employees — pick a template, customize it, deploy it. Your worker handles customers 24/7 on web chat. WhatsApp coming soon.
+**Current production URL:** none yet. A fresh Oracle deployment starts with an
+empty database; it does not recover customers, workers, payments, or conversations
+from the Railway volume automatically.
+
+**Readiness decision:** **NO-GO for a public paid launch.** On 2026-08-30 the
+standalone deterministic harness passed **31/31 planning-only mock scenarios**
+across 13 templates, including mandatory intent, language, tool-policy and safety
+gates. No tool handler or external LLM was called, so this is local code evidence,
+not AI-provider or production-quality evidence. The complete local `npm test`
+suite also passed on the current worktree, including API, browser, lifecycle,
+payment-boundary, WhatsApp-routing and security-hardening checks. This is still
+local evidence rather than live-provider or production proof. See
+[Product readiness and proof tiers](docs/PRODUCT-READINESS.md).
+
+Hire AI employees — pick a template, customize it, deploy it. Your worker can
+receive web-chat inquiries outside business hours while the service is online;
+there is no uptime SLA on the free hosting path. WhatsApp requires a separately
+verified connection.
 
 - **B2B Lead Qualifier** — qualifies Hebrew/English leads, books meetings
 - **Hebrew Customer Support** — answers FAQs from your knowledge base, escalates when needed
@@ -27,15 +47,22 @@ Open http://localhost:8765/ for the dashboard, then /marketplace to browse worke
 
 ## How it works
 
-1. **Start from the marketplace** — buyers can create a tenant key without admin help.
-2. **Pick a template** from the marketplace (one-time buy: 99-199 ₪).
+1. **Start from the marketplace** — buyers create an account and receive an
+   HttpOnly browser session; an API key is a separate, explicitly rotated secret.
+2. **Pick a template** from the marketplace (current catalog setup price: ₪0).
 3. **Customize** persona, tasks, knowledge, skills, and MCP tools in the Builder.
-4. **Pay monthly rental** (149-299 ₪/mo) via PayPal, Bit, or bank transfer.
+4. **Pay monthly rental** (₪199-349/mo in the current catalog) through a payment
+   channel that the operator has actually configured and verified.
 5. **Submit payment proof** from the worker paywall.
 6. **Admin approves the activation request** from `#/admin`.
-7. **Chat with the worker** — it handles customers using its persona + your knowledge.
+7. **Chat with the worker** — after setup review and verified entitlement, it can
+   answer using its persona + business knowledge within configured quotas.
 
 Workers use the platform-provided LLM configured on the server. If no `LLM_API_KEY` is set, the app runs in mock mode for demos and local testing.
+Real provider traffic has a separate atomic monthly cost guard. `MONTHLY_PROVIDER_CALL_LIMIT`
+counts every outbound LLM request, including each agent step and fallback attempt; `/api/account`
+shows the tenant's used, limit, and remaining provider calls. Operators can change one tenant with
+`POST /api/admin/set-tenant-provider-limit`.
 
 ## Architecture
 
@@ -50,7 +77,9 @@ src/
 └── run-tests.js         # isolated test runner used by npm test
 ```
 
-Zero runtime npm dependencies. Uses Node 22 built-ins: `node:http`, `node:sqlite`, `node:crypto`. Playwright is a dev dependency for browser-flow verification.
+The core server uses Node 22 built-ins (`node:http`, `node:sqlite`, `node:crypto`)
+plus the small `@vercel/analytics` browser package retained for preview analytics.
+Playwright is a dev dependency for browser-flow verification.
 
 ## Configure
 
@@ -59,7 +88,7 @@ Edit `.env` or set env vars:
 ```bash
 set ADMIN_TOKEN=your-secret-token   # admin panel access
 set PAYPAL_ME=your-username          # payment channel
-set BIT_PHONE=972541234567           # Israeli Bit payments
+set BIT_PHONE=9725XXXXXXXX           # Israeli Bit payments; replace locally
 set BANK_ACCOUNT=123456              # bank transfer details
 ```
 
@@ -73,8 +102,10 @@ Query-string admin tokens are intentionally rejected so secrets do not leak thro
 
 ## Operator Flow
 
-- New buyers use `/api/signup` through the marketplace UI to create a tenant key.
-- Tenant IDs are stable across API key rotation; customers can rotate the browser-stored key from the key bar.
+- New buyers use `/api/signup` through the marketplace UI to create a tenant
+  account and an HttpOnly owner session. Signup does not expose an API key.
+- Tenant IDs remain stable. An owner can explicitly issue/rotate an API key for
+  CLI or integration use; the browser session does not store that key.
 - Admins can replace a lost tenant key from `#/admin`; old active keys for that tenant are revoked.
 - Unpaid workers stay in `pending_payment` and cannot chat.
 - Buyers submit proof through `/api/workers/:id/activation-request`.
@@ -91,71 +122,82 @@ database (`earnings.db`) and per-tenant worker databases (`tenants/*/workers.db`
 If this directory is ephemeral, customers will lose keys, workers, audit events,
 payment status, and chat history on restart.
 
-| Platform | Config | Persistent DB | Time |
+| Platform | Config | Persistent DB/files | Status |
 |---|---|---|---|
-| **Railway** (recommended) | `railway.toml` + `Dockerfile` + volume `/app/data` | Yes | 5 min |
-| Fly.io | `fly.toml` + `Dockerfile` | Yes (volume) | 5 min |
-| Render | `render.yaml` + `Dockerfile` | Yes (disk) | 5 min |
-| Vercel | `vercel.json` | **No** (`/tmp` only) | demos |
-| Any VPS | `Dockerfile` | Yes (mount volume) | 15 min |
+| **Oracle Cloud Always Free A1** | `compose.oci.yaml` + `deploy/oci/` | Yes, on VM boot volume | Recommended free path; not deployed |
+| Render Free | No deploy config | **No** durable local disk | Incompatible; paid Blueprint removed |
+| Railway | `railway.toml` + `Dockerfile` | Historical/offline | Not the current target |
+| Vercel | `vercel.json` | **No** (`/tmp` only) | Preview only |
 
-### Railway (recommended)
+### Oracle Cloud Always Free (primary target)
 
-No CLI login required — use the dashboard:
+The intended baseline is one `VM.Standard.A1.Flex` Ubuntu ARM64 VM in the
+account's home region, sized at 1 OCPU / 4 GB RAM with a 50 GB boot volume. Every
+resource must display **Always Free Eligible** and a zero estimate before it is
+created. Do not upgrade the account or substitute a paid shape when A1 capacity
+is unavailable.
 
-1. Open [railway.app/new](https://railway.app/new) → **Deploy from GitHub repo** → select this repo.
-2. Railway detects `Dockerfile` + `railway.toml` automatically. First build may fail until env + volume are set — that is expected.
-3. **Service → Volumes → Add Volume** → mount path `/app/data` (1 GB+). Without this, `GET /health` returns `persistentStorage: false`.
-4. **Service → Variables → Raw Editor** — paste non-comment lines from `.env.production.example` and replace placeholders:
-   - `PUBLIC_BASE_URL` = `https://<your-service>.up.railway.app` (no trailing slash)
-   - `ADMIN_TOKEN` = random hex (`node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`)
-   - `LLM_API_KEY` = your provider key
-   - `BIT_PHONE` or `PAYPAL_ME` = at least one payment channel
-5. **Settings → Networking → Generate Domain** if Railway did not assign one yet.
-6. Push to `main` (or click **Deploy**) and wait for the build.
-7. Verify: `curl https://<your-service>.up.railway.app/health` → `ok:true`, `persistentStorage:true`.
+Oracle's documentation checked on 2026-08-30 describes the current Always Free
+A1 allowance as 2 OCPUs / 12 GB total and 200 GB combined boot + block storage;
+the 1 OCPU / 4 GB / 50 GB baseline stays below those limits. The console label
+and zero estimate at creation time remain the final cost gate.
 
-Optional CLI (only if you have `RAILWAY_TOKEN` or can complete browser login):
+The repository provides:
 
-```powershell
-.\scripts\railway-deploy.ps1
-# or verify only:
-.\scripts\railway-deploy.ps1 -BaseUrl "https://your-app.up.railway.app"
-```
+- `compose.oci.yaml`: app + Caddy, with no public app port and `/app/data` bound
+  to persistent host storage
+- `.env.oci.example`: fail-closed production settings with no committed secrets
+- `deploy/oci/bootstrap.sh`: installs Docker/Compose but deliberately does not
+  start the application
+- `deploy/oci/deploy.sh`: refuses placeholders, validates Compose, then starts
+  the stack
+- `deploy/oci/backup.sh`: briefly stops the app, creates a locally encrypted
+  archive with an HMAC-signed manifest, rotates old generations, and optionally
+  verifies a copy through a dedicated off-VM rclone crypt remote
+- `deploy/oci/restore-drill.sh`: authenticates and decrypts a selected backup,
+  strictly rejects unsafe archive members, then checks every SQLite database as
+  a non-root container user without overwriting live data
+- `deploy/oci/monitor.sh`: checks liveness + strict readiness and can notify an
+  HTTPS webhook on failure/recovery transitions
 
-Set variables in the dashboard (same as step 4 above):
+Follow the complete [Oracle deployment runbook](deploy/oci/README.md). Account
+creation, login, identity/card checks, home-region choice, and the final Oracle
+**Create** action remain owner-controlled steps.
 
-```bash
-ADMIN_TOKEN=<random-hex>          # node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
-LLM_API_KEY=sk-...
-PUBLIC_BASE_URL=https://your-app.up.railway.app
-TRUST_PROXY_HEADERS=1
-AGENT_OWNER_CONTACT=you@example.com
-BIT_PHONE=972541234567            # or PAYPAL_ME
-WEBHOOK_NOTIFY_URL=               # optional: lead/escalation webhook
-```
-
-`DB_PATH` and `TENANTS_DIR` are preset in `railway.toml` to `/app/data/...`.
-
-4. After deploy, verify:
+After DNS and `.env` are configured:
 
 ```bash
-curl https://your-app.up.railway.app/health
-# expect: ok:true, persistentStorage:true, adminEnabled:true
+sudo bash ./deploy/oci/deploy.sh
+curl -i https://YOUR_DUCKDNS_HOST/health
+curl -i https://YOUR_DUCKDNS_HOST/infra-ready
+curl -i https://YOUR_DUCKDNS_HOST/ready
 ```
 
-Deployment checklist:
+`/health` is liveness only. `/infra-ready` must prove SQLite, writable paths,
+and the Docker bind mount; it does not prove Oracle retention or off-VM backup.
+`/ready` must return HTTP 200 with `ok:true` before
+customer traffic; it also requires real secrets, owner contact, an LLM and a
+payment channel. Free hosting does not make a paid LLM API free, so use a real
+free provider quota/model if the whole stack must remain at $0.
 
-- Set `ADMIN_TOKEN` from a secret manager, never in source.
-- Set `LLM_API_KEY` for real worker replies; without it the app intentionally runs in mock mode.
-- Mount persistent storage at `/app/data` or set `DB_PATH` and `TENANTS_DIR` to another persistent path.
-- Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy/load balancer that overwrites `X-Forwarded-*` headers.
-- Set `PUBLIC_BASE_URL` to your public URL (Railway domain or custom domain).
-- Verify `/health` after deploy and run a buyer flow smoke test: signup -> buy template -> submit activation proof -> admin approve -> chat.
-- Roll back by redeploying the previous image/revision, then verify `/health` and the admin audit panel.
+Oracle's current Always Free allowance and reclamation policy are documented in
+[Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
+There is no SLA, A1 capacity may be unavailable, and an instance classified as
+idle may be reclaimed. Keep off-VM backups and a tested restore path.
 
-**Production URL:** `https://paid-agent-demo-production.up.railway.app` — this is the only supported live environment.  
-Vercel (if still connected) uses ephemeral `/tmp` storage and is not used for real customers; disconnect it in the Vercel dashboard to avoid confusion.
+#### Fresh deployment is not Railway data recovery
+
+A new VM starts with an empty `data/` directory. Before directing returning
+customers to it, separately obtain and verify a Railway backup containing both
+`earnings.db` and `tenants/`. Preserve the exact old `INTEGRATIONS_SECRET`; if it
+was unset, preserve the old `ADMIN_TOKEN` that served as the encryption fallback.
+If no verified export exists, label the instance as a **fresh launch**, not a
+recovered production system.
+
+**Production URL:** not assigned or verified yet. The previous Railway URL is
+historical and offline. Vercel uses ephemeral `/tmp` storage and is allowed only
+for disposable previews. **Disable Vercel production auto-deploys from `main`**
+before merging; PR previews must never be presented as customer production.
 
 ## Why this is worth paying for (2026)
 
@@ -164,4 +206,5 @@ AI models are commodity. The value is in **vertical integration**:
 - No-code builder — businesses customize without developers
 - Israeli payment methods (PayPal, Bit, bank transfer — no Stripe needed)
 - Per-tenant worker isolation with stable tenant IDs, key rotation, recovery, and admin audit events
-- WhatsApp integration (coming soon) — the #1 business channel in Israel
+- Provider-signed WhatsApp routing exists in source; a real Meta Business number,
+  inbound delivery and outbound reply are still unverified production gates

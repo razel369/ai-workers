@@ -1,6 +1,22 @@
 // Debug: check if paid chat actually enforces payment_required.
+const target = process.argv[2] || process.env.BASE_URL;
+if (!target) {
+  console.error('Missing target. Pass an explicit URL: node debug-paid.js https://YOUR_DOMAIN');
+  console.error('Or set BASE_URL explicitly before running this destructive debug flow.');
+  process.exit(64);
+}
+
+let base;
+try {
+  const url = new URL(target);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('target must use http or https');
+  base = url.toString().replace(/\/+$/, '');
+} catch (error) {
+  console.error(`Invalid debug target: ${error.message}`);
+  process.exit(64);
+}
+
 (async () => {
-  const base = 'https://paid-agent-demo-production.up.railway.app';
   const s = await fetch(base + '/api/signup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

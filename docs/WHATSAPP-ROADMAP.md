@@ -1,6 +1,6 @@
 # WhatsApp integration roadmap
 
-Status: **inbound wired + outbound stub** — webhook mounted; Meta send via `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_ID`.
+Status: **verified inbound routing + configured outbound** — webhook mounted; every provider route is provisioned by an admin and uniquely owned. Meta send requires `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_ID`; Twilio requires its provider credentials.
 
 ## Goals
 
@@ -26,10 +26,13 @@ Customer WhatsApp
 Meta / Twilio webhook  →  POST /api/webhooks/whatsapp
        │
        ▼
-whatsapp-webhook.js (parse + verify) — inbound stub logs message
+whatsapp-webhook.js (parse + signature verification + durable dedupe)
        │
        ▼
-workers.js — resolve tenant (TODO: phone mapping), workers.chat()
+whatsapp-router.js — exact provider/phone route to one tenant and worker
+       │
+       ▼
+workers.js — payment/readiness/quota gates, then worker chat
        │
        ▼
 integrations/runner.js — Meta Graph API send (or stub)
@@ -51,7 +54,9 @@ integrations/runner.js — Meta Graph API send (or stub)
 ### Phase 3 — Tenant mapping
 
 - [x] DB table: `whatsapp_routes` on platform DB (phone_key → tenant_id, worker_id)
-- [x] API: `POST /api/workers/:id/whatsapp-route` + auto-register on connect
+- [x] Admin-only provisioning: `POST /api/admin/whatsapp-route`
+- [x] Tenant endpoint is fail-closed (`403 admin_provisioning_required`); connecting credentials never claims a route
+- [x] A provider/phone tuple cannot be reassigned across tenants; identical provisioning is idempotent
 - [x] Inbound → `workers.chatWithWorker()` → outbound Meta/Twilio send
 - [ ] Admin UI for multi-number routing
 - [ ] 24h session window handling (Meta policy)
@@ -61,7 +66,7 @@ integrations/runner.js — Meta Graph API send (or stub)
 - [x] `send_whatsapp_message` tool via integrations
 - [x] Meta Cloud API send when `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` set
 - [ ] Hebrew template messages for outbound-initiated chats
-- [ ] Auto-reply inbound to worker chat (close the loop)
+- [x] Auto-reply inbound to worker chat when the verified provider route and outbound credentials are configured
 
 ## Local testing
 
@@ -72,9 +77,10 @@ integrations/runner.js — Meta Graph API send (or stub)
 ## Security checklist
 
 - Verify Meta `hub.verify_token` on GET (implemented).
-- Validate Twilio request signature before trusting POST body (TODO).
+- Verify Meta SHA-256 and Twilio SHA-1 request signatures before trusting POST bodies (implemented).
 - Never log full access tokens or customer PII in production logs.
 - Per-tenant isolation: one phone number must map to exactly one worker.
+- Never fall back to a global/default worker when an inbound route is missing.
 
 ## Links
 

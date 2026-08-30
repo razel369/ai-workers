@@ -1,5 +1,20 @@
 // E2E audit script — runs against production and reports what works / breaks.
-const base = process.argv[2] || 'https://paid-agent-demo-production.up.railway.app';
+const target = process.argv[2] || process.env.BASE_URL;
+if (!target) {
+  console.error('Missing target. Pass an explicit URL: node audit-prod.js https://YOUR_DOMAIN');
+  console.error('Or set BASE_URL explicitly before running the audit.');
+  process.exit(64);
+}
+
+let base;
+try {
+  const url = new URL(target);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('target must use http or https');
+  base = url.toString().replace(/\/+$/, '');
+} catch (error) {
+  console.error(`Invalid audit target: ${error.message}`);
+  process.exit(64);
+}
 
 (async () => {
   const results = [];
