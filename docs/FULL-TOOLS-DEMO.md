@@ -97,7 +97,7 @@ Copy-Item .env.demo.example .env
 
 ### קליקים מדויקים
 
-1. פתח **http://localhost:8765/marketplace#/magic** (או לחץ **«נסה עכשיו בחינם»** בגיבור)
+1. פתח **http://localhost:8765/marketplace#/magic** (או לחץ **«גייס עובד ב-3 דקות»** בגיבור)
 2. **שלב 1/3** — הזן שם עסק (למשל: «קפה השכונה») → **המשך**
 3. **שלב 2/3** — בחר תבנית:
    - **מוקדן לידים B2B** (`sales-leads-il`) — מומלץ לכלים save_lead + book_meeting

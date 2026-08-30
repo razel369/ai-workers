@@ -2,6 +2,14 @@
 
 **Production site:** https://paid-agent-demo-production.up.railway.app
 
+## Recovery status — 2026-08-30
+
+- [ ] Production is offline: Railway returns `404 Application not found`.
+- [x] Local `npm test` passes, including the Chromium buyer flow and 28 mock-mode evaluation scenarios.
+- [ ] GitHub Actions remains red until the local fixes are reviewed and pushed.
+- [ ] Railway project, volume, backups, environment variables, and any retained customer data must be inspected before redeploying.
+- [ ] Run a real configured-LLM quality smoke after redeploy; mock-mode evaluation is not production-model proof.
+
 ## Phase 0 — Infrastructure (this sprint)
 
 - [x] Push to `github.com/razel369/ai-workers`
@@ -71,7 +79,7 @@
 
 ## Phase 0 — Still missing for real launch
 
-- [x] **Payment channel** — Bit `972546406061` on Railway
+- [ ] **Payment channel** — verify the Bit recipient in Railway; keep the real number out of Git
 - [ ] **PayPal.me** — waiting for username from operator
 - [ ] **Custom domain** (optional) — e.g. `ai-workers.co.il` → Railway
 - [ ] **WhatsApp** — Meta/Twilio env + webhook at `/api/webhooks/whatsapp`

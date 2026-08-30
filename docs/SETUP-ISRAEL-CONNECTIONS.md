@@ -32,7 +32,7 @@ Webhook: `https://paid-agent-demo-production.up.railway.app/api/webhooks/paddle`
 ### משתני Railway (תשלום)
 
 ```env
-BIT_PHONE=972546406061
+BIT_PHONE=9725XXXXXXXX           # הגדירו רק ב-Railway; אל תשמרו מספר אמיתי ב-Git
 PAYPAL_ME=שם-המשתמש-שלך          # אחרי שתשלח לנו
 PAYEE_NAME=שם מלא בעברית
 BANK_NAME=שם הבנק
@@ -130,7 +130,7 @@ PUBLIC_BASE_URL=https://paid-agent-demo-production.up.railway.app
 
 - [x] Railway + DB קבוע
 - [x] AI (OpenRouter)
-- [x] Bit (`054-6406061`)
+- [ ] Bit — לאמת את מספר המקבל ב-Railway (לא לשמור מספר אמיתי ב-Git)
 - [ ] PayPal.me — שלח שם משתמש
 - [ ] פרטי בנק (אופציונלי) ב-Railway
 - [x] דפים משפטיים מקושרים
