@@ -16,6 +16,7 @@
 //   USD_TO_ILS=3.7
 //   QUOTA_ENFORCE=1            # 0 = measure only, do not block (safe rollout)
 //   QUOTA_SOFT_WARN_PCT=80
+//   PLAN_COST_CEILING_PCT=35   # block once LLM cost passes this share of plan revenue
 
 import * as registry from './tenant-registry.js';
 
@@ -24,6 +25,11 @@ let db = null;
 const USD_TO_ILS = Number(process.env.USD_TO_ILS ?? 3.7);
 const QUOTA_ENFORCE = process.env.QUOTA_ENFORCE !== '0';
 const SOFT_WARN_PCT = Number(process.env.QUOTA_SOFT_WARN_PCT ?? 80);
+// The message quota is a fair-use ceiling; this is the actual margin guard.
+// A tenant with a huge knowledge base running the full agent loop can cost 10x
+// a typical tenant for the same message count, so cost has to be capped
+// directly rather than through a message-count proxy.
+const COST_CEILING_PCT = Number(process.env.PLAN_COST_CEILING_PCT ?? 35);
 
 /**
  * USD per 1M tokens. These are defaults for cost *estimation* only — provider
@@ -88,7 +94,11 @@ export function initUsageMetering(database) {
     CREATE TABLE IF NOT EXISTS usage_counters (
       tenant_id TEXT NOT NULL,
       period TEXT NOT NULL,
+      -- messages = LLM calls (cost). chat_turns = customer messages (what the
+      -- plan is sold in). One customer message can trigger up to 5 LLM calls,
+      -- so quoting the plan in LLM calls understated it by an order of magnitude.
       messages INTEGER NOT NULL DEFAULT 0,
+      chat_turns INTEGER NOT NULL DEFAULT 0,
       prompt_tokens INTEGER NOT NULL DEFAULT 0,
       completion_tokens INTEGER NOT NULL DEFAULT 0,
       cost_usd REAL NOT NULL DEFAULT 0,
@@ -97,6 +107,7 @@ export function initUsageMetering(database) {
       PRIMARY KEY (tenant_id, period)
     );
   `);
+  try { db.exec(`ALTER TABLE usage_counters ADD COLUMN chat_turns INTEGER NOT NULL DEFAULT 0`); } catch {}
   return db;
 }
 
@@ -149,6 +160,19 @@ export function recordUsage({
   return { costUsd, costIls: costUsd * USD_TO_ILS, period };
 }
 
+/**
+ * One customer message, regardless of how many LLM calls it takes to answer.
+ * This is the unit the plan is sold in and the unit the quota counts.
+ */
+export function recordChatTurn(tenantId) {
+  if (!db || !tenantId) return;
+  try {
+    db.prepare(`INSERT INTO usage_counters (tenant_id, period, chat_turns) VALUES (?,?,1)
+      ON CONFLICT(tenant_id, period) DO UPDATE SET chat_turns = chat_turns + 1`)
+      .run(tenantId, currentPeriod());
+  } catch {}
+}
+
 /** Pull token counts out of whichever shape the provider returned. */
 export function extractUsage(json, provider) {
   if (!json) return null;
@@ -172,27 +196,49 @@ export function extractUsage(json, provider) {
 // --- Quotas ---------------------------------------------------------------
 
 export function tenantUsage(tenantId, period = currentPeriod()) {
-  if (!db || !tenantId) return { messages: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, costIls: 0 };
-  const r = db.prepare(`SELECT messages, prompt_tokens AS promptTokens, completion_tokens AS completionTokens,
-    cost_usd AS costUsd FROM usage_counters WHERE tenant_id = ? AND period = ?`).get(tenantId, period);
-  const base = r ?? { messages: 0, promptTokens: 0, completionTokens: 0, costUsd: 0 };
+  if (!db || !tenantId) return { messages: 0, chatTurns: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, costIls: 0 };
+  const r = db.prepare(`SELECT messages, chat_turns AS chatTurns, prompt_tokens AS promptTokens,
+    completion_tokens AS completionTokens, cost_usd AS costUsd
+    FROM usage_counters WHERE tenant_id = ? AND period = ?`).get(tenantId, period);
+  const base = r ?? { messages: 0, chatTurns: 0, promptTokens: 0, completionTokens: 0, costUsd: 0 };
   return { ...base, costIls: Number(base.costUsd ?? 0) * USD_TO_ILS, period };
 }
 
 /**
  * Ask before spending money on a reply.
- * Returns { allowed, used, limit, remaining, pct, plan, reason }.
- * With QUOTA_ENFORCE=0 it never blocks — useful for rolling metering out to
+ *
+ * Two independent ceilings, because neither alone is right:
+ *
+ *  - The message quota is what the plan is sold in and what the customer
+ *    understands. It counts CUSTOMER messages, not LLM calls — the agent loop
+ *    can make five calls to answer one message, so counting calls would cut a
+ *    normal clinic off around day 13 of the month.
+ *  - The cost ceiling is the actual margin guard. A tenant with a large
+ *    knowledge base running the full agent loop can cost an order of magnitude
+ *    more than a typical tenant at the same message count, which a message
+ *    count cannot see.
+ *
+ * With QUOTA_ENFORCE=0 neither blocks — useful for rolling metering out to
  * existing customers before turning limits on.
  */
 export function checkQuota(tenantId) {
   const tenant = registry.getTenant(tenantId);
   const plan = registry.getPlan(tenant?.plan);
   const usage = tenantUsage(tenantId);
+
   const limit = plan.monthlyMessages;
-  const used = usage.messages;
+  const used = usage.chatTurns;
   const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
-  const over = limit > 0 && used >= limit;
+  const overMessages = limit > 0 && used >= limit;
+
+  // Monthly revenue for this plan (annual plans are billed up front).
+  const monthlyRevenueIls = plan.months > 1 ? plan.priceIls / plan.months : plan.priceIls;
+  const costCeilingIls = plan.costCeilingIls ?? (monthlyRevenueIls * (COST_CEILING_PCT / 100));
+  const costIls = usage.costIls;
+  const costPct = costCeilingIls > 0 ? Math.round((costIls / costCeilingIls) * 100) : 0;
+  const overCost = costCeilingIls > 0 && costIls >= costCeilingIls;
+
+  const over = overMessages || overCost;
   return {
     allowed: !over || !QUOTA_ENFORCE,
     enforced: QUOTA_ENFORCE,
@@ -200,10 +246,16 @@ export function checkQuota(tenantId) {
     used, limit,
     remaining: Math.max(0, limit - used),
     pct,
-    nearLimit: pct >= SOFT_WARN_PCT,
+    llmCalls: usage.messages,
+    costIls: Number(costIls.toFixed(2)),
+    costCeilingIls: Number(costCeilingIls.toFixed(2)),
+    costPct,
+    overCost,
+    overMessages,
+    nearLimit: pct >= SOFT_WARN_PCT || costPct >= SOFT_WARN_PCT,
     plan: plan.id,
     planNameHe: plan.nameHe,
-    reason: over ? 'monthly_message_quota_exceeded' : null,
+    reason: overCost ? 'cost_ceiling_exceeded' : overMessages ? 'monthly_message_quota_exceeded' : null,
   };
 }
 
@@ -232,7 +284,7 @@ export function quotaNoticeState(tenantId) {
  */
 export function marginReport(period = currentPeriod()) {
   if (!db) return { period, tenants: [], totals: {} };
-  const rows = db.prepare(`SELECT tenant_id AS tenantId, messages,
+  const rows = db.prepare(`SELECT tenant_id AS tenantId, messages, chat_turns AS chatTurns,
     prompt_tokens AS promptTokens, completion_tokens AS completionTokens, cost_usd AS costUsd
     FROM usage_counters WHERE period = ? ORDER BY cost_usd DESC`).all(period);
   const tenants = rows.map((r) => {
@@ -245,13 +297,17 @@ export function marginReport(period = currentPeriod()) {
       tenantId: r.tenantId,
       businessName: t?.businessName ?? '',
       plan: plan.id,
-      messages: r.messages,
+      messages: r.chatTurns ?? 0,
+      llmCalls: r.messages,
+      // How many LLM round-trips each customer message costs — the number that
+      // explains why two tenants on the same plan cost very different amounts.
+      callsPerMessage: r.chatTurns > 0 ? Number((r.messages / r.chatTurns).toFixed(2)) : null,
       tokens: Number(r.promptTokens ?? 0) + Number(r.completionTokens ?? 0),
       costIls: Number(costIls.toFixed(2)),
       revenueIls,
       marginIls: Number((revenueIls - costIls).toFixed(2)),
       marginPct: revenueIls > 0 ? Number((((revenueIls - costIls) / revenueIls) * 100).toFixed(1)) : null,
-      quotaPct: plan.monthlyMessages > 0 ? Math.round((r.messages / plan.monthlyMessages) * 100) : 0,
+      quotaPct: plan.monthlyMessages > 0 ? Math.round(((r.chatTurns ?? 0) / plan.monthlyMessages) * 100) : 0,
     };
   });
   const totals = tenants.reduce((acc, t) => ({
@@ -273,6 +329,7 @@ export function usageConfigStatus() {
     enforced: QUOTA_ENFORCE,
     usdToIls: USD_TO_ILS,
     softWarnPct: SOFT_WARN_PCT,
+    costCeilingPct: COST_CEILING_PCT,
     pricedModels: Object.keys(pricingTable()).length,
   };
 }

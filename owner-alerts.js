@@ -130,17 +130,17 @@ export function alertQuotaWarning({ tenantId, usage, quota }) {
   if (!ENABLED) return { sent: 0 };
   return dispatch({
     tenantId, workerId: '', kind: 'quota', urgent: false,
-    subject: `נותרו ${quota.remaining} שיחות במכסה החודשית`,
+    subject: `נותרו ${esc(quota.remaining)} הודעות במכסה החודשית`,
     html: notify.renderEmail({
-      title: `ניצלתם ${quota.pct}% מהמכסה החודשית`,
-      intro: `בחבילת "${quota.planNameHe}" יש ${quota.limit} שיחות בחודש, ונוצלו ${quota.used}.`,
+      title: `ניצלתם ${quota.costPct > quota.pct ? quota.costPct : quota.pct}% מהמכסה החודשית`,
+      intro: `בחבילת "${quota.planNameHe}" יש ${quota.limit.toLocaleString('he-IL')} הודעות לקוח בחודש, ונוצלו ${quota.used.toLocaleString('he-IL')}.`,
       bodyHtml: `כשהמכסה נגמרת העובד מפסיק לענות ללקוחות עד תחילת החודש הבא.<br><br>
         אם העסק גדל — שדרוג חבילה מונע את זה.`,
       ctaText: 'לשדרוג החבילה',
       ctaUrl: `${publicBaseUrl}/marketplace#/account`,
-      footerNote: `עלות משוערת החודש: ${Number(usage?.costIls ?? 0).toFixed(2)} ₪.`,
+      footerNote: `שימוש עד כה: ${esc(quota.used)} הודעות, ${esc(quota.llmCalls ?? 0)} קריאות AI.`,
     }),
-    wa: `ניצלתם ${quota.pct}% ממכסת השיחות החודשית (${quota.used}/${quota.limit}). לשדרוג: ${publicBaseUrl}/marketplace#/account`,
+    wa: `ניצלתם ${quota.pct}% ממכסת ההודעות החודשית (${quota.used}/${quota.limit}). לשדרוג: ${publicBaseUrl}/marketplace#/account`,
   });
 }
 

@@ -19,36 +19,47 @@ let db = null;
 // bundles beat per-worker rental for multi-location businesses, and annual
 // prepay (2 months free) pulls cash forward and cuts monthly churn decisions.
 
+// `monthlyMessages` counts CUSTOMER messages, not LLM calls. One customer
+// message can take up to MAX_AGENT_STEPS LLM calls to answer, so a limit
+// expressed in calls would cut a normal business off around day 13 of the
+// month. These limits are fair-use ceilings against abuse, not the commercial
+// constraint: measured LLM cost for a typical 6-message conversation is about
+// 0.03 ₪, so a 249 ₪ plan is nowhere near cost-bound at these volumes. The real
+// margin guard is PLAN_COST_CEILING_PCT in usage-metering.js, which caps spend
+// as a share of plan revenue and therefore also catches the heavy-knowledge,
+// full-agent-loop tenants a message count cannot see.
 export const PLANS = {
   trial: {
     id: 'trial', nameHe: 'ניסיון', priceIls: 0, months: 0,
-    maxWorkers: 1, monthlyMessages: 300, maxKnowledgeChars: 20_000,
+    maxWorkers: 1, monthlyMessages: 500, maxKnowledgeChars: 20_000,
+    // No revenue to take a share of, so the ceiling is absolute.
+    costCeilingIls: Number(process.env.TRIAL_COST_CEILING_ILS ?? 20),
     features: ['צ\'אט באתר', 'לידים והסלמות', 'תמיכה במייל'],
   },
   starter: {
     id: 'starter', nameHe: 'עובד יחיד', priceIls: 249, months: 1,
-    maxWorkers: 1, monthlyMessages: 1_500, maxKnowledgeChars: 60_000,
-    features: ['עובד אחד', '1,500 שיחות בחודש', 'ווידג\'ט לאתר', 'התראות לידים'],
+    maxWorkers: 1, monthlyMessages: 4_000, maxKnowledgeChars: 60_000,
+    features: ['עובד אחד', '4,000 הודעות לקוח בחודש', 'ווידג\'ט לאתר', 'התראות לידים'],
   },
   bundle3: {
     id: 'bundle3', nameHe: 'שלושה עובדים', priceIls: 499, months: 1,
-    maxWorkers: 3, monthlyMessages: 5_000, maxKnowledgeChars: 200_000,
-    features: ['עד 3 עובדים', '5,000 שיחות בחודש', 'WhatsApp', 'ייצוא לידים ל-CSV'],
+    maxWorkers: 3, monthlyMessages: 12_000, maxKnowledgeChars: 200_000,
+    features: ['עד 3 עובדים', '12,000 הודעות לקוח בחודש', 'WhatsApp', 'ייצוא לידים ל-CSV'],
   },
   agency: {
     id: 'agency', nameHe: 'סוכנות', priceIls: 1_290, months: 1,
-    maxWorkers: 10, monthlyMessages: 20_000, maxKnowledgeChars: 1_000_000,
-    features: ['עד 10 עובדים', '20,000 שיחות בחודש', 'White-label', 'תמיכה בעדיפות'],
+    maxWorkers: 10, monthlyMessages: 40_000, maxKnowledgeChars: 1_000_000,
+    features: ['עד 10 עובדים', '40,000 הודעות לקוח בחודש', 'White-label', 'תמיכה בעדיפות'],
   },
   // Annual = 10x the monthly price for 12 months of service (2 months free).
   starter_annual: {
     id: 'starter_annual', nameHe: 'עובד יחיד — שנתי', priceIls: 2_490, months: 12,
-    maxWorkers: 1, monthlyMessages: 1_500, maxKnowledgeChars: 60_000,
+    maxWorkers: 1, monthlyMessages: 4_000, maxKnowledgeChars: 60_000,
     features: ['עובד אחד', 'חודשיים חינם', 'מחיר נעול לשנה'],
   },
   bundle3_annual: {
     id: 'bundle3_annual', nameHe: 'שלושה עובדים — שנתי', priceIls: 4_990, months: 12,
-    maxWorkers: 3, monthlyMessages: 5_000, maxKnowledgeChars: 200_000,
+    maxWorkers: 3, monthlyMessages: 12_000, maxKnowledgeChars: 200_000,
     features: ['עד 3 עובדים', 'חודשיים חינם', 'WhatsApp', 'מחיר נעול לשנה'],
   },
 };

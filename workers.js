@@ -2702,10 +2702,15 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       return {
         ok: false, status: 429,
         error: 'quota_exceeded',
-        message: 'העסק הגיע למכסת השיחות החודשית. אפשר לשדרג את החבילה כדי להמשיך לענות ללקוחות.',
+        message: quota.reason === 'cost_ceiling_exceeded'
+          ? 'העובד הגיע לתקרת השימוש החודשית של החבילה. שדרוג חבילה יחזיר אותו לפעולה מיידית.'
+          : 'העסק הגיע למכסת ההודעות החודשית. אפשר לשדרג את החבילה כדי להמשיך לענות ללקוחות.',
         quota,
       };
     }
+    // Count the customer message itself; recordUsage separately counts each LLM
+    // call the agent loop makes to answer it.
+    metering.recordChatTurn(tenantId);
   }
 
   const customerIdForContext = customerId ?? '';

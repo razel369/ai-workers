@@ -110,16 +110,80 @@ quotas match what was actually sold.
 
 Defined in `tenant-registry.js`, served from `GET /api/plans`.
 
-| Plan | ₪/mo | Workers | Messages/mo |
+| Plan | ₪/mo | Workers | Customer messages/mo |
 |---|---|---|---|
-| `starter` | 249 | 1 | 1,500 |
-| `bundle3` | 499 | 3 | 5,000 |
-| `agency` | 1,290 | 10 | 20,000 |
-| `starter_annual` | 2,490/yr | 1 | 1,500 |
-| `bundle3_annual` | 4,990/yr | 3 | 5,000 |
+| `trial` | 0 | 1 | 500 |
+| `starter` | 249 | 1 | 4,000 |
+| `bundle3` | 499 | 3 | 12,000 |
+| `agency` | 1,290 | 10 | 40,000 |
+| `starter_annual` | 2,490/yr | 1 | 4,000 |
+| `bundle3_annual` | 4,990/yr | 3 | 12,000 |
 
 Annual is 10x monthly — two months free — which pulls cash forward and removes
 eleven monthly cancellation decisions.
+
+### What "messages" means
+
+`monthlyMessages` counts **customer messages**, not LLM calls. One customer
+message can take up to `MAX_AGENT_STEPS` (5) LLM calls to answer, because the
+agent loop re-sends the system prompt and the whole conversation on every step.
+
+This distinction is not cosmetic: an earlier version of these limits counted LLM
+calls, which meant a clinic handling ten conversations a day would have been cut
+off around **day 13** of the month while using under 4% of its plan's economic
+headroom. `usage_counters` tracks both — `chat_turns` for the quota,
+`messages` for cost — and `/api/admin/margin` reports `callsPerMessage` so you
+can see which tenants run expensive agent loops.
+
+## Unit economics
+
+Measured from the code, not estimated: system prompts run 647–1,727 tokens
+depending on template (`social-strategist-he` is the heaviest, at 14 tools),
+plus whatever knowledge the tenant pastes in. A typical 6-message conversation
+with a 1,500-token knowledge base and a 2-step agent loop is about **40,000
+input and 1,600 output tokens**.
+
+At the default model, per conversation:
+
+| Model | ₪ / conversation |
+|---|---|
+| `llama-4-8b-instant` | 0.008 |
+| `gpt-4o-mini` (default) | 0.026 |
+| `claude-haiku-4-5` | 0.18 |
+| `gpt-4o` | 0.43 |
+
+So a 249 ₪/mo tenant running 300 conversations a month costs about **8 ₪** to
+serve — a 97% gross margin. Moving the default to a frontier model would take
+that same tenant to roughly 130 ₪, and a heavy-knowledge tenant on the full
+agent loop past break-even.
+
+**Input tokens dominate.** Output is capped at `LLM_MAX_TOKENS` (1024) and real
+replies are ~200 tokens, but every agent step re-sends the system prompt plus up
+to `CHAT_HISTORY_LIMIT` (40) messages of history. The levers that matter, in
+order: the default model, `MAX_AGENT_STEPS`, knowledge-base size, and
+`CHAT_HISTORY_LIMIT`.
+
+### Two ceilings, not one
+
+The message quota is a fair-use limit sold to the customer. It cannot see cost:
+a tenant with a 5,000-token knowledge base running the full 5-step loop costs
+about 10x a typical tenant for the same message count.
+
+So `PLAN_COST_CEILING_PCT` (default 35) caps estimated LLM spend as a share of
+plan revenue, and that is the actual margin guard. Free trials have no revenue
+to take a share of, so `trial` carries an absolute `costCeilingIls`
+(`TRIAL_COST_CEILING_ILS`, default 20 ₪).
+
+Worst case at full quota, with both ceilings applied:
+
+| Plan | Typical cost | Worst case | Ceiling | Worst-case margin |
+|---|---|---|---|---|
+| `starter` | 17 ₪ | 83 ₪ | 87 ₪ | 67% |
+| `bundle3` | 52 ₪ | 250 ₪ | 175 ₪ | 65% |
+| `agency` | 173 ₪ | 832 ₪ | 451 ₪ | 65% |
+
+Reproduce any of this against your own provider's prices by setting
+`MODEL_PRICING_JSON` and reading `/api/admin/margin`.
 
 ## Margin
 
@@ -140,6 +204,8 @@ estimate, flagged `estimated` so reports stay honest.
 | `MODEL_PRICING_JSON` | — | `{"model":{"in":0.15,"out":0.6}}` USD per 1M tokens |
 | `USD_TO_ILS` | `3.7` | FX rate for reporting |
 | `QUOTA_ENFORCE` | `1` | `0` measures without blocking (safe rollout) |
+| `PLAN_COST_CEILING_PCT` | `35` | Cap LLM spend at this share of plan revenue |
+| `TRIAL_COST_CEILING_ILS` | `20` | Absolute cap for free trials |
 | `LLM_DEFAULT_MODEL` | `gpt-4o-mini` | Default chat model |
 
 **The default model is the single biggest lever on gross margin.** Hebrew FAQ

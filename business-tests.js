@@ -64,6 +64,7 @@ const scratchDb = new DatabaseSync(path.join(tmpRoot, 'scratch.db'));
 // --- Usage metering + quota ----------------------------------------------
 {
   const metering = await import('./usage-metering.js');
+  const registry = await import('./tenant-registry.js');
   metering.initUsageMetering(scratchDb);
 
   const cost = metering.estimateCostUsd({ model: 'gpt-4o-mini', promptTokens: 1_000_000, completionTokens: 0 });
@@ -85,17 +86,26 @@ const scratchDb = new DatabaseSync(path.join(tmpRoot, 'scratch.db'));
   expect('  returns null when the gateway omits usage',
     metering.extractUsage({ choices: [] }, 'openai_compatible') === null);
 
+  // One customer message answered with two LLM calls — the agent loop.
+  metering.recordChatTurn('ten_a');
   metering.recordUsage({ tenantId: 'ten_a', workerId: 'wk_1', model: 'gpt-4o-mini', promptTokens: 2000, completionTokens: 500 });
   metering.recordUsage({ tenantId: 'ten_a', workerId: 'wk_1', model: 'gpt-4o-mini', promptTokens: 1000, completionTokens: 200 });
   const usage = metering.tenantUsage('ten_a');
-  expect('  counts messages per tenant', usage.messages === 2);
+  expect('  counts LLM calls separately from customer messages', usage.messages === 2 && usage.chatTurns === 1);
   expect('  accumulates prompt tokens', usage.promptTokens === 3000);
   expect('  converts cost to shekels', usage.costIls > 0);
 
   const quota = metering.checkQuota('ten_a');
-  expect('quota: allows a tenant well under the limit', quota.allowed === true && quota.used === 2);
+  expect('quota: allows a tenant well under the limit', quota.allowed === true);
+  expect('  counts customer messages, not LLM calls', quota.used === 1 && quota.llmCalls === 2);
   expect('  reports the plan limit', quota.limit > 0);
   expect('  remaining is limit minus used', quota.remaining === quota.limit - quota.used);
+  expect('  exposes a cost ceiling as the real margin guard', quota.costCeilingIls > 0);
+
+  // A realistic clinic (300 conversations x 6 messages) must not be cut off.
+  const plan = registry.getPlan('starter');
+  expect('  a busy clinic fits inside the starter quota', plan.monthlyMessages >= 1800,
+    `starter allows ${plan.monthlyMessages} messages`);
 
   const margin = metering.marginReport();
   const row = margin.tenants.find((r) => r.tenantId === 'ten_a');
