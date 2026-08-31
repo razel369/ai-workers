@@ -1,6 +1,6 @@
 # WhatsApp integration roadmap
 
-Status: **inbound wired + outbound stub** — webhook mounted; Meta send via `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_ID`.
+Status: **inbound wired + signature-verified + 24h window enforced**. Remaining before launch: get Hebrew templates approved in Meta Business Manager and set `WHATSAPP_APP_SECRET`.
 
 ## Goals
 
@@ -54,13 +54,13 @@ integrations/runner.js — Meta Graph API send (or stub)
 - [x] API: `POST /api/workers/:id/whatsapp-route` + auto-register on connect
 - [x] Inbound → `workers.chatWithWorker()` → outbound Meta/Twilio send
 - [ ] Admin UI for multi-number routing
-- [ ] 24h session window handling (Meta policy)
+- [x] 24h session window handling (Meta policy) — `whatsapp-session.js`
 
 ### Phase 4 — Outbound
 
 - [x] `send_whatsapp_message` tool via integrations
 - [x] Meta Cloud API send when `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` set
-- [ ] Hebrew template messages for outbound-initiated chats
+- [x] Hebrew template message support (`WHATSAPP_TEMPLATE_REENGAGE`; templates still need Meta approval)
 - [ ] Auto-reply inbound to worker chat (close the loop)
 
 ## Local testing
@@ -72,7 +72,8 @@ integrations/runner.js — Meta Graph API send (or stub)
 ## Security checklist
 
 - Verify Meta `hub.verify_token` on GET (implemented).
-- Validate Twilio request signature before trusting POST body (TODO).
+- [x] Validate Twilio request signature before trusting POST body (`verifyTwilioSignature`).
+- [x] Validate Meta `X-Hub-Signature-256` before trusting POST body (`verifyMetaSignature`).
 - Never log full access tokens or customer PII in production logs.
 - Per-tenant isolation: one phone number must map to exactly one worker.
 

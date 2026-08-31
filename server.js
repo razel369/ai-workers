@@ -13,7 +13,7 @@
 //   -- Server LLM (required for real AI replies) --
 //   LLM_API_KEY=sk-...                              # OpenAI / Anthropic API key
 //   LLM_PROVIDER=openai_compatible                  # or: anthropic
-//   LLM_MODEL=gpt-5.5                               # model name
+//   LLM_MODEL=gpt-4o-mini                           # model name (cheap default; see margin report)
 //   LLM_BASE_URL=https://api.openai.com             # base URL (change for Ollama, Groq, etc.)
 //
 //   -- Oldschool payment channels (any subset) --
@@ -67,6 +67,16 @@ import {
 } from './paddle-billing.js';
 import { buildEmbedScript } from './embed-widget.js';
 import * as urlSecurity from './url-security.js';
+import * as notify from './notify.js';
+import * as registry from './tenant-registry.js';
+import * as billing from './billing-lifecycle.js';
+import { sendActivationReceipt } from './billing-lifecycle.js';
+import * as metering from './usage-metering.js';
+import * as ownerAlerts from './owner-alerts.js';
+import * as backup from './backup.js';
+import * as compliance from './compliance.js';
+import * as funnel from './funnel-analytics.js';
+import * as waSession from './whatsapp-session.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,7 +113,7 @@ const SWIFT = process.env.SWIFT ?? '';
 // Server LLM (not BYOK — the platform provides the AI)
 const LLM_API_KEY = process.env.LLM_API_KEY ?? '';
 const LLM_PROVIDER = process.env.LLM_PROVIDER ?? 'openai_compatible';
-const LLM_MODEL = process.env.LLM_MODEL ?? 'gpt-5.5';
+const LLM_MODEL = process.env.LLM_MODEL ?? process.env.LLM_DEFAULT_MODEL ?? 'gpt-4o-mini';
 const LLM_BASE_URL = process.env.LLM_BASE_URL ?? '';
 
 // --- Named constants ------------------------------------------------------
@@ -132,7 +142,7 @@ if (!process.env.EMBED_ALLOWED_ORIGINS && process.env.NODE_ENV === 'production')
   console.warn('[security] EMBED_ALLOWED_ORIGINS is not set; embed widget accepts requests from any origin. Set to a comma-separated list or "*" explicitly.');
 }
 const VERCEL_INLINE_SCRIPT = process.env.VERCEL ? '<script>window.__VERCEL__=true;</script>' : '';
-const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics();</script>';
+const ANALYTICS_LANDING_SCRIPT = '<script type="module">import{initAnalytics}from"/analytics-client.js";void initAnalytics({funnelStep:"landing_view"});</script>';
 
 /** Platform-managed MCP presets — users connect via button, never paste URLs/tokens */
 const MCP_PRESETS = {
@@ -224,6 +234,27 @@ const newId = (p) => `${p}_${crypto.randomBytes(16).toString('hex')}`;
 const hashKey = (k) => crypto.createHash('sha256').update(k).digest('hex');
 
 integrations.initOAuth({ db, publicBaseUrl: PUBLIC_BASE_URL, newId });
+
+// --- Revenue, reliability and compliance subsystems -----------------------
+//
+// Each of these owns a loop the product previously had no answer for:
+// notify/billing close the recurring-revenue loop, metering protects gross
+// margin, backup protects the data, compliance answers data-subject requests,
+// funnel measures the conversion path.
+notify.initNotify(db);
+registry.initTenantRegistry(db);
+metering.initUsageMetering(db);
+billing.initBilling({ database: db, workersModule: workers, baseUrl: PUBLIC_BASE_URL });
+ownerAlerts.initOwnerAlerts({ baseUrl: PUBLIC_BASE_URL });
+compliance.initCompliance({ database: db, workersModule: workers });
+funnel.initFunnelAnalytics(db);
+waSession.initWhatsAppSessions(db);
+backup.initBackup({
+  database: db,
+  platformDbPath: DB_PATH,
+  tenantsDirectory: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
+  dataDir: DATA_DIR,
+});
 
 // API key validation: check the key exists in the api_keys table (not just any sk_ string)
 // Also enforces quota: every authenticated call consumes one unit; over-limit returns null
@@ -734,11 +765,13 @@ function embedCorsHeaders(req) {
       'vary': 'Origin',
     };
   }
+  // Reflect the actual origin even when all are allowed: a literal '*' bars
+  // credentialed requests from the widget and hides which sites are embedding.
   return {
-    'access-control-allow-origin': allowAll ? '*' : origin,
+    'access-control-allow-origin': origin,
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    ...(allowAll ? {} : { 'vary': 'Origin' }),
+    'vary': 'Origin',
   };
 }
 
@@ -1609,6 +1642,14 @@ function isAdmin(req, parsedUrl) {
 
 // --- Routes ---------------------------------------------------------------
 
+function trackFunnel(step, tenantId, props = {}) {
+  // Server-side funnel steps: client-side beacons are blocked often enough that
+  // the conversion numbers that matter cannot depend on them.
+  try {
+    funnel.recordEvent({ step, sessionKey: `tenant:${tenantId}`, tenantId, props });
+  } catch {}
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
   if (req.method === 'OPTIONS') {
@@ -1642,6 +1683,15 @@ const server = http.createServer(async (req, res) => {
       integrationsCatalog: integrations.listCatalog().length,
       payment: { ...paymentConfigStatus(), paddle: paddleConfigStatus() },
       trialDays: TRIAL_DAYS,
+      // Everything below answers "is this actually a working business today?"
+      notifications: notify.notifyConfigStatus(),
+      billing: { graceDays: billing.GRACE_DAYS, ...billing.billingStats().lastRun ? { lastRun: billing.billingStats().lastRun } : {} },
+      usage: metering.usageConfigStatus(),
+      backups: backup.backupStatus(),
+      compliance: compliance.complianceStatus(),
+      ownerAlerts: ownerAlerts.ownerAlertsStatus(),
+      whatsappSessions: waSession.sessionStats(),
+      plans: registry.listPlans().map((pl) => ({ id: pl.id, priceIls: pl.priceIls, maxWorkers: pl.maxWorkers })),
     });
   }
   if (handleLegalRoutes(req, res, url, send)) return;
@@ -1660,6 +1710,7 @@ const server = http.createServer(async (req, res) => {
   if (await handleWhatsAppWebhook(req, res, url, {
     send,
     readBody,
+    publicUrl: `${resolveBaseUrl(req)}${url.pathname}`,
     processInbound: (inbound) => processWhatsAppInbound(db, {
       chatWithWorker: workers.chatWithWorker,
       logAgentActions: workers.logAgentActions,
@@ -1844,6 +1895,16 @@ const server = http.createServer(async (req, res) => {
     if (!businessName) return send(res, 400, { error: 'business_name_required' });
     if (!contact) return send(res, 400, { error: 'contact_required' });
     const issued = issueSelfServeTenant({ businessName, contact });
+    // Without a registry row the tenant is unreachable: no renewal reminder,
+    // no lead alert, no receipt. Register before returning the key.
+    try {
+      registry.upsertTenant({ tenantId: issued.tenantId, businessName, contact, plan: TRIAL_DAYS > 0 ? 'trial' : 'starter' });
+    } catch (e) {
+      console.warn('[signup] tenant registry write failed:', e?.message ?? e);
+    }
+    try {
+      funnel.recordEvent({ step: 'signup_completed', sessionKey: `tenant:${issued.tenantId}`, tenantId: issued.tenantId });
+    } catch {}
     return send(res, 200, {
       ok: true,
       key: issued.key,
@@ -1852,6 +1913,181 @@ const server = http.createServer(async (req, res) => {
       label: issued.label,
       note: 'Store this key locally. It lets you configure workers; activation still requires payment approval.',
     });
+  }
+
+  // --- Funnel analytics (public, no PII) ---------------------------------
+
+  if (req.method === 'POST' && url.pathname === '/api/track') {
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const result = funnel.recordEvent({
+      step: body.step,
+      sessionKey: body.sessionKey,
+      path: body.path,
+      referrer: body.referrer,
+      props: body.props,
+    });
+    // Analytics must never surface as a user-visible error.
+    return send(res, result.ok ? 204 : 204, '', { 'content-type': 'text/plain' });
+  }
+
+  // --- Plans (public pricing catalogue) ----------------------------------
+
+  if (req.method === 'GET' && url.pathname === '/api/plans') {
+    return send(res, 200, {
+      plans: registry.listPlans(),
+      trialDays: TRIAL_DAYS,
+      graceDays: billing.GRACE_DAYS,
+    });
+  }
+
+  // --- Account: usage, quota, notification preferences -------------------
+
+  if (req.method === 'GET' && url.pathname === '/api/account/usage') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const usage = metering.tenantUsage(tenantId);
+    const quota = metering.checkQuota(tenantId);
+    const tenant = registry.getTenant(tenantId);
+    return send(res, 200, {
+      usage: { messages: usage.messages, tokens: usage.promptTokens + usage.completionTokens, period: usage.period },
+      quota,
+      plan: registry.getPlan(tenant?.plan),
+      contact: {
+        email: tenant?.contactEmail ?? '',
+        phone: tenant?.contactPhone ?? '',
+        notifyEmail: tenant?.notifyEmail ?? true,
+        notifyWhatsapp: tenant?.notifyWhatsapp ?? false,
+        retentionDays: tenant?.retentionDays ?? compliance.DEFAULT_RETENTION_DAYS,
+      },
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/account/notifications') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const updated = registry.updateNotificationPrefs(tenantId, {
+      notifyEmail: body.notifyEmail,
+      notifyWhatsapp: body.notifyWhatsapp,
+      contactEmail: body.contactEmail,
+      contactPhone: body.contactPhone,
+      retentionDays: body.retentionDays,
+    });
+    if (!updated) return send(res, 404, { error: 'tenant_not_found' });
+    return send(res, 200, { ok: true, contact: { email: updated.contactEmail, phone: updated.contactPhone,
+      notifyEmail: updated.notifyEmail, notifyWhatsapp: updated.notifyWhatsapp, retentionDays: updated.retentionDays } });
+  }
+
+  // --- Data subject requests (privacy law: access + erasure) -------------
+  //
+  // The tenant is the controller of their end customers' data and answers these
+  // requests; the platform gives them the mechanism.
+
+  if (req.method === 'POST' && url.pathname === '/api/account/data-export') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.customerId && !body.phone && !body.email) {
+      return send(res, 400, { error: 'identifier_required', hint: 'customerId, phone or email' });
+    }
+    return send(res, 200, compliance.exportCustomerData(tenantId, {
+      customerId: cleanText(body.customerId, 120),
+      phone: cleanText(body.phone, 40),
+      email: cleanText(body.email, 160),
+    }));
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/account/data-delete') {
+    const tenantId = requireAuth(req);
+    if (!tenantId) return send(res, 401, { error: 'auth_required' });
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    if (!body.customerId && !body.phone && !body.email) {
+      return send(res, 400, { error: 'identifier_required', hint: 'customerId, phone or email' });
+    }
+    if (body.confirm !== true) {
+      return send(res, 400, { error: 'confirmation_required', hint: 'pass confirm:true — erasure is irreversible' });
+    }
+    const result = compliance.deleteCustomerData(tenantId, {
+      customerId: cleanText(body.customerId, 120),
+      phone: cleanText(body.phone, 40),
+      email: cleanText(body.email, 160),
+    });
+    return send(res, 200, result);
+  }
+
+  // --- Admin: margin, funnel, billing, backups, notifications ------------
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/margin') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, metering.marginReport(url.searchParams.get('period') || undefined));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/funnel') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, funnel.funnelReport({ days: Number(url.searchParams.get('days')) || 30 }));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/billing') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, billing.billingStats());
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/billing-run') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const result = await billing.runBillingCycle({ force: true });
+    recordAdminAudit(req, { action: 'billing_run', targetType: 'system', targetId: 'billing', metadata: result });
+    return send(res, 200, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/backups') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, { ...backup.backupStatus(), verification: backup.verifyLatestBackup() });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/backup-now') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const result = await backup.runBackup({ force: true });
+    recordAdminAudit(req, { action: 'backup_run', targetType: 'system', targetId: 'backup', metadata: result });
+    return send(res, result.ok ? 200 : 500, result);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/notifications') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    return send(res, 200, {
+      config: notify.notifyConfigStatus(),
+      stats: notify.outboxStats(),
+      recent: notify.recentNotifications(Number(url.searchParams.get('limit')) || 50),
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/tenants') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const tenants = registry.listTenants().map((t) => ({
+      ...t,
+      usage: metering.tenantUsage(t.tenantId),
+      quota: metering.checkQuota(t.tenantId),
+      // A tenant with no email and no phone cannot be billed or alerted.
+      reachable: !!(t.contactEmail || t.contactPhone),
+    }));
+    return send(res, 200, {
+      tenants,
+      unreachable: tenants.filter((t) => !t.reachable).length,
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/retention-run') {
+    if (!isAdmin(req, url)) return send(res, 401, { error: 'admin_only' });
+    const result = compliance.runRetentionPurge({ force: true });
+    recordAdminAudit(req, { action: 'retention_run', targetType: 'system', targetId: 'retention', metadata: result });
+    return send(res, 200, result);
   }
 
   // --- Workers: marketplace + builder + chat -----------------------------
@@ -1926,6 +2162,7 @@ const server = http.createServer(async (req, res) => {
     if (!body.templateId) return send(res, 400, { error: 'templateId_required' });
     const res2 = workers.buyTemplate({ tenantId, templateId: body.templateId, paymentChannel: body.paymentChannel, paymentReference: body.paymentReference });
     if (!res2.ok) return send(res, 400, res2);
+    trackFunnel('worker_created', tenantId, { templateId: body.templateId });
     return send(res, 200, { ok: true, workerId: res2.workerId, template: { id: res2.template.id, name: res2.template.name, rentPriceIls: res2.template.rentPriceIls }, message: 'Worker instantiated in pending_payment state. Pay via /invoice and ask the admin to mark the worker paid.' });
   }
 
@@ -1944,6 +2181,7 @@ const server = http.createServer(async (req, res) => {
       llm: body.llm ? { provider: body.llm.provider, model: body.llm.model, baseUrl: body.llm.baseUrl } : undefined,
     });
     if (!updated.ok) return send(res, 500, { error: 'update_failed', reason: updated.error, workerId: res2.workerId });
+    trackFunnel('worker_created', tenantId, { templateId: body.templateId });
     return send(res, 200, { ok: true, workerId: res2.workerId });
   }
 
@@ -2056,10 +2294,12 @@ const server = http.createServer(async (req, res) => {
       if (qe && qe.reason === 'quota_exceeded') return send(res, 402, { error: 'quota_exceeded', used: qe.used, limit: qe.limit });
       return send(res, 401, { error: 'auth_required' });
     }
+    // No customerId means the default (unscoped) conversation — the same bucket
+    // /chat writes to when the caller does not supply one. Rejecting it made the
+    // owner's own transcript unreadable from the dashboard.
     const customerId = (url.searchParams.get('customerId') ?? '').toString().slice(0, 128);
-    if (!customerId) return send(res, 400, { error: 'customerId_required' });
     const messages = workers.listMessages(tenantId, msgMatch[1], customerId);
-    return send(res, 200, { messages });
+    return send(res, 200, { messages, customerId });
   }
 
   // API: chat with worker (SSE stream)
@@ -2177,6 +2417,7 @@ const server = http.createServer(async (req, res) => {
     const worker = workers.getWorker(tenantId, workerId);
     if (!worker) return send(res, 404, { error: 'not_found' });
     const cfg = buildPaddleCheckoutConfig({ workerId, tenantId, templateId: worker.templateId });
+    if (cfg.ok) trackFunnel('checkout_opened', tenantId, { workerId });
     return send(res, cfg.ok ? 200 : 400, cfg);
   }
 
@@ -2202,6 +2443,10 @@ const server = http.createServer(async (req, res) => {
       note: body.note,
       amountIls: tpl?.rentPriceIls ?? 0,
     });
+    trackFunnel('activation_requested', tenantId, { channel: body.channel ?? '' });
+    // The contact submitted with a payment proof is often the first real one we
+    // get — keep the registry current so renewal reminders can reach them.
+    try { registry.upsertTenant({ tenantId, contact }); } catch {}
     const verify = tryAutoVerifyActivationProof({ reference: body.reference, channel: body.channel });
     if (verify.verified) {
       const activated = autoActivateWorker({
@@ -2469,6 +2714,17 @@ const server = http.createServer(async (req, res) => {
       });
       return send(res, 400, res2);
     }
+    // A manually approved payment deserves the same receipt as a card payment —
+    // Bit and bank transfer are the primary Israeli channels.
+    try {
+      const paidWorker = workers.getWorker(body.tenantId, body.workerId);
+      sendActivationReceipt({
+        tenantId: body.tenantId, workerId: body.workerId,
+        workerName: paidWorker?.name, amountIls: body.amountIls ?? 0,
+        paidUntil: res2.paidUntil, reference: body.paymentReference ?? 'admin-approval',
+      });
+      trackFunnel('payment_completed', body.tenantId, { channel: body.paymentChannel ?? 'manual' });
+    } catch {}
     markActivationRequestReviewed(body.activationRequestId, 'approved');
     recordAdminAudit(req, {
       action: 'admin_mark_worker_paid',
@@ -2818,10 +3074,38 @@ function startServer() {
     if (BANK_ACCOUNT) console.log(`    - Bank transfer: ${BANK_NAME} branch ${BANK_BRANCH} acct ${BANK_ACCOUNT}`);
     console.log(`  Admin: ${ADMIN_TOKEN ? 'ENABLED' : 'DISABLED (set ADMIN_TOKEN to enable)'}`);
     console.log(`  Invoice: ${PUBLIC_BASE_URL}/invoice`);
+
+    // Background loops. Each is idempotent and safe across restarts.
+    const billingStarted = billing.startBillingScheduler();
+    const backupStarted = backup.startBackupScheduler();
+    const retentionStarted = compliance.startRetentionScheduler({ extraPurges: [funnel.purgeOldEvents, notify.purgeOldNotifications] });
+    console.log(`  Billing cycle: ${billingStarted.started ? `daily at ${billingStarted.runHour}:00, ${billingStarted.graceDays}d grace` : `OFF (${billingStarted.reason ?? 'disabled'})`}`);
+    console.log(`  Backups: ${backupStarted.started ? `daily at ${backupStarted.runHour}:00` : 'OFF'}`);
+    console.log(`  Retention purge: ${retentionStarted.started ? 'ON' : 'OFF'}`);
+
+    // These are silent revenue/data losses, so say them loudly at boot rather
+    // than leaving them to be discovered from a customer complaint.
+    const mail = notify.notifyConfigStatus();
+    if (!mail.deliverable) {
+      console.warn('  [WARN] No email transport configured — renewal reminders, receipts and lead alerts cannot be sent. Set MAIL_FROM + a provider key.');
+    }
+    const bk = backup.backupStatus();
+    for (const w of bk.warnings ?? []) console.warn(`  [WARN] backup: ${w}`);
+    for (const w of paddleConfigStatus().warnings ?? []) console.warn(`  [WARN] paddle: ${w}`);
+    const wa = whatsappConfigStatus();
+    if (wa.enabled && wa.signatureVerification !== 'enforced') {
+      console.warn('  [WARN] WhatsApp webhook signature verification is NOT configured — the endpoint is publicly forgeable.');
+    }
   });
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { console.log(`\n${sig}, shutting down`); server.close(() => { db.close(); process.exit(0); }); });
+    process.on(sig, () => {
+      console.log(`\n${sig}, shutting down`);
+      billing.stopBillingScheduler();
+      backup.stopBackupScheduler();
+      compliance.stopRetentionScheduler();
+      server.close(() => { db.close(); process.exit(0); });
+    });
   }
 }
 

@@ -44,3 +44,51 @@ Track deployment and feature phases for AI Workers production launch.
 
 - [x] `GET /invoice/:workerId` HTML receipt with מע"מ placeholder
 - [x] Landing page: 3 case study cards (Hebrew pilot copy)
+
+## Phase 8 — Recurring revenue loop
+
+- [x] Platform transactional email/WhatsApp with retrying outbox (`notify.js`)
+- [x] Daily billing cycle: T-7/T-3/T-1 reminders, trial expiry (`billing-lifecycle.js`)
+- [x] Grace period instead of a hard cutoff — a lapsed worker keeps serving
+- [x] Dunning stages 1-3, then reversible suspension (data preserved)
+- [x] Payment receipts on successful charge
+- [x] Paddle `subscription.canceled` / `past_due` / `payment_failed` handled
+- [x] Plan tiers incl. bundles and annual prepay (`GET /api/plans`)
+- [ ] Move `PADDLE_ENVIRONMENT` to `production` and verify a live card
+- [ ] Configure a mail provider + `MAIL_FROM` in Railway
+
+## Phase 9 — Unit economics
+
+- [x] Per-tenant token + cost attribution on every LLM call (`usage-metering.js`)
+- [x] Real monthly message quotas enforced from the plan
+- [x] Cost-appropriate default model (`gpt-4o-mini`) instead of a frontier default
+- [x] Margin report per tenant (`GET /api/admin/margin`)
+- [x] First-party funnel analytics — the old client only ran on `*.vercel.app`
+- [ ] Verify `MODEL_PRICING_JSON` against the live provider's price list
+
+## Phase 10 — Reliability
+
+- [x] Daily encrypted hot backups (`VACUUM INTO`) with off-site S3 upload
+- [x] Restore path + automated archive round-trip test
+- [x] Cross-tenant aggregate scans cached (were O(tenants) per request)
+- [x] CI green — `business-tests.js` covers every new subsystem
+- [ ] Configure `BACKUP_S3_*` and store `BACKUP_ENCRYPTION_KEY` off-box
+- [ ] Rehearse a production restore into staging
+
+## Phase 11 — WhatsApp production readiness
+
+- [x] Meta `X-Hub-Signature-256` + Twilio `X-Twilio-Signature` verification
+- [x] 24-hour customer service window tracked per (number, customer)
+- [x] Approved Hebrew template messages outside the window
+- [ ] Get Hebrew templates approved in Meta Business Manager
+- [ ] Set `WHATSAPP_APP_SECRET` and `WHATSAPP_TEMPLATE_REENGAGE`
+- [ ] Admin UI for multi-number routing
+
+## Phase 12 — Privacy compliance
+
+- [x] Configurable retention with automatic purge (leads deliberately exempt)
+- [x] Data subject access + erasure endpoints by phone/email/conversation id
+- [x] AI disclosure appended after the tenant's persona so it cannot be removed
+- [x] DPA template (`docs/legal/dpa-he.md`)
+- [ ] Sign a DPA with each tenant and with the LLM provider
+- [ ] Publish a data-protection contact and an incident procedure

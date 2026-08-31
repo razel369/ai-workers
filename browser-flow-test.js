@@ -42,7 +42,14 @@ async function createWorkerViaApi() {
 
 console.log(`Browser flow tests against ${BASE}\n`);
 
-const browser = await chromium.launch({ headless: true });
+// PLAYWRIGHT_CHROMIUM_PATH lets a sandbox with a pre-installed Chromium run
+// these tests without re-downloading a browser. CI leaves it unset and uses the
+// version Playwright manages itself.
+const chromiumExecutable = (process.env.PLAYWRIGHT_CHROMIUM_PATH ?? '').trim();
+const browser = await chromium.launch({
+  headless: true,
+  ...(chromiumExecutable ? { executablePath: chromiumExecutable } : {}),
+});
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultNavigationTimeout(30000);

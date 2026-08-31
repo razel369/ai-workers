@@ -41,13 +41,29 @@ Workers use the platform-provided LLM configured on the server. If no `LLM_API_K
 
 ```
 src/
-├── server.js        # HTTP server, dashboard, admin routes, payment channels
-├── workers.js       # Worker engine: templates, CRUD, chat, LLM runtime, encryption
-├── workers-ui.html  # Marketplace + Builder + Chat SPA
-├── test.js              # platform/API tests
-├── worker-tests.js      # worker lifecycle/API tests
-├── browser-flow-test.js # rendered buy -> activate -> chat regression
-└── run-tests.js         # isolated test runner used by npm test
+├── server.js             # HTTP server, dashboard, admin routes, payment channels
+├── workers.js            # Worker engine: templates, CRUD, chat, LLM runtime, encryption
+├── workers-ui.html       # Marketplace + Builder + Chat SPA
+│
+│   # Recurring revenue
+├── tenant-registry.js    # Who the customer is, how to reach them, which plan
+├── billing-lifecycle.js  # Renewal reminders, grace period, dunning, suspension
+├── notify.js             # Transactional email/WhatsApp outbox (zero deps)
+├── owner-alerts.js       # Push new leads + escalations to the business owner
+├── usage-metering.js     # Token/cost attribution, quotas, margin per tenant
+│
+│   # Reliability + compliance
+├── backup.js             # Encrypted daily snapshots, off-site S3, restore
+├── compliance.js         # Retention purge, data export/erasure, AI disclosure
+├── funnel-analytics.js   # First-party conversion funnel
+├── whatsapp-session.js   # Meta 24h window + approved Hebrew templates
+│
+│   # Tests
+├── test.js               # platform/API tests
+├── worker-tests.js       # worker lifecycle/API tests
+├── business-tests.js     # billing, metering, backup, compliance, WhatsApp
+├── browser-flow-test.js  # rendered buy -> activate -> chat regression
+└── run-tests.js          # isolated test runner used by npm test
 ```
 
 Zero runtime npm dependencies. Uses Node 22 built-ins: `node:http`, `node:sqlite`, `node:crypto`. Playwright is a dev dependency for browser-flow verification.
@@ -157,11 +173,56 @@ Deployment checklist:
 **Production URL:** `https://paid-agent-demo-production.up.railway.app` — this is the only supported live environment.  
 Vercel (if still connected) uses ephemeral `/tmp` storage and is not used for real customers; disconnect it in the Vercel dashboard to avoid confusion.
 
+## Operating the business
+
+The product is only half of it. These are the loops that decide whether
+customers renew, whether the unit economics work, and whether the data survives:
+
+| Concern | Where | Doc |
+|---|---|---|
+| Renewals, grace period, dunning | `billing-lifecycle.js` | [docs/REVENUE-OPERATIONS.md](docs/REVENUE-OPERATIONS.md) |
+| Reaching customers at all | `notify.js` | same |
+| Gross margin per tenant | `usage-metering.js` | same |
+| Conversion funnel | `funnel-analytics.js` | same |
+| Backups and restore | `backup.js` | [docs/BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md) |
+| Retention, erasure, DPA | `compliance.js` | [docs/COMPLIANCE.md](docs/COMPLIANCE.md) |
+
+Three settings decide whether the business actually functions in production:
+
+1. **`MAIL_FROM` + a mail provider key.** Without a transport, no renewal
+   reminder, receipt or lead alert can be sent, and customers churn silently on
+   their renewal date. The server logs a `[WARN]` at boot when this is missing.
+2. **`BACKUP_S3_*` + `BACKUP_ENCRYPTION_KEY`.** A backup that stays on the volume
+   it protects is not a backup.
+3. **`PADDLE_ENVIRONMENT=production`.** In sandbox, real cards cannot be charged
+   and every activation still waits on a manual admin approval.
+
+`GET /health` reports all three, plus backup freshness, quota enforcement and
+WhatsApp signature verification.
+
+### Admin endpoints
+
+```bash
+A="Authorization: Bearer $ADMIN_TOKEN"
+curl -H "$A" $BASE/api/admin/margin         # revenue - LLM cost, per tenant
+curl -H "$A" $BASE/api/admin/funnel?days=30 # conversion + biggest drop-off
+curl -H "$A" $BASE/api/admin/tenants        # plans, usage, who is unreachable
+curl -H "$A" $BASE/api/admin/billing        # last cycle, recent events
+curl -H "$A" $BASE/api/admin/backups        # freshness + restore verification
+curl -H "$A" $BASE/api/admin/notifications  # outbox, failures, last errors
+curl -X POST -H "$A" $BASE/api/admin/billing-run   # force a billing cycle
+curl -X POST -H "$A" $BASE/api/admin/backup-now    # force a backup
+```
+
 ## Why this is worth paying for (2026)
 
 AI models are commodity. The value is in **vertical integration**:
 - Pre-built Hebrew-first templates tuned for Israeli business culture
 - No-code builder — businesses customize without developers
-- Israeli payment methods (PayPal, Bit, bank transfer — no Stripe needed)
+- Israeli payment methods (Bit, PayPal, bank transfer) plus self-serve card
+  checkout through Paddle as Merchant of Record
 - Per-tenant worker isolation with stable tenant IDs, key rotation, recovery, and admin audit events
-- WhatsApp integration (coming soon) — the #1 business channel in Israel
+- WhatsApp with the Meta 24-hour window handled properly — the #1 business
+  channel in Israel, and the fastest way to get a number blocked if handled wrong
+- A subscription that renews, chases itself, and never drops a customer
+  mid-conversation over a late payment

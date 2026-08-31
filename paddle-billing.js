@@ -3,6 +3,9 @@
 import crypto from 'node:crypto';
 import * as workers from './workers.js';
 import { autoActivateWorker } from './payment-webhooks.js';
+import * as registry from './tenant-registry.js';
+import * as notify from './notify.js';
+import { notifyTenant } from './billing-lifecycle.js';
 
 const PADDLE_API_KEY = (process.env.PADDLE_API_KEY ?? '').trim();
 const PADDLE_CLIENT_TOKEN = (process.env.PADDLE_CLIENT_TOKEN ?? '').trim();
@@ -29,14 +32,24 @@ export function paddleEnabled() {
 }
 
 export function paddleConfigStatus() {
+  const env = PADDLE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
+  const sandboxInProd = env === 'sandbox' && process.env.NODE_ENV === 'production';
   return {
     enabled: paddleEnabled(),
-    environment: PADDLE_ENVIRONMENT === 'production' ? 'production' : 'sandbox',
+    environment: env,
     clientTokenSet: !!PADDLE_CLIENT_TOKEN,
     apiKeySet: !!PADDLE_API_KEY,
     webhookSecretSet: !!PADDLE_WEBHOOK_SECRET,
     defaultPriceId: PADDLE_DEFAULT_PRICE_ID ? `${PADDLE_DEFAULT_PRICE_ID.slice(0, 8)}…` : null,
     priceMapTemplates: Object.keys(PRICE_MAP).filter((k) => k !== 'default').length,
+    // Card checkout is what removes the manual-approval bottleneck; if it is
+    // not fully live every new customer still waits on an admin.
+    selfServeReady: paddleEnabled() && !!PADDLE_WEBHOOK_SECRET && env === 'production',
+    warnings: [
+      !paddleEnabled() ? 'Paddle checkout disabled — every activation needs manual admin approval' : null,
+      !PADDLE_WEBHOOK_SECRET ? 'PADDLE_WEBHOOK_SECRET missing — paid subscriptions will never activate' : null,
+      sandboxInProd ? 'PADDLE_ENVIRONMENT=sandbox in production — real cards cannot be charged' : null,
+    ].filter(Boolean),
   };
 }
 
@@ -104,7 +117,7 @@ function extractCustomData(entity = {}) {
 
 function activateFromPaddle({ workerId, tenantId, reference, days, amountIls, eventType }) {
   if (!workerId || !tenantId) return { ok: false, error: 'missing_custom_data' };
-  return autoActivateWorker({
+  const result = autoActivateWorker({
     workerId,
     tenantId,
     channel: 'paddle',
@@ -113,6 +126,8 @@ function activateFromPaddle({ workerId, tenantId, reference, days, amountIls, ev
     amountIls,
     source: `paddle-${eventType}`,
   });
+  // The receipt is sent by autoActivateWorker so every channel gets one.
+  return result;
 }
 
 export function processPaddleWebhookEvent(event) {
@@ -141,16 +156,87 @@ export function processPaddleWebhookEvent(event) {
 
   if (eventType === 'subscription.updated') {
     const status = String(data.status ?? '').toLowerCase();
+    const subId = data.id ?? '';
     if (status === 'active' || status === 'trialing') {
-      const subId = data.id ?? '';
-      return activateFromPaddle({
-        workerId, tenantId, reference: subId, eventType,
-      });
+      linkSubscription({ tenantId, subId, status, priceId: firstPriceId(data) });
+      return activateFromPaddle({ workerId, tenantId, reference: subId, eventType });
     }
+    // past_due means the card failed. The worker keeps serving through the
+    // grace window while the billing cycle chases it — cutting service off the
+    // moment a card expires is how a renewal becomes a cancellation.
+    if (status === 'past_due' || status === 'paused') {
+      registry.setSubscriptionStatus(tenantId, status);
+      notifyPaymentProblem({ tenantId, workerId, status });
+      return { ok: true, eventType, status, action: 'dunning_started' };
+    }
+    registry.setSubscriptionStatus(tenantId, status);
+    return { ok: true, eventType, status };
+  }
+
+  // A cancellation does not revoke service immediately — the customer paid
+  // through the end of the current period, and paid_until already encodes it.
+  if (eventType === 'subscription.canceled' || eventType === 'subscription.cancelled') {
+    if (tenantId) registry.setSubscriptionStatus(tenantId, 'canceled');
+    return { ok: true, eventType, action: 'marked_canceled', servedUntilPeriodEnd: true };
+  }
+
+  if (eventType === 'transaction.payment_failed') {
+    if (tenantId) registry.setSubscriptionStatus(tenantId, 'payment_failed');
+    notifyPaymentProblem({ tenantId, workerId, status: 'payment_failed' });
+    return { ok: true, eventType, action: 'dunning_started' };
   }
 
   return { ok: true, ignored: true, eventType };
 }
+
+function firstPriceId(data) {
+  const items = data?.items ?? [];
+  return items[0]?.price?.id ?? items[0]?.price_id ?? '';
+}
+
+/** Map a Paddle price back to one of our plans so quotas match what was sold. */
+function planForPriceId(priceId) {
+  if (!priceId) return null;
+  const entry = Object.entries(PRICE_MAP).find(([, v]) => v === priceId);
+  return entry && registry.PLANS[entry[0]] ? entry[0] : null;
+}
+
+function linkSubscription({ tenantId, subId, status, priceId }) {
+  if (!tenantId) return;
+  try {
+    const plan = planForPriceId(priceId);
+    if (plan) {
+      registry.setTenantPlan(tenantId, plan, {
+        subscriptionProvider: 'paddle', subscriptionId: subId, subscriptionStatus: status,
+      });
+    } else {
+      registry.setSubscriptionStatus(tenantId, status);
+    }
+  } catch {}
+}
+
+function notifyPaymentProblem({ tenantId, workerId, status }) {
+  if (!tenantId) return;
+  try {
+    const t = registry.getTenant(tenantId);
+    const businessName = t?.businessName || 'העסק שלך';
+    const label = status === 'payment_failed' ? 'החיוב נכשל' : 'התשלום ממתין';
+    notifyTenant(tenantId, workerId ?? '', {
+      subject: `${label} — נדרש עדכון אמצעי תשלום`,
+      html: notify.renderEmail({
+        title: label,
+        intro: `שלום ${businessName}, לא הצלחנו לחייב את אמצעי התשלום שלכם.`,
+        bodyHtml: 'העובד ממשיך לענות ללקוחות בינתיים. כדי שלא תהיה הפסקה בשירות, כדאי לעדכן כרטיס אשראי.',
+        ctaText: 'לעדכון אמצעי תשלום',
+        ctaUrl: `${(process.env.PUBLIC_BASE_URL ?? '').replace(/\/$/, '')}/marketplace#/account`,
+        footerNote: 'אם כבר עדכנתם — אפשר להתעלם מההודעה.',
+      }),
+      wa: `${businessName}: ${label} במנוי. לעדכון אמצעי תשלום: ${(process.env.PUBLIC_BASE_URL ?? '').replace(/\/$/, '')}/marketplace#/account`,
+    }, `paddle:${tenantId}:${status}:${new Date().toISOString().slice(0, 10)}`);
+    notify.flushOutbox({ limit: 5 }).catch(() => {});
+  } catch {}
+}
+
 
 /**
  * @returns {Promise<boolean>} true if handled

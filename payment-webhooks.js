@@ -2,6 +2,8 @@
 
 import crypto from 'node:crypto';
 import * as workers from './workers.js';
+import { sendActivationReceipt } from './billing-lifecycle.js';
+import * as funnel from './funnel-analytics.js';
 
 const PAYMENT_AUTO_VERIFY = process.env.PAYMENT_AUTO_VERIFY === '1';
 const BIT_WEBHOOK_SECRET = process.env.BIT_WEBHOOK_SECRET ?? '';
@@ -70,6 +72,20 @@ export function autoActivateWorker({ workerId, tenantId, channel, reference, day
     paymentReference: reference || source || 'webhook-auto',
     amountIls: amountIls ?? 0,
   });
+  if (res.ok) {
+    sendActivationReceipt({
+      tenantId, workerId, workerName: w.name,
+      amountIls: amountIls ?? 0, paidUntil: res.paidUntil,
+      reference: reference || source || '',
+    });
+    // Closing the funnel here covers every automatic channel at once.
+    try {
+      funnel.recordEvent({
+        step: 'payment_completed', sessionKey: `tenant:${tenantId}`, tenantId,
+        props: { channel: channel || 'webhook' },
+      });
+    } catch {}
+  }
   return res.ok ? { ok: true, paidUntil: res.paidUntil, autoActivated: true } : res;
 }
 

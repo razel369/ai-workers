@@ -702,12 +702,19 @@ let integrationId = null;
   expect('  embed config reflects Origin CORS', cfg.headers.get('access-control-allow-origin') === 'https://customer-site.example');
 }
 {
+  const secret = process.env.BIT_WEBHOOK_SECRET ?? '';
   const r = await req('/api/webhooks/bit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(secret ? { 'x-webhook-secret': secret } : {}) },
+    body: JSON.stringify({ workerId: 'wk_nonexistent' }),
+  });
+  expect('bit webhook rejects missing worker', r.status === 400);
+  const unsigned = await req('/api/webhooks/bit', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ workerId: 'wk_nonexistent' }),
   });
-  expect('bit webhook rejects missing worker', r.status === 400);
+  expect('  bit webhook rejects unsigned request', unsigned.status === 401 || unsigned.status === 503);
 }
 
 {

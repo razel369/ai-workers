@@ -14,6 +14,10 @@ import { SKILLS, getSkill } from './skills.js';
 import { pinnedLookup, validatePublicHttpUrl, fetchPublicHttpContent } from './url-security.js';
 import { applyMediaTemplateEnhancements } from './templates-media.js';
 import { registerMediaTools, resolveMediaFile as resolveMediaFilePath } from './media-tools.js';
+import { isWithinGrace, graceEndsAt, GRACE_DAYS } from './billing-lifecycle.js';
+import * as metering from './usage-metering.js';
+import * as ownerAlerts from './owner-alerts.js';
+import { withAiDisclosure } from './compliance.js';
 import {
   initIntegrationStore,
   registerIntegrationTools,
@@ -473,6 +477,11 @@ function urgencyFromArgs(args = {}) {
   return args.priority || args.urgency || 'normal';
 }
 
+/** Owner alerting must never take down a customer conversation. */
+function notifyOwnerSafely(fn) {
+  try { return (fn()?.sent ?? 0) > 0; } catch { return false; }
+}
+
 async function fireWebhook(event, payload, ctx) {
   const body = { event, payload, workerId: ctx.workerId, tenantId: ctx.tenantId, customerId: ctx.customerId ?? '', at: new Date().toISOString() };
   const url = getWebhookUrlForTenant(ctx.tenantId)
@@ -543,8 +552,14 @@ const TOOL_DEFS = [
         preferences: { company: args.company, email: args.email, leadScore: score },
       });
       const webhook = await fireWebhook('new_lead', { leadId, fullName: args.fullName, company: args.company, phone: args.phone, email: args.email, score, notes: args.notes }, ctx);
+      // Reach the owner directly. The webhook above only fires for the small
+      // minority of tenants who configured one.
+      const alerted = notifyOwnerSafely(() => ownerAlerts.alertNewLead({
+        tenantId: ctx.tenantId, workerId: ctx.workerId, workerName: ctx.workerName ?? 'העובד',
+        lead: { leadId, fullName: args.fullName, company: args.company, phone: args.phone, email: args.email, score, notes: args.notes },
+      }));
       return {
-        result: `Lead saved: ${args.fullName}${args.company ? ' from ' + args.company : ''} (score ${score}/10)${webhook.sent ? '. Webhook notified.' : ''}`,
+        result: `Lead saved: ${args.fullName}${args.company ? ' from ' + args.company : ''} (score ${score}/10)${webhook.sent ? '. Webhook notified.' : ''}${alerted ? ' Owner alerted.' : ''}`,
         leadId, score,
       };
     },
@@ -601,8 +616,12 @@ const TOOL_DEFS = [
       );
       upsertCustomerProfile(ctx.tenantId, ctx.workerId, ctx.customerId, { lastIntent: 'escalation' });
       const webhook = await fireWebhook('escalation', { escalationId: id, reason: args.reason, urgency }, ctx);
+      const alerted = notifyOwnerSafely(() => ownerAlerts.alertEscalation({
+        tenantId: ctx.tenantId, workerId: ctx.workerId, workerName: ctx.workerName ?? 'העובד',
+        escalation: { id, reason: args.reason, urgency },
+      }));
       return {
-        result: `Escalation #${id.slice(0, 12)} created. Priority: ${urgency}. A human will follow up.${webhook.sent ? ' Webhook/Slack notified.' : ''}`,
+        result: `Escalation #${id.slice(0, 12)} created. Priority: ${urgency}. A human will follow up.${webhook.sent ? ' Webhook/Slack notified.' : ''}${alerted ? ' Owner alerted.' : ''}`,
         escalationId: id, urgency,
       };
     },
@@ -1031,7 +1050,8 @@ export function getWorkerInsights(tenantId, workerId) {
   const db = getTenantDb(tenantId);
   const row = db.prepare(`SELECT id, name, status, paid_until, template_id FROM workers WHERE id=?`).get(workerId);
   if (!row) return null;
-  const isActive = row.status === 'active' && (!row.paid_until || new Date(row.paid_until) > new Date());
+  const sub = subscriptionState({ status: row.status, paidUntil: row.paid_until, paused: false });
+  const isActive = sub.isActive;
   const counts = {
     leads: db.prepare(`SELECT COUNT(*) AS c FROM leads WHERE worker_id=?`).get(workerId).c,
     openEscalations: db.prepare(`SELECT COUNT(*) AS c FROM escalations WHERE worker_id=? AND status='open'`).get(workerId).c,
@@ -1499,15 +1519,52 @@ export function getTenantDb(tenantId) {
 // --- Named constants ------------------------------------------------------
 
 const DEFAULT_RENTAL_DAYS = 30;
+
 const LLM_MAX_TOKENS = 1024;
 const MAX_AGENT_STEPS = 5;
 const AGENT_LOOP_TIMEOUT_MS = 45_000;
 const CHAT_HISTORY_LIMIT = 40;
 const MOCK_PERSONA_TRUNCATE = 280;
 
+/**
+ * Whether a worker should answer customers right now, and why.
+ *
+ * Expiry used to be a hard cutoff: the moment paid_until passed, the worker
+ * went silent mid-conversation with no warning to anyone. A subscription that
+ * lapses is a billing problem, not a reason to drop a clinic's patient at
+ * 23:00 — so a lapsed worker keeps serving through the grace window while the
+ * billing cycle chases the renewal, and the UI shows a banner.
+ */
+export function subscriptionState({ status, paidUntil, paused, requirePaid = false }) {
+  const expired = !!paidUntil && new Date(paidUntil) <= new Date();
+  const inGrace = expired && isWithinGrace(paidUntil);
+  // Two callers with deliberately different bars:
+  //   requirePaid=true  — serving real customers needs a real paid_until, so a
+  //                       worker marked active with no rental never goes live.
+  //   requirePaid=false — dashboard/list view, where "active and not expired"
+  //                       is the question being asked.
+  const entitled = requirePaid
+    ? !!paidUntil && (!expired || inGrace)
+    : (!expired || inGrace);
+  const live = status === 'active' && !paused && entitled;
+  return {
+    isActive: live,
+    inGrace,
+    expired,
+    graceEndsAt: inGrace ? graceEndsAt(paidUntil) : null,
+    graceDays: GRACE_DAYS,
+  };
+}
+
 // --- Server LLM config (platform-provided, not BYOK) ---------------------
 
-const DEFAULT_LLM_CONFIG = { apiKey: '', provider: 'openai_compatible', model: 'gpt-5.5', baseUrl: '' };
+// Default to a small, cheap model. Hebrew FAQ answering and lead capture do not
+// need a frontier model, and at a flat 249 ₪/mo subscription the model choice is
+// the single biggest lever on gross margin — a frontier default can cost more
+// per tenant than the tenant pays. Override per deployment with LLM_MODEL, or
+// per worker in the builder, when a template genuinely needs more capability.
+const DEFAULT_CHAT_MODEL = (process.env.LLM_DEFAULT_MODEL ?? 'gpt-4o-mini').trim();
+const DEFAULT_LLM_CONFIG = { apiKey: '', provider: 'openai_compatible', model: DEFAULT_CHAT_MODEL, baseUrl: '' };
 let SERVER_LLM_CONFIG = { ...DEFAULT_LLM_CONFIG };
 
 export function setServerLlmConfig(cfg) {
@@ -1704,11 +1761,18 @@ export function getWorkerHealth(worker) {
     } catch {}
   }
   if (worker.isActive) {
+    if (worker.inGrace) {
+      const left = Math.max(0, Math.ceil((new Date(worker.graceEndsAt).getTime() - Date.now()) / 86400000));
+      return { status: 'grace', labelHe: `המנוי פג — עוד ${left} ימים לחידוש`, tone: 'warn', stats };
+    }
     if (worker.paidUntil && new Date(worker.paidUntil) > new Date()) {
       const d = new Date(worker.paidUntil).toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' });
       return { status: 'active_until', labelHe: `פעיל עד ${d}`, tone: 'ok', stats };
     }
     return { status: 'healthy', labelHe: 'עובד תקין ✓', tone: 'ok', stats };
+  }
+  if (worker.status === 'suspended') {
+    return { status: 'suspended', labelHe: 'מושהה — המנוי לא חודש', tone: 'warn', stats };
   }
   if (worker.status === 'pending_payment') return { status: 'trial', labelHe: 'מצב ניסיון — דמו', tone: 'info', stats };
   return { status: 'expired', labelHe: 'פג תוקף — צריך חידוש', tone: 'warn', stats };
@@ -1811,12 +1875,15 @@ export function listWorkers(tenantId) {
   const db = getTenantDb(tenantId);
   const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, paused, created_at AS createdAt, updated_at AS updatedAt FROM workers ORDER BY created_at DESC`).all();
   return rows.map((r) => {
+    const sub = subscriptionState({ status: r.status, paidUntil: r.paidUntil, paused: r.paused });
     const worker = {
       ...r,
       paused: !!r.paused,
       tenantId,
       template: getTemplate(r.templateId),
-      isActive: r.status === 'active' && (!r.paidUntil || new Date(r.paidUntil) > new Date()) && !r.paused,
+      isActive: sub.isActive,
+      inGrace: sub.inGrace,
+      graceEndsAt: sub.graceEndsAt,
       llm: { hasApiKey: !!getServerLlmConfig().apiKey },
     };
     return { ...worker, health: getWorkerHealth(worker) };
@@ -1838,7 +1905,8 @@ function parseWorkerRow(r) {
   try { skills = JSON.parse(r.skills_json || '[]'); } catch {}
   const srv = getServerLlmConfig();
   const serverHasLlm = !!srv.apiKey;
-  const isActive = r.status === 'active' && (!r.paid_until || new Date(r.paid_until) > new Date()) && !r.paused;
+  const sub = subscriptionState({ status: r.status, paidUntil: r.paid_until, paused: r.paused });
+  const isActive = sub.isActive;
   return {
     id: r.id, name: r.name, templateId: r.template_id,
     persona: r.persona, tasks, knowledge: r.knowledge, tools,
@@ -1854,6 +1922,8 @@ function parseWorkerRow(r) {
     status: r.status,
     paidUntil: r.paid_until,
     isActive,
+    inGrace: sub.inGrace,
+    graceEndsAt: sub.graceEndsAt,
     paused: !!r.paused,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -1935,45 +2005,141 @@ export function adminMarkPaid({ workerId, tenantId, days, paymentChannel, paymen
   db.prepare(`UPDATE workers SET status = 'active', paid_until = ?, updated_at = ? WHERE id = ?`).run(paidUntil, now, workerId);
   db.prepare(`INSERT INTO rentals (worker_id, tenant_id, days, amount_ils, payment_channel, payment_reference, paid_until, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(workerId, tenantId, days, amountIls ?? 0, paymentChannel ?? null, paymentReference ?? null, paidUntil, now);
+  invalidateAggregateCache();
   return { ok: true, paidUntil };
 }
 
-export function adminTenantUsageStats() {
-  if (!fs.existsSync(TENANTS_DIR)) return [];
-  const stats = [];
-  for (const tid of fs.readdirSync(TENANTS_DIR)) {
-    const dir = path.join(TENANTS_DIR, tid);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const dbPath = path.join(dir, 'workers.db');
-    if (!fs.existsSync(dbPath)) continue;
-    const db = new DatabaseSync(dbPath);
-    const workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
-    const activeWorkers = db.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active'`).get()?.c ?? 0;
-    const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
-    const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
-    const escalationCount = db.prepare(`SELECT COUNT(*) AS c FROM escalations`).get()?.c ?? 0;
-    stats.push({ tenantId: tid, workerCount, activeWorkers, messageCount, leadCount, escalationCount });
-    db.close();
-  }
-  return stats.sort((a, b) => b.messageCount - a.messageCount);
+/** Tenant DB handle for modules that operate across tenants (compliance, backup). */
+export function getTenantDbHandle(tenantId) {
+  return getTenantDb(tenantId);
 }
 
-export function adminListAllWorkers() {
-  // Iterate all tenant DBs and collect workers. For small scale this is fine.
-  if (!fs.existsSync(TENANTS_DIR)) return [];
-  const tenants = fs.readdirSync(TENANTS_DIR);
-  const all = [];
-  for (const tid of tenants) {
-    const dir = path.join(TENANTS_DIR, tid);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const dbPath = path.join(dir, 'workers.db');
-    if (!fs.existsSync(dbPath)) continue;
-    const db = new DatabaseSync(dbPath);
-    const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, created_at AS createdAt FROM workers ORDER BY created_at DESC`).all();
-    for (const r of rows) all.push({ ...r, tenantId: tid });
-    db.close();
+/** True once any paid rental has been recorded — distinguishes trials from customers. */
+export function workerHasPaidRental(tenantId, workerId) {
+  try {
+    const db = getTenantDb(tenantId);
+    const row = db.prepare(`SELECT COUNT(*) AS c FROM rentals WHERE worker_id = ? AND amount_ils > 0`).get(workerId);
+    return Number(row?.c ?? 0) > 0;
+  } catch {
+    return false;
   }
-  return all;
+}
+
+/**
+ * Suspend a worker whose grace window ran out. Deliberately reversible and
+ * non-destructive: knowledge, leads and history stay put so a late payment
+ * brings the worker back exactly where it left off.
+ */
+export function adminSuspendWorker(tenantId, workerId) {
+  if (!tenantId || !workerId) return { ok: false, error: 'ids_required' };
+  try {
+    const db = getTenantDb(tenantId);
+    const w = db.prepare(`SELECT id, status FROM workers WHERE id = ?`).get(workerId);
+    if (!w) return { ok: false, error: 'not_found' };
+    if (w.status === 'suspended') return { ok: true, alreadySuspended: true };
+    db.prepare(`UPDATE workers SET status = 'suspended', updated_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), workerId);
+    invalidateAggregateCache();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+/** Bring a suspended worker back — used when a lapsed payment finally lands. */
+export function adminReactivateWorker(tenantId, workerId) {
+  if (!tenantId || !workerId) return { ok: false, error: 'ids_required' };
+  try {
+    const db = getTenantDb(tenantId);
+    const w = db.prepare(`SELECT id FROM workers WHERE id = ?`).get(workerId);
+    if (!w) return { ok: false, error: 'not_found' };
+    db.prepare(`UPDATE workers SET status = 'active', updated_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), workerId);
+    invalidateAggregateCache();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+// --- Cross-tenant aggregate cache ----------------------------------------
+//
+// Every aggregate below walks TENANTS_DIR and opens one SQLite handle per
+// tenant, synchronously. At ten tenants that is invisible; at a few hundred it
+// blocks the event loop on every call — and these are reached from polled
+// dashboard endpoints, so the cost scales with tenants x viewers. In other
+// words the failure arrives exactly when the business starts working.
+//
+// A short TTL keeps the numbers live enough for a dashboard while collapsing a
+// burst of polls into one scan.
+
+const AGGREGATE_TTL_MS = Number(process.env.AGGREGATE_CACHE_MS ?? 30_000);
+const aggregateCache = new Map();
+
+function cachedAggregate(key, compute) {
+  const hit = aggregateCache.get(key);
+  if (hit && Date.now() - hit.at < AGGREGATE_TTL_MS) return hit.value;
+  const value = compute();
+  aggregateCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/** Called after any write that changes cross-tenant totals. */
+export function invalidateAggregateCache() {
+  aggregateCache.clear();
+}
+
+/** Tenant directories that actually contain a worker DB. */
+function tenantDirs() {
+  if (!fs.existsSync(TENANTS_DIR)) return [];
+  const out = [];
+  for (const tid of fs.readdirSync(TENANTS_DIR)) {
+    const dir = path.join(TENANTS_DIR, tid);
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      const dbPath = path.join(dir, 'workers.db');
+      if (fs.existsSync(dbPath)) out.push({ tenantId: tid, dbPath });
+    } catch {}
+  }
+  return out;
+}
+
+export function adminTenantUsageStats() {
+  return cachedAggregate('tenantUsageStats', () => {
+    const stats = [];
+    for (const { tenantId, dbPath } of tenantDirs()) {
+      const db = new DatabaseSync(dbPath);
+      try {
+        const workerCount = db.prepare(`SELECT COUNT(*) AS c FROM workers`).get()?.c ?? 0;
+        const activeWorkers = db.prepare(`SELECT COUNT(*) AS c FROM workers WHERE status='active'`).get()?.c ?? 0;
+        const messageCount = db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0;
+        const leadCount = db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0;
+        const escalationCount = db.prepare(`SELECT COUNT(*) AS c FROM escalations`).get()?.c ?? 0;
+        stats.push({ tenantId, workerCount, activeWorkers, messageCount, leadCount, escalationCount });
+      } finally {
+        try { db.close(); } catch {}
+      }
+    }
+    return stats.sort((a, b) => b.messageCount - a.messageCount);
+  });
+}
+
+export function adminListAllWorkers({ fresh = false } = {}) {
+  const compute = () => {
+    const all = [];
+    for (const { tenantId, dbPath } of tenantDirs()) {
+      const db = new DatabaseSync(dbPath);
+      try {
+        const rows = db.prepare(`SELECT id, name, template_id AS templateId, status, paid_until AS paidUntil, paused, created_at AS createdAt FROM workers ORDER BY created_at DESC`).all();
+        for (const r of rows) all.push({ ...r, paused: !!r.paused, tenantId });
+      } finally {
+        try { db.close(); } catch {}
+      }
+    }
+    return all;
+  };
+  // The billing cycle must never act on a cached view of who is paid up.
+  return fresh ? compute() : cachedAggregate('allWorkers', compute);
 }
 
 export function adminWorkerHealth(workerId) {
@@ -2003,29 +2169,34 @@ export function adminWorkerHealth(workerId) {
 }
 
 export function adminSummary() {
-  if (!fs.existsSync(TENANTS_DIR)) return emptyAdminSummary();
-  const tenants = fs.readdirSync(TENANTS_DIR).filter((t) => {
-    const dir = path.join(TENANTS_DIR, t);
-    try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+  return cachedAggregate('summary', () => {
+    const dirs = tenantDirs();
+    if (!dirs.length) return emptyAdminSummary();
+    let totalWorkers = 0, activeWorkers = 0, pendingWorkers = 0, suspendedWorkers = 0, totalMessages = 0, totalLeads = 0;
+    for (const { dbPath } of dirs) {
+      const db = new DatabaseSync(dbPath);
+      try {
+        const wcount = db.prepare(`SELECT COUNT(*) AS c,
+          SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
+          SUM(CASE WHEN status='pending_payment' THEN 1 ELSE 0 END) AS pending,
+          SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END) AS suspended
+          FROM workers`).get() ?? {};
+        totalWorkers += Number(wcount.c ?? 0);
+        activeWorkers += Number(wcount.active ?? 0);
+        pendingWorkers += Number(wcount.pending ?? 0);
+        suspendedWorkers += Number(wcount.suspended ?? 0);
+        totalMessages += Number(db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0);
+        totalLeads += Number(db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0);
+      } finally {
+        try { db.close(); } catch {}
+      }
+    }
+    return { tenantCount: dirs.length, totalWorkers, activeWorkers, pendingWorkers, suspendedWorkers, totalMessages, totalLeads };
   });
-  let totalWorkers = 0, activeWorkers = 0, pendingWorkers = 0, totalMessages = 0, totalLeads = 0;
-  for (const tid of tenants) {
-    const dbPath = path.join(TENANTS_DIR, tid, 'workers.db');
-    if (!fs.existsSync(dbPath)) continue;
-    const db = new DatabaseSync(dbPath);
-    const wcount = db.prepare(`SELECT COUNT(*) AS c, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status='pending_payment' THEN 1 ELSE 0 END) AS pending FROM workers`).get() ?? {};
-    totalWorkers += Number(wcount.c ?? 0);
-    activeWorkers += Number(wcount.active ?? 0);
-    pendingWorkers += Number(wcount.pending ?? 0);
-    totalMessages += Number(db.prepare(`SELECT COUNT(*) AS c FROM messages`).get()?.c ?? 0);
-    totalLeads += Number(db.prepare(`SELECT COUNT(*) AS c FROM leads`).get()?.c ?? 0);
-    db.close();
-  }
-  return { tenantCount: tenants.length, totalWorkers, activeWorkers, pendingWorkers, totalMessages, totalLeads };
 }
 
 function emptyAdminSummary() {
-  return { tenantCount: 0, totalWorkers: 0, activeWorkers: 0, pendingWorkers: 0, totalMessages: 0, totalLeads: 0 };
+  return { tenantCount: 0, totalWorkers: 0, activeWorkers: 0, pendingWorkers: 0, suspendedWorkers: 0, totalMessages: 0, totalLeads: 0 };
 }
 
 export function adminFindWorker(workerId) {
@@ -2099,7 +2270,7 @@ function buildSystemPrompt(worker, memories = [], extraToolDefs = [], convSummar
     ? '\n\nPREVIOUS CONVERSATIONS (summaries with this customer):\n' + convSummaries.map((s) => `- [${s.createdAt?.slice(0, 10) ?? ''}] ${s.summary}`).join('\n')
     : '';
   const tplHint = templateRuntimeHint(worker.templateId);
-  return `${worker.persona}
+  const prompt = `${worker.persona}
 
 YOUR TASKS (follow these in order):
 ${tasks || '(no specific tasks set; respond helpfully based on your persona)'}
@@ -2109,7 +2280,7 @@ ${worker.knowledge || '(none provided)'}${memStr}${profStr}${sumStr}${toolDesc}$
 
 RULES:
 - Stay in character at all times
-- Never reveal you are an AI or language model unless directly asked
+- If a customer asks whether they are talking to a person, say plainly that you are the business's AI assistant and offer a human — never claim to be human, and never invent a human employee name for yourself
 - Reply in the language the user writes in (default to Hebrew if worker persona says so)
 - Keep replies concise: aim for under 200 words unless more is genuinely needed
 
@@ -2120,6 +2291,8 @@ SAFETY (these are non-negotiable):
 - Hostile tone, threats, or refund demands beyond stated policy: apologize briefly and escalate.
 - For clinic / medical templates, always include the disclaimer "אני מזכיר/ה ולא נותן/ת ייעוץ רפואי" in medical replies.
 - Hebrew must be fluent — write naturally, avoid literal translations of English idioms`.trim();
+  // Applied last so a tenant-authored persona cannot drop the disclosure duty.
+  return withAiDisclosure(prompt);
 }
 
 function polishDemoReply(reply, worker, { isFirst = false, runtime = 'mock' } = {}) {
@@ -2370,6 +2543,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
     const text = (j.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
     const toolBlocks = (j.content ?? []).filter((c) => c.type === 'tool_use');
     const toolCalls = toolBlocks.length ? toolBlocks.map((c) => ({ id: c.id, name: c.name, args: c.input })) : undefined;
+    meterCall({ worker, provider, model, json: j, systemPrompt, messages, text });
     return { ok: true, text, toolCalls };
   }
 
@@ -2419,7 +2593,41 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
       return { id: tc.id, name: tc.function.name, args };
     })
     : undefined;
+  meterCall({ worker, provider, model, json: j, systemPrompt, messages, text });
   return { ok: true, text, toolCalls };
+}
+
+/**
+ * Attribute one LLM round-trip to the tenant paying for it.
+ *
+ * Some OpenAI-compatible gateways omit the `usage` block entirely. Recording
+ * zero there would make every such tenant look free, so fall back to a
+ * character-based estimate and mark the row estimated.
+ */
+function meterCall({ worker, provider, model, json, systemPrompt, messages, text }) {
+  if (!worker?.tenantId) return;
+  try {
+    let usage = metering.extractUsage(json, provider);
+    if (!usage) {
+      const inputChars = String(systemPrompt ?? '') +
+        (messages ?? []).map((m) => String(m.content ?? '')).join(' ');
+      usage = {
+        promptTokens: metering.approximateTokens(inputChars),
+        completionTokens: metering.approximateTokens(text ?? ''),
+        estimated: true,
+      };
+    }
+    metering.recordUsage({
+      tenantId: worker.tenantId,
+      workerId: worker.id ?? '',
+      provider, model,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      estimated: usage.estimated,
+    });
+  } catch {
+    // Metering must never break a customer reply.
+  }
 }
 
 async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '') {
@@ -2439,7 +2647,7 @@ async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '
 }
 
 const PROVIDER_DEFAULT_MODELS = {
-  anthropic: 'claude-opus-4.8',
+  anthropic: (process.env.LLM_DEFAULT_MODEL_ANTHROPIC ?? 'claude-haiku-4-5-20251001').trim(),
   groq: 'llama-4-8b-instant',
 };
 function defaultModelFor(provider) {
@@ -2462,9 +2670,14 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
     worker.llm.baseUrl = worker.llm.baseUrl || srvCfg.baseUrl;
   }
 
-  // Active + paid check (demoMode lets owner try before paying for production)
-  const isPaid = worker.paidUntil && new Date(worker.paidUntil) > new Date();
-  const isProductionReady = worker.status === 'active' && isPaid && !worker.paused;
+  // Tag the worker so downstream LLM calls can attribute cost to a tenant.
+  worker.tenantId = tenantId;
+
+  // Active + paid check (demoMode lets owner try before paying for production).
+  // A lapsed subscription keeps serving through the grace window rather than
+  // dropping the customer mid-conversation — see subscriptionState().
+  const sub = subscriptionState({ status: worker.status, paidUntil: worker.paidUntil, paused: worker.paused, requirePaid: true });
+  const isProductionReady = sub.isActive;
   if (!testMode && !demoMode && !isProductionReady) {
     if (worker.paused) {
       return {
@@ -2479,6 +2692,20 @@ export async function chatWithWorker({ tenantId, workerId, userMessage, customer
       message: 'להפעיל את העובד ללקוחות — שלחו בקשת הפעלה מהמסך הייעודי.',
       paidUntil: worker.paidUntil ?? null,
     };
+  }
+
+  // Quota gate — a flat-price plan with an unmetered public chat widget is an
+  // open tab at the LLM provider. Checked before any tokens are spent.
+  if (!testMode) {
+    const quota = metering.checkQuota(tenantId);
+    if (!quota.allowed) {
+      return {
+        ok: false, status: 429,
+        error: 'quota_exceeded',
+        message: 'העסק הגיע למכסת השיחות החודשית. אפשר לשדרג את החבילה כדי להמשיך לענות ללקוחות.',
+        quota,
+      };
+    }
   }
 
   const customerIdForContext = customerId ?? '';

@@ -173,6 +173,9 @@ export function skillCategories() {
 const LEGAL_PAGES = {
   '/privacy': { file: 'privacy-he.md', title: 'מדיניות פרטיות' },
   '/terms': { file: 'terms-he.md', title: 'תנאי שימוש' },
+  // Business buyers (clinics, law firms) ask for a processor agreement during
+  // procurement; having it at a URL removes a round-trip from the sale.
+  '/dpa': { file: 'dpa-he.md', title: 'הסכם עיבוד נתונים' },
 };
 
 const LEGAL_FALLBACK = {
@@ -207,6 +210,11 @@ const LEGAL_FALLBACK = {
 ## 6. זכויותיכם
 
 לפי חוק הגנת הפרטיות, תוכלו לבקש גישה, תיקון או מחיקת נתונים — פנו לכתובת התמיכה שמופיעה בחשבונית (\`AGENT_OWNER_CONTACT\`).
+
+לבעלי עסקים בפלטפורמה: ניתן לייצא או למחוק מידע של לקוח קצה ישירות מהחשבון
+(\`/api/account/data-export\`, \`/api/account/data-delete\`). מידע שיחות נמחק
+אוטומטית בתום תקופת השמירה שהוגדרה בחשבון. גיבויים מוצפנים נשמרים לתקופה קצובה
+נוספת ונמחקים בתום מחזור הגיבוי.
 
 ## 7. עוגיות
 
@@ -282,7 +290,11 @@ function loadLegalMarkdown(filename) {
     try {
       legalCache.set(filename, fs.readFileSync(filePath, 'utf8'));
     } catch {
-      legalCache.set(filename, LEGAL_FALLBACK[filename]);
+      legalCache.set(
+        filename,
+        LEGAL_FALLBACK[filename]
+          ?? `# המסמך אינו זמין\n\nהמסמך המבוקש לא נמצא בשרת. פנו אלינו ונשלח אותו.`
+      );
     }
   }
   return legalCache.get(filename);

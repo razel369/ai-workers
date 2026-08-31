@@ -200,13 +200,21 @@ function testWhatsApp(config) {
 async function sendWhatsAppStub(config, params, ctx) {
   const to = String(params.to || params.phone || '').replace(/\D/g, '');
   const text = String(params.text || params.message || '').slice(0, 4096);
-  if (!to || !text) return { ok: false, error: 'to_and_text_required' };
+  // Outside Meta's 24h window the caller supplies an approved template instead
+  // of free text — see whatsapp-session.js.
+  const template = String(params.template || '').trim();
+  if (!to || (!text && !template)) return { ok: false, error: 'to_and_text_required' };
 
   if (config.provider === 'meta') {
     const token = config.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
     const phoneId = config.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || '';
     if (token && phoneId) {
-      return sendMetaWhatsApp({ token, phoneId, to, text });
+      return sendMetaWhatsApp({
+        token, phoneId, to, text,
+        template,
+        language: String(params.language || 'he'),
+        templateParams: Array.isArray(params.templateParams) ? params.templateParams : [],
+      });
     }
   }
 
@@ -221,8 +229,22 @@ async function sendWhatsAppStub(config, params, ctx) {
   };
 }
 
-async function sendMetaWhatsApp({ token, phoneId, to, text }) {
+async function sendMetaWhatsApp({ token, phoneId, to, text, template = '', language = 'he', templateParams = [] }) {
   const url = `https://graph.facebook.com/v21.0/${phoneId}/messages`;
+  const body = template
+    ? {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'template',
+        template: {
+          name: template,
+          language: { code: language },
+          ...(templateParams.length
+            ? { components: [{ type: 'body', parameters: templateParams.map((t) => ({ type: 'text', text: String(t).slice(0, 200) })) }] }
+            : {}),
+        },
+      }
+    : { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
   try {
     const r = await fetch(url, {
       method: 'POST',
@@ -230,12 +252,7 @@ async function sendMetaWhatsApp({ token, phoneId, to, text }) {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body: text },
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
     const data = await r.json().catch(() => ({}));

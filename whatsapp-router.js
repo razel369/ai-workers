@@ -2,6 +2,7 @@
 
 import { runAction } from './integrations/runner.js';
 import * as integrations from './integrations/index.js';
+import * as waSession from './whatsapp-session.js';
 
 function normalizeDigits(phone = '') {
   return String(phone).replace(/\D/g, '');
@@ -45,13 +46,26 @@ export function resolveWhatsAppRoute(platformDb, { phoneNumberId, twilioTo }) {
   return row ?? null;
 }
 
-async function sendWhatsAppReply(tenantId, route, to, text) {
+async function sendWhatsAppReply(tenantId, route, to, text, phoneKey) {
+  // Meta rejects free-form sends outside the 24h customer service window, and
+  // hammering it there gets the tenant's number restricted. Check first.
+  const plan = waSession.planOutbound({ phoneKey, customerPhone: to, purpose: 'reply' });
+  if (plan.type === 'blocked') {
+    return { ok: false, error: 'outside_24h_window', hint: plan.hint, window: plan.window };
+  }
+
   const waRows = integrations.getIntegrationsByType(tenantId, 'whatsapp');
   const config = waRows[0]?.config;
   const merged = config?.accessToken || config?.phoneNumberId
     ? config
     : { provider: route.provider || 'meta', ...(config ?? {}) };
-  return runAction('whatsapp', 'send', { to, text }, merged, { tenantId });
+
+  const params = plan.type === 'template'
+    ? { to, template: plan.name, language: plan.language, templateParams: plan.params, text }
+    : { to, text };
+  const result = await runAction('whatsapp', 'send', params, merged, { tenantId });
+  if (result?.ok) waSession.recordOutbound({ phoneKey, customerPhone: to });
+  return { ...result, messageType: plan.type };
 }
 
 export async function processWhatsAppInbound(platformDb, deps, inbound) {
@@ -66,6 +80,17 @@ export async function processWhatsAppInbound(platformDb, deps, inbound) {
     console.warn('[whatsapp] no route for', inbound.phoneNumberId || inbound.businessTo || '(unknown)');
     return { ok: false, error: 'no_route' };
   }
+
+  const phoneKey = phoneRouteKey({
+    phoneNumberId: inbound.phoneNumberId,
+    twilioTo: inbound.businessTo,
+    provider: route.provider,
+  });
+  // The inbound message opens a fresh 24h window for this customer.
+  waSession.recordInbound({
+    phoneKey, customerPhone: inbound.from,
+    tenantId: route.tenantId, workerId: route.workerId,
+  });
 
   const customerId = `wa:${normalizeDigits(inbound.from)}`;
   const userMessage = (inbound.text || '').trim() || '(הודעה ללא טקסט)';
@@ -90,9 +115,12 @@ export async function processWhatsAppInbound(platformDb, deps, inbound) {
   const replyText = (chat.reply || '').trim();
   if (!replyText) return { ok: true, replied: false, runtime: chat.runtime };
 
-  const sendResult = await sendWhatsAppReply(route.tenantId, route, inbound.from, replyText.slice(0, 4096));
+  const sendResult = await sendWhatsAppReply(route.tenantId, route, inbound.from, replyText.slice(0, 4096), phoneKey);
   if (!sendResult?.ok) {
-    return { ok: false, error: 'send_failed', replied: false, runtime: chat.runtime };
+    return {
+      ok: false, error: sendResult?.error ?? 'send_failed', replied: false,
+      runtime: chat.runtime, hint: sendResult?.hint,
+    };
   }
   return {
     ok: true,
@@ -101,5 +129,6 @@ export async function processWhatsAppInbound(platformDb, deps, inbound) {
     sendOk: !!sendResult?.ok,
     stub: !!sendResult?.stub,
     messageId: sendResult?.messageId,
+    messageType: sendResult?.messageType,
   };
 }

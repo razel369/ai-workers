@@ -12,7 +12,7 @@
   - [x] `GET /health` → `persistentStorage: true`, `llmConfigured: true`
   - [x] GitHub repo homepage → Railway URL
 - [ ] Disconnect Vercel project (optional — avoids two live URLs)
-- [ ] Run `npm test` green on GitHub Actions
+- [x] Run `npm test` green on GitHub Actions
 
 ## Phase 1 — Product readiness
 
@@ -29,14 +29,14 @@
 - [ ] **Channels**: LinkedIn IL, Facebook business groups, WhatsApp status, cold outreach to 50 pilots
 - [ ] **Offer**: 14-day trial on one worker template; setup call included
 - [ ] **Proof**: 3 case studies (even mock → pilot → real)
-- [ ] **Legal**: privacy policy (חוק הגנת הפרטיות), terms, invoice with מע"מ if עוסק מורשה
+- [x] **Legal**: privacy policy, terms, invoice with מע"מ, DPA template, retention + erasure endpoints (`docs/COMPLIANCE.md`)
 
 ## Phase 3 — Monetization experiments
 
 - [ ] A/B: setup fee only vs setup + monthly
-- [ ] Bundle: 3 workers for 499 ₪/mo
-- [ ] Annual prepay: 2 months free
-- [ ] Agency white-label tier
+- [x] Bundle: 3 workers for 499 ₪/mo (`bundle3`)
+- [x] Annual prepay: 2 months free (`starter_annual`, `bundle3_annual`)
+- [x] Agency tier at 1,290 ₪/mo (`agency`) — white-label copy still to do
 
 ## Env vars (production)
 
@@ -76,8 +76,8 @@
 - [ ] **Custom domain** (optional) — e.g. `ai-workers.co.il` → Railway
 - [ ] **WhatsApp** — Meta/Twilio env + webhook at `/api/webhooks/whatsapp`
 - [x] **Legal pages live** — `/privacy` + `/terms` linked from landing + marketplace footer
-- [ ] **LLM budget** — free OpenRouter tier is ~50 req/day; upgrade before marketing push
-- [ ] **Backup** — Railway volume snapshot or export plan for `/app/data`
+- [ ] **LLM budget** — free OpenRouter tier is ~50 req/day; upgrade before marketing push. Track real spend at `/api/admin/margin`
+- [x] **Backup** — automated encrypted daily backups with off-site S3 (`docs/BACKUP-RESTORE.md`); still need `BACKUP_S3_*` set in Railway
 
 ### Vercel (demos only — disconnect recommended)
 

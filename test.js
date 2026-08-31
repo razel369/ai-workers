@@ -177,7 +177,8 @@ console.log(`Testing ${BASE}\n`);
   expect('  mentions Hebrew branding', String(r.body).includes('עובדי AI'));
   expect('  links to marketplace', String(r.body).includes('/marketplace'));
   expect('  case studies section', String(r.body).includes('id="case-studies"') && String(r.body).includes('סיפורי לקוחות'));
-  expect('  magic CTA on landing', String(r.body).includes('נסה עכשיו בחינם'));
+  expect('  magic CTA on landing', String(r.body).includes('/marketplace#/magic'));
+  expect('  free-trial CTA on landing', /התחל ניסיון|נסה עכשיו|ללא תשלום|בחינם/.test(String(r.body)));
 }
 
 // 10. Marketplace HTML page

@@ -28,6 +28,17 @@ COPY paddle-billing.js ./
 COPY embed-widget.js ./
 COPY whatsapp-webhook.js ./
 COPY whatsapp-router.js ./
+COPY whatsapp-session.js ./
+
+# Revenue, reliability and compliance subsystems.
+COPY notify.js ./
+COPY tenant-registry.js ./
+COPY billing-lifecycle.js ./
+COPY usage-metering.js ./
+COPY owner-alerts.js ./
+COPY backup.js ./
+COPY compliance.js ./
+COPY funnel-analytics.js ./
 
 # Optional: cloudflared binary so the container can expose itself publicly
 # without any cloud account. Disable with INSTALL_TUNNEL=0.

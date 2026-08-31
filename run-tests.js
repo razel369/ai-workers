@@ -33,6 +33,7 @@ function buildEnv(root, listenPort, publicUrl) {
     PADDLE_PRICE_ID: process.env.PADDLE_PRICE_ID ?? 'pri_test_monthly',
     PADDLE_WEBHOOK_SECRET: process.env.PADDLE_WEBHOOK_SECRET ?? 'test-paddle-webhook-secret',
     PADDLE_ENVIRONMENT: 'sandbox',
+    BIT_WEBHOOK_SECRET: process.env.BIT_WEBHOOK_SECRET ?? 'test-bit-webhook-secret',
   };
 }
 
@@ -64,6 +65,7 @@ try {
   await waitForHealth(baseUrl);
   await runSuite('test.js');
   await runSuite('worker-tests.js');
+  await runSuite('business-tests.js');
   await stopServer();
   const browserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-workers-browser-'));
   port = await getFreePort();
