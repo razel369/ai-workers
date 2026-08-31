@@ -39,11 +39,18 @@ const COST_CEILING_PCT = Number(process.env.PLAN_COST_CEILING_PCT ?? 35);
  */
 const DEFAULT_PRICE = { in: 1.0, out: 3.0 };
 const BASE_PRICING = {
-  'gpt-4o-mini': { in: 0.15, out: 0.6 },
+  // DeepSeek moved to peak/off-peak pricing on 16 Aug 2026. The off-peak rate
+  // is used here; peak (01:00-04:00 and 06:00-10:00 UTC, Mon-Fri) is roughly
+  // double, so a tenant's real cost lands between this and 2x.
+  'deepseek-v4-flash': { in: 0.22, out: 0.66, cachedIn: 0.007 },
+  'deepseek-v4-pro': { in: 0.66, out: 1.98, cachedIn: 0.022 },
+  'gpt-5.6-luna': { in: 0.20, out: 1.20, cachedIn: 0.02 },
+  'gpt-4o-mini': { in: 0.15, out: 0.6, cachedIn: 0.075 },
   'gpt-4o': { in: 2.5, out: 10 },
   'gpt-4.1-mini': { in: 0.4, out: 1.6 },
+  'gemini-2.5-flash-lite': { in: 0.10, out: 0.40, cachedIn: 0.010 },
   'llama-4-8b-instant': { in: 0.05, out: 0.08 },
-  'claude-haiku-4-5-20251001': { in: 1.0, out: 5.0 },
+  'claude-haiku-4-5-20251001': { in: 1.0, out: 5.0, cachedIn: 0.1 },
 };
 
 function pricingTable() {
@@ -64,9 +71,15 @@ export function priceForModel(model) {
   return prefix ? table[prefix] : DEFAULT_PRICE;
 }
 
-export function estimateCostUsd({ model, promptTokens = 0, completionTokens = 0 }) {
+export function estimateCostUsd({ model, promptTokens = 0, completionTokens = 0, cachedTokens = 0 }) {
   const p = priceForModel(model);
-  return (promptTokens / 1e6) * p.in + (completionTokens / 1e6) * p.out;
+  // Cached prefix tokens are billed at a steep discount (90-98% depending on
+  // provider). This workload re-sends the same system prompt on every agent
+  // step, so ignoring the discount materially overstates cost.
+  const cached = Math.min(cachedTokens, promptTokens);
+  const fresh = promptTokens - cached;
+  const cachedRate = p.cachedIn ?? p.in;
+  return (fresh / 1e6) * p.in + (cached / 1e6) * cachedRate + (completionTokens / 1e6) * p.out;
 }
 
 // --- Schema ---------------------------------------------------------------
@@ -133,11 +146,12 @@ export function approximateTokens(text) {
 
 export function recordUsage({
   tenantId, workerId = '', provider = '', model = '',
-  promptTokens = 0, completionTokens = 0, kind = 'chat', estimated = false,
+  promptTokens = 0, completionTokens = 0, cachedTokens = 0,
+  kind = 'chat', estimated = false,
 }) {
   if (!db || !tenantId) return null;
   const period = currentPeriod();
-  const costUsd = estimateCostUsd({ model, promptTokens, completionTokens });
+  const costUsd = estimateCostUsd({ model, promptTokens, completionTokens, cachedTokens });
   const now = new Date().toISOString();
   try {
     db.prepare(`INSERT INTO usage_events
@@ -180,17 +194,49 @@ export function extractUsage(json, provider) {
     return {
       promptTokens: Number(json.usage.input_tokens ?? 0),
       completionTokens: Number(json.usage.output_tokens ?? 0),
+      cachedTokens: Number(json.usage.cache_read_input_tokens ?? 0),
       estimated: false,
     };
   }
   if (json.usage) {
+    // OpenAI reports cache hits under prompt_tokens_details.cached_tokens;
+    // DeepSeek reports them as prompt_cache_hit_tokens. Both are already
+    // included in prompt_tokens, so they are a discount, not an addition.
+    const cached = Number(
+      json.usage.prompt_tokens_details?.cached_tokens
+      ?? json.usage.prompt_cache_hit_tokens
+      ?? 0
+    );
     return {
       promptTokens: Number(json.usage.prompt_tokens ?? json.usage.input_tokens ?? 0),
       completionTokens: Number(json.usage.completion_tokens ?? json.usage.output_tokens ?? 0),
+      cachedTokens: cached,
       estimated: false,
     };
   }
   return null;
+}
+
+/**
+ * Images are billed per image, not per token. Recorded against the same tenant
+ * counters so the margin report covers the whole cost of serving a tenant.
+ */
+export function recordImageUsage({ tenantId, workerId = '', provider = '', model = '', costUsd = 0 }) {
+  if (!db || !tenantId || !(costUsd > 0)) return null;
+  const period = currentPeriod();
+  const now = new Date().toISOString();
+  try {
+    db.prepare(`INSERT INTO usage_events
+      (at, period, tenant_id, worker_id, provider, model, prompt_tokens, completion_tokens, cost_usd, kind, estimated)
+      VALUES (?,?,?,?,?,?,0,0,?, 'image', 0)`)
+      .run(now, period, tenantId, workerId, provider, model, costUsd);
+    db.prepare(`INSERT INTO usage_counters (tenant_id, period, cost_usd) VALUES (?,?,?)
+      ON CONFLICT(tenant_id, period) DO UPDATE SET cost_usd = cost_usd + excluded.cost_usd`)
+      .run(tenantId, period, costUsd);
+  } catch {
+    return null;
+  }
+  return { costUsd, costIls: costUsd * USD_TO_ILS, period };
 }
 
 // --- Quotas ---------------------------------------------------------------

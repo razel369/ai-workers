@@ -143,25 +143,62 @@ plus whatever knowledge the tenant pastes in. A typical 6-message conversation
 with a 1,500-token knowledge base and a 2-step agent loop is about **40,000
 input and 1,600 output tokens**.
 
-At the default model, per conversation:
+**96% of those input tokens are a repeated prefix** — the same system prompt and
+conversation history re-sent on every agent step. Only ~1,560 tokens per
+conversation are genuinely new. That makes prompt caching, not model choice, the
+dominant cost lever.
 
-| Model | ₪ / conversation |
-|---|---|
-| `llama-4-8b-instant` | 0.008 |
-| `gpt-4o-mini` (default) | 0.026 |
-| `claude-haiku-4-5` | 0.18 |
-| `gpt-4o` | 0.43 |
+Per conversation, at Aug 2026 list prices:
 
-So a 249 ₪/mo tenant running 300 conversations a month costs about **8 ₪** to
-serve — a 97% gross margin. Moving the default to a frontier model would take
-that same tenant to roughly 130 ₪, and a heavy-knowledge tenant on the full
-agent loop past break-even.
+| Model | no cache | with cache |
+|---|---|---|
+| `deepseek-v4-flash` (default) | 0.037 ₪ | **0.006 ₪** |
+| `gemini-2.5-flash-lite` | 0.017 ₪ | 0.004 ₪ |
+| `gpt-5.6-luna` | 0.037 ₪ | 0.011 ₪ |
+| `gpt-4o-mini` | 0.026 ₪ | 0.015 ₪ |
+| `gpt-4o` | 0.43 ₪ | — |
+
+A 249 ₪/mo tenant running 300 conversations a month costs roughly **2-11 ₪** to
+serve depending on cache hit rate — a 96-99% gross margin. DeepSeek caches
+repeated prefixes automatically and bills hits at about 3% of the miss rate, so
+the effective cost sits near the bottom of that range once a worker is warm.
+
+`estimateCostUsd` credits cached tokens when the provider reports them
+(`prompt_cache_hit_tokens` on DeepSeek, `prompt_tokens_details.cached_tokens` on
+OpenAI). Before that credit existed the margin report overstated cost.
 
 **Input tokens dominate.** Output is capped at `LLM_MAX_TOKENS` (1024) and real
 replies are ~200 tokens, but every agent step re-sends the system prompt plus up
 to `CHAT_HISTORY_LIMIT` (40) messages of history. The levers that matter, in
-order: the default model, `MAX_AGENT_STEPS`, knowledge-base size, and
+order: cache hit rate, `MAX_AGENT_STEPS`, knowledge-base size, the model, and
 `CHAT_HISTORY_LIMIT`.
+
+The system prompt is always the first message in the request, which is what
+makes the prefix cacheable — do not reorder it.
+
+## Vendors
+
+| Concern | Vendor | Key | Notes |
+|---|---|---|---|
+| Chat | DeepSeek V4 Flash | `LLM_API_KEY` | OpenAI-wire-compatible; peak/off-peak pricing since 16 Aug 2026 |
+| Images | OpenAI GPT Image 2 | `OPENAI_API_KEY` | Billed per image (~$0.03/$0.05/$0.08 by quality), not per token |
+| Video | Google Veo | `GOOGLE_AI_API_KEY` | Unchanged |
+
+Chat and media are separate vendors with **separate credentials**. A missing
+`OPENAI_API_KEY` is its own failure mode: workers keep answering normally but
+silently return mock placeholder images. The server logs a `[WARN]` at boot and
+`/health.media.live` reports it.
+
+Image cost is metered per image (`kind: 'image'` in `usage_events`) and rolls
+into the same tenant cost counter, so `/api/admin/margin` covers the full cost
+of serving a tenant rather than tokens alone.
+
+> **Data residency.** DeepSeek processes conversation content on servers in
+> China, and offers no enterprise DPA, no EU/US residency option, and no
+> standard contractual clauses. This is disclosed in `docs/legal/dpa-he.md`,
+> which tenants sign. It is a live consideration for clinics and law firms —
+> switching provider needs only `LLM_PROVIDER` and `LLM_BASE_URL`, no code
+> change, so it can be reversed per deployment if a customer requires it.
 
 ### Two ceilings, not one
 

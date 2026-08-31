@@ -311,6 +311,133 @@ const scratchDb = new DatabaseSync(path.join(tmpRoot, 'scratch.db'));
   delete process.env.TWILIO_AUTH_TOKEN;
 }
 
+// --- Chat on DeepSeek: wire format ---------------------------------------
+//
+// The tool payload shape was wrong before this switch (the raw internal defs
+// were sent instead of the provider-formatted ones), which only ever showed up
+// against a real API. These assert the exact request that leaves the process.
+{
+  const http = await import('node:http');
+  const { DatabaseSync } = await import('node:sqlite');
+  const workers = await import('./workers.js');
+  const metering = await import('./usage-metering.js');
+  const registry = await import('./tenant-registry.js');
+
+  const wireRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aiw-wire-'));
+  process.env.TENANTS_DIR = path.join(wireRoot, 'tenants');
+
+  let captured = null;
+  const fake = http.default.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      captured = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body || '{}') };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{ message: { content: 'שלום, איך אפשר לעזור?' } }],
+        usage: { prompt_tokens: 2600, completion_tokens: 40, prompt_cache_hit_tokens: 2100 },
+      }));
+    });
+  });
+  await new Promise((r) => fake.listen(0, r));
+  const port = fake.address().port;
+
+  const wireDb = new DatabaseSync(path.join(wireRoot, 'm.db'));
+  metering.initUsageMetering(wireDb);
+  registry.initTenantRegistry(wireDb);
+  registry.upsertTenant({ tenantId: 'ten_wire', businessName: 'Wire', contact: 'w@e.com', plan: 'starter' });
+
+  const prevCfg = { apiKey: '', provider: 'deepseek', model: 'deepseek-v4-flash', baseUrl: '' };
+  workers.setServerLlmConfig({
+    apiKey: 'sk-deepseek-test', provider: 'deepseek',
+    model: 'deepseek-v4-flash', baseUrl: `http://127.0.0.1:${port}`,
+  });
+
+  const bought = workers.buyTemplate({ tenantId: 'ten_wire', templateId: 'sales-leads-il' });
+  const chat = await workers.chatWithWorker({
+    tenantId: 'ten_wire', workerId: bought.workerId,
+    userMessage: 'שלום, אני מחפש דירה', customerId: 'c1', testMode: true,
+  });
+
+  expect('deepseek: request reaches the endpoint', !!captured);
+  expect('  posts to /v1/chat/completions', captured?.url === '/v1/chat/completions', captured?.url);
+  expect('  sends bearer auth', captured?.auth === 'Bearer sk-deepseek-test');
+  expect('  sends the deepseek model id', captured?.body?.model === 'deepseek-v4-flash', captured?.body?.model);
+  expect('  system prompt leads the message list (cacheable prefix)',
+    captured?.body?.messages?.[0]?.role === 'system');
+
+  const tools = captured?.body?.tools ?? [];
+  expect('  sends tool definitions', tools.length > 0);
+  expect('  tools use the OpenAI function shape',
+    tools.every((t) => t.type === 'function' && t.function?.name && t.function?.parameters),
+    JSON.stringify(tools[0] ?? {}).slice(0, 120));
+  expect('  tool payload never leaks the server-side handler',
+    !JSON.stringify(tools).includes('handler'));
+  expect('  reply is returned to the caller', chat.ok === true && (chat.reply ?? '').includes('שלום'), chat.error);
+
+  const full = metering.estimateCostUsd({ model: 'deepseek-v4-flash', promptTokens: 2600, completionTokens: 40 });
+  const cached = metering.estimateCostUsd({ model: 'deepseek-v4-flash', promptTokens: 2600, completionTokens: 40, cachedTokens: 2100 });
+  expect('  cached prompt tokens reduce estimated cost', cached < full * 0.5,
+    `full=${full.toFixed(6)} cached=${cached.toFixed(6)}`);
+  expect('  extractUsage reads DeepSeek prompt_cache_hit_tokens',
+    metering.extractUsage({ usage: { prompt_tokens: 100, completion_tokens: 5, prompt_cache_hit_tokens: 80 } }, 'deepseek')?.cachedTokens === 80);
+  expect('  extractUsage reads OpenAI cached_tokens',
+    metering.extractUsage({ usage: { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 70 } } }, 'openai_compatible')?.cachedTokens === 70);
+
+  workers.setServerLlmConfig(prevCfg);
+  fake.close();
+  wireDb.close();
+  fs.rmSync(wireRoot, { recursive: true, force: true });
+}
+
+// --- Images on GPT Image 2 ------------------------------------------------
+{
+  const http = await import('node:http');
+  let imgReq = null;
+  const fakeImg = http.default.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      imgReq = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body || '{}') };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('fake-png').toString('base64') }] }));
+    });
+  });
+  await new Promise((r) => fakeImg.listen(0, r));
+  const imgPort = fakeImg.address().port;
+
+  process.env.OPENAI_API_KEY = 'sk-openai-test';
+  process.env.MEDIA_IMAGE_PROVIDER = 'openai';
+  process.env.OPENAI_IMAGE_BASE_URL = `http://127.0.0.1:${imgPort}`;
+  const img = await import('./image-generation.js');
+
+  expect('images: aspect ratios map to supported sizes',
+    img.sizeForRatio('16:9') === '1536x1024' && img.sizeForRatio('9:16') === '1024x1536'
+    && img.sizeForRatio('1:1') === '1024x1024');
+  expect('  an unknown ratio falls back to square', img.sizeForRatio('nonsense') === '1024x1024');
+  expect('  quality tiers are priced separately',
+    img.imagePriceUsd('low') < img.imagePriceUsd('medium') && img.imagePriceUsd('medium') < img.imagePriceUsd('high'));
+
+  const gen = await img.generateImage({ prompt: 'תמונה למסעדה', aspectRatio: '16:9' });
+  expect('  posts to /v1/images/generations', imgReq?.url === '/v1/images/generations', imgReq?.url);
+  expect('  uses the OpenAI key, not the DeepSeek chat key', imgReq?.auth === 'Bearer sk-openai-test');
+  expect('  sends the gpt-image-2 model', imgReq?.body?.model === 'gpt-image-2', imgReq?.body?.model);
+  expect('  translates the aspect ratio to a size', imgReq?.body?.size === '1536x1024', imgReq?.body?.size);
+  expect('  returns decodable image bytes',
+    Buffer.from(gen.base64, 'base64').toString() === 'fake-png');
+  expect('  reports provider and a per-image cost', gen.provider === 'openai' && gen.costUsd > 0);
+
+  // A provider outage must degrade to a placeholder, never break a chat turn.
+  fakeImg.close();
+  const down = await img.generateImage({ prompt: 'בדיקה', aspectRatio: '1:1' });
+  expect('  an image backend outage degrades to mock instead of throwing',
+    down.provider === 'mock' && down.costUsd === 0);
+
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.MEDIA_IMAGE_PROVIDER;
+  delete process.env.OPENAI_IMAGE_BASE_URL;
+}
+
 // --- Compliance -----------------------------------------------------------
 {
   const compliance = await import('./compliance.js');

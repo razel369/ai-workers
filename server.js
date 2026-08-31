@@ -10,11 +10,16 @@
 //   AGENT_NAME=AI Workers
 //   AGENT_OWNER_CONTACT=you@example.com
 //
-//   -- Server LLM (required for real AI replies) --
-//   LLM_API_KEY=sk-...                              # OpenAI / Anthropic API key
-//   LLM_PROVIDER=openai_compatible                  # or: anthropic
-//   LLM_MODEL=gpt-4o-mini                           # model name (cheap default; see margin report)
-//   LLM_BASE_URL=https://api.openai.com             # base URL (change for Ollama, Groq, etc.)
+//   -- Server LLM: chat runs on DeepSeek V4 Flash --
+//   LLM_API_KEY=sk-...                              # DeepSeek API key
+//   LLM_PROVIDER=deepseek                           # or: openai_compatible, anthropic, groq
+//   LLM_MODEL=deepseek-v4-flash
+//   LLM_BASE_URL=https://api.deepseek.com           # override for Ollama, Groq, OpenRouter, etc.
+//
+//   -- Media: images run on GPT Image 2 (separate vendor, separate key) --
+//   OPENAI_API_KEY=sk-...                           # image generation only, NOT chat
+//   OPENAI_IMAGE_MODEL=gpt-image-2
+//   OPENAI_IMAGE_QUALITY=medium                     # low | medium | high
 //
 //   -- Oldschool payment channels (any subset) --
 //   PAYPAL_ME=you                                  -> https://paypal.me/you
@@ -67,6 +72,7 @@ import {
 } from './paddle-billing.js';
 import { buildEmbedScript } from './embed-widget.js';
 import * as urlSecurity from './url-security.js';
+import { imageConfigStatus } from './image-generation.js';
 import * as notify from './notify.js';
 import * as registry from './tenant-registry.js';
 import * as billing from './billing-lifecycle.js';
@@ -112,8 +118,9 @@ const SWIFT = process.env.SWIFT ?? '';
 
 // Server LLM (not BYOK — the platform provides the AI)
 const LLM_API_KEY = process.env.LLM_API_KEY ?? '';
-const LLM_PROVIDER = process.env.LLM_PROVIDER ?? 'openai_compatible';
-const LLM_MODEL = process.env.LLM_MODEL ?? process.env.LLM_DEFAULT_MODEL ?? 'gpt-4o-mini';
+const LLM_PROVIDER = process.env.LLM_PROVIDER ?? process.env.LLM_DEFAULT_PROVIDER ?? 'deepseek';
+const LLM_MODEL = process.env.LLM_MODEL ?? process.env.LLM_DEFAULT_MODEL ?? 'deepseek-v4-flash';
+// Empty means "use the provider's default host" — see defaultBaseUrlFor().
 const LLM_BASE_URL = process.env.LLM_BASE_URL ?? '';
 
 // --- Named constants ------------------------------------------------------
@@ -1675,6 +1682,7 @@ const server = http.createServer(async (req, res) => {
       llmConfigured: !!LLM_API_KEY,
       llmProvider: LLM_PROVIDER,
       llmModel: LLM_MODEL,
+      media: imageConfigStatus(),
       publicBaseUrl: resolveBaseUrl(req),
       dbPath: DB_PATH,
       tenantsDir: process.env.TENANTS_DIR ?? path.join(__dirname, 'data', 'tenants'),
@@ -3057,8 +3065,17 @@ workers.setServerLlmConfig({
   model: LLM_MODEL, baseUrl: LLM_BASE_URL,
 });
 console.log(`${AGENT_NAME} — platform-provided LLM (no BYOK)`);
-if (LLM_API_KEY) console.log(`  LLM: ${LLM_PROVIDER} / ${LLM_MODEL} (configured)`);
+if (LLM_API_KEY) console.log(`  Chat:  ${LLM_PROVIDER} / ${LLM_MODEL} (configured)`);
 else console.warn(`  WARN: no LLM_API_KEY set — workers will use mock replies`);
+{
+  // Chat and media are different vendors now, so a missing image key is its own
+  // failure mode: the worker answers fine but silently returns mock placeholders.
+  const media = imageConfigStatus();
+  console.log(`  Media: ${media.provider}${media.model ? ' / ' + media.model : ''}${media.live ? '' : ' (MOCK — no image key set)'}`);
+  if (LLM_API_KEY && !media.live) {
+    console.warn('  WARN: chat is live but image generation is in mock mode — set OPENAI_API_KEY for GPT Image 2.');
+  }
+}
 
 function startServer() {
   server.listen(PORT, () => {

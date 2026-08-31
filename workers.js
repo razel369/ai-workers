@@ -1558,13 +1558,16 @@ export function subscriptionState({ status, paidUntil, paused, requirePaid = fal
 
 // --- Server LLM config (platform-provided, not BYOK) ---------------------
 
-// Default to a small, cheap model. Hebrew FAQ answering and lead capture do not
-// need a frontier model, and at a flat 249 ₪/mo subscription the model choice is
-// the single biggest lever on gross margin — a frontier default can cost more
-// per tenant than the tenant pays. Override per deployment with LLM_MODEL, or
-// per worker in the builder, when a template genuinely needs more capability.
-const DEFAULT_CHAT_MODEL = (process.env.LLM_DEFAULT_MODEL ?? 'gpt-4o-mini').trim();
-const DEFAULT_LLM_CONFIG = { apiKey: '', provider: 'openai_compatible', model: DEFAULT_CHAT_MODEL, baseUrl: '' };
+// Chat runs on DeepSeek V4 Flash. It is OpenAI-wire-compatible (same
+// /v1/chat/completions shape and the same tools/function-calling format), so it
+// goes through the openai_compatible branch with a different base URL.
+//
+// Image and video generation deliberately do NOT use this key — see
+// image-generation.js. Chat and media are different vendors now, so they carry
+// separate credentials: LLM_API_KEY is DeepSeek's, OPENAI_API_KEY is OpenAI's.
+const DEFAULT_CHAT_PROVIDER = (process.env.LLM_DEFAULT_PROVIDER ?? 'deepseek').trim();
+const DEFAULT_CHAT_MODEL = (process.env.LLM_DEFAULT_MODEL ?? 'deepseek-v4-flash').trim();
+const DEFAULT_LLM_CONFIG = { apiKey: '', provider: DEFAULT_CHAT_PROVIDER, model: DEFAULT_CHAT_MODEL, baseUrl: '' };
 let SERVER_LLM_CONFIG = { ...DEFAULT_LLM_CONFIG };
 
 export function setServerLlmConfig(cfg) {
@@ -2529,7 +2532,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
         return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
       }),
     };
-    if (hasTools) body.tools = toolDefs;
+    if (hasTools) body.tools = formattedTools;
     const r = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -2547,8 +2550,9 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
     return { ok: true, text, toolCalls };
   }
 
-  // OpenAI-compatible (covers OpenAI, Groq, OpenRouter, Together, local llama.cpp, etc.)
-  const baseUrl = (worker.llm.baseUrl || 'https://api.openai.com').replace(/\/$/, '');
+  // OpenAI-compatible wire format. Covers DeepSeek (the default), OpenAI, Groq,
+  // OpenRouter, Together and local llama.cpp — they differ only in base URL.
+  const baseUrl = (worker.llm.baseUrl || defaultBaseUrlFor(provider) || 'https://api.openai.com').replace(/\/$/, '');
   const oaiMessages = [];
   for (const m of messages) {
     if (m.role === 'tool') {
@@ -2572,7 +2576,7 @@ async function callLLMOnce(worker, systemPrompt, messages, toolDefs = [], apiKey
     max_tokens: LLM_MAX_TOKENS,
     temperature: 0.7,
   };
-  if (hasTools) body.tools = toolDefs;
+  if (hasTools) body.tools = formattedTools;
   const r = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
@@ -2623,6 +2627,7 @@ function meterCall({ worker, provider, model, json, systemPrompt, messages, text
       provider, model,
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
+      cachedTokens: usage.cachedTokens ?? 0,
       estimated: usage.estimated,
     });
   } catch {
@@ -2647,9 +2652,21 @@ async function callLLM(worker, systemPrompt, messages, toolDefs = [], apiKey = '
 }
 
 const PROVIDER_DEFAULT_MODELS = {
+  deepseek: (process.env.LLM_DEFAULT_MODEL ?? 'deepseek-v4-flash').trim(),
   anthropic: (process.env.LLM_DEFAULT_MODEL_ANTHROPIC ?? 'claude-haiku-4-5-20251001').trim(),
   groq: 'llama-4-8b-instant',
 };
+
+/** Default API host per provider, used when a worker sets no explicit baseUrl. */
+const PROVIDER_BASE_URLS = {
+  deepseek: (process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').trim(),
+  groq: 'https://api.groq.com/openai',
+  openai_compatible: 'https://api.openai.com',
+};
+
+export function defaultBaseUrlFor(provider) {
+  return PROVIDER_BASE_URLS[provider] ?? '';
+}
 function defaultModelFor(provider) {
   return PROVIDER_DEFAULT_MODELS[provider] ?? getServerLlmConfig().model;
 }

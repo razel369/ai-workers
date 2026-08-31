@@ -3,12 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
-  generateImage,
   startVideoGeneration,
   pollVideoOperation,
   downloadGoogleMediaFile,
   isMediaMockMode,
 } from './google-media.js';
+// Images run on GPT Image 2, chat runs on DeepSeek — different vendors, so the
+// image path goes through its own provider layer with its own credentials.
+import { generateImage, imageConfigStatus } from './image-generation.js';
+import * as metering from './usage-metering.js';
 
 const NSFW_PATTERNS = [
   /\b(nude|naked|nsfw|porn|xxx|erotic|sexual|hentai)\b/i,
@@ -16,6 +19,8 @@ const NSFW_PATTERNS = [
 ];
 
 const DEFAULT_MONTHLY_LIMIT = Number(process.env.MEDIA_GEN_LIMIT_PER_MONTH) || 50;
+
+export { imageConfigStatus };
 
 export function isPromptBlocked(prompt = '') {
   const text = String(prompt);
@@ -118,7 +123,7 @@ export function registerMediaTools(toolDefs, deps) {
   toolDefs.push(
     {
       name: 'generate_image',
-      description: 'Generate an AI image from a Hebrew or English prompt (Google Nano Banana). Returns a URL and markdown link. Use for social posts, menu promos, property visuals, blog headers.',
+      description: 'Generate an AI image from a Hebrew or English prompt (GPT Image 2). Returns a URL and markdown link. Use for social posts, menu promos, property visuals, blog headers.',
       parameters: {
         type: 'object',
         properties: {
@@ -163,12 +168,26 @@ export function registerMediaTools(toolDefs, deps) {
           storeInOutbox(db, ctx, `image:${args.purpose || 'generated'}`, `${url}\n${args.prompt}`);
         }
 
-        const mode = isMediaMockMode() ? 'mock' : 'google';
+        // Images are billed per image, not per token, so they are metered
+        // separately — otherwise a worker generating social posts all month
+        // would look free in the margin report.
+        if (gen.costUsd) {
+          try {
+            metering.recordImageUsage({
+              tenantId: ctx.tenantId, workerId: ctx.workerId,
+              provider: gen.provider, model: gen.model, costUsd: gen.costUsd,
+            });
+          } catch {}
+        }
+
+        const mode = gen.provider ?? (isMediaMockMode() ? 'mock' : 'google');
         return {
           result: `תמונה נוצרה (${mode}).\n${markdown}\n${gen.caption ? '\n' + gen.caption : ''}`,
           url,
           markdown,
-          mock: isMediaMockMode(),
+          mock: !!gen.mock,
+          provider: gen.provider,
+          model: gen.model,
           usage: rate,
         };
       },

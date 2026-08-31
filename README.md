@@ -37,6 +37,8 @@ Open http://localhost:8765/ for the dashboard, then /marketplace to browse worke
 
 Workers use the platform-provided LLM configured on the server. If no `LLM_API_KEY` is set, the app runs in mock mode for demos and local testing.
 
+**Models:** chat runs on **DeepSeek V4 Flash** (`LLM_API_KEY`); image generation runs on **OpenAI GPT Image 2** (`OPENAI_API_KEY`). These are separate vendors with separate keys — without the OpenAI key the workers still answer but return placeholder images. DeepSeek processes conversation content in China; see [docs/legal/dpa-he.md](docs/legal/dpa-he.md) and [docs/REVENUE-OPERATIONS.md](docs/REVENUE-OPERATIONS.md).
+
 ## Architecture
 
 ```
