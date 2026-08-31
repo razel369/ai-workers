@@ -1144,9 +1144,12 @@ export function getWeeklyDigest(tenantId, workerId, { days = 7 } = {}) {
     .slice(0, 5)
     .map(([topic, count]) => ({ topic, count }));
 
+  // email and notes are included because "what the customer actually said" is
+  // the context the owner needs before calling back — in the digest email and
+  // in the hub alike.
   const recentLeadsList = db.prepare(
-    `SELECT id, full_name AS fullName, phone, score, created_at AS createdAt
-     FROM leads WHERE worker_id=? AND created_at>=? ORDER BY score DESC, created_at DESC LIMIT 5`
+    `SELECT id, full_name AS fullName, phone, email, notes, score, created_at AS createdAt
+     FROM leads WHERE worker_id=? AND created_at>=? ORDER BY score DESC, created_at DESC LIMIT 8`
   ).all(workerId, since);
   const recentEscalationsList = db.prepare(
     `SELECT id, reason, urgency, status, created_at AS createdAt

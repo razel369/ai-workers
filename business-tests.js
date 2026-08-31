@@ -438,6 +438,136 @@ const scratchDb = new DatabaseSync(path.join(tmpRoot, 'scratch.db'));
   delete process.env.OPENAI_IMAGE_BASE_URL;
 }
 
+// --- Passwordless session auth --------------------------------------------
+//
+// This replaces an API key in localStorage as the credential a business owner
+// uses. Every property below is one an owner's data depends on, so they are
+// asserted rather than assumed.
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aiw-auth-'));
+  const authDb = new DatabaseSync(path.join(authRoot, 'auth.db'));
+  const notify = await import('./notify.js');
+  const registry = await import('./tenant-registry.js');
+  const auth = await import('./auth-sessions.js');
+
+  notify.initNotify(authDb);
+  registry.initTenantRegistry(authDb);
+  auth.initAuthSessions({ database: authDb, baseUrl: 'https://example.test' });
+  registry.upsertTenant({ tenantId: 'ten_auth_a', businessName: 'מרפאה', contact: 'doc@clinic.co.il' });
+  registry.upsertTenant({ tenantId: 'ten_auth_b', businessName: 'אחר', contact: 'other@x.co.il' });
+
+  const UA = 'Mozilla/5.0 (iPhone) Safari/605';
+  await auth.requestLogin({ destination: 'doc@clinic.co.il', ip: '1.2.3.4', userAgent: UA });
+
+  const challenge = authDb.prepare(
+    `SELECT * FROM auth_challenges WHERE tenant_id='ten_auth_a' ORDER BY created_at DESC LIMIT 1`
+  ).get();
+  expect('auth: a login challenge is created', !!challenge);
+  expect('  the code is hashed at rest', challenge.code_hash?.length === 64);
+
+  const mail = authDb.prepare(
+    `SELECT * FROM notification_outbox WHERE kind='auth' ORDER BY created_at DESC LIMIT 1`
+  ).get();
+  expect('  a login email is queued', !!mail);
+  const token = (mail.body_html.match(/login\?t=([A-Za-z0-9_-]+)/) || [])[1];
+  expect('  the email carries a magic link', !!token);
+  expect('  the raw token is never stored',
+    authDb.prepare(`SELECT COUNT(*) c FROM auth_challenges WHERE token_hash = ?`).get(token).c === 0);
+
+  // No account enumeration: an unknown address must be indistinguishable.
+  const mailsBefore = authDb.prepare(`SELECT COUNT(*) c FROM notification_outbox`).get().c;
+  const unknown = await auth.requestLogin({ destination: 'nobody@nowhere.com', ip: '9.9.9.9' });
+  expect('  an unknown address returns the same response', unknown.ok === true && unknown.sent === true);
+  expect('  and nothing is sent to it',
+    authDb.prepare(`SELECT COUNT(*) c FROM notification_outbox`).get().c === mailsBefore);
+
+  const session = auth.redeemToken({ token, ip: '1.2.3.4', userAgent: UA });
+  expect('  the magic link opens a session', session.ok && session.tenantId === 'ten_auth_a');
+  expect('  the session token is hashed at rest',
+    authDb.prepare(`SELECT COUNT(*) c FROM auth_sessions WHERE session_hash = ?`).get(session.sessionToken).c === 0);
+  expect('  a magic link is single-use', auth.redeemToken({ token }).error === 'token_already_used');
+
+  const cookies = auth.sessionCookieHeaders({ headers: {} }, session)['set-cookie'];
+  expect('  session cookie is HttpOnly, Secure and SameSite=Lax',
+    /HttpOnly/.test(cookies[0]) && /Secure/.test(cookies[0]) && /SameSite=Lax/.test(cookies[0]));
+  expect('  the CSRF cookie is readable by the page', !/HttpOnly/.test(cookies[1]));
+
+  const cookieHeader = `aiw_session=${encodeURIComponent(session.sessionToken)}`;
+  expect('  a valid cookie resolves to its tenant',
+    auth.sessionFromRequest({ headers: { cookie: cookieHeader } })?.tenantId === 'ten_auth_a');
+  expect('  a forged cookie resolves to nothing',
+    !auth.sessionFromRequest({ headers: { cookie: 'aiw_session=guessed' } }));
+
+  const csrfReq = (method, cookie, header) => ({ method, headers: { cookie, 'x-csrf-token': header } });
+  expect('  CSRF: reads need no token', auth.csrfOk(csrfReq('GET', cookieHeader, '')));
+  expect('  CSRF: a write with no token is blocked', !auth.csrfOk(csrfReq('POST', cookieHeader, '')));
+  expect('  CSRF: a write with a mismatched token is blocked',
+    !auth.csrfOk(csrfReq('POST', `${cookieHeader}; aiw_session_csrf=aaaa`, 'bbbb')));
+  expect('  CSRF: a write with the matching token passes',
+    auth.csrfOk(csrfReq('POST', `${cookieHeader}; aiw_session_csrf=${session.csrfToken}`, session.csrfToken)));
+
+  await auth.requestLogin({ destination: 'doc@clinic.co.il', ip: '1.2.3.4' });
+  let bruteBlocked = false;
+  for (let i = 0; i < 6; i++) {
+    if (auth.redeemCode({ destination: 'doc@clinic.co.il', code: '000000' }).error === 'too_many_attempts') {
+      bruteBlocked = true;
+    }
+  }
+  expect('  guessing the code is capped', bruteBlocked);
+
+  let throttled = false;
+  for (let i = 0; i < 8; i++) {
+    if ((await auth.requestLogin({ destination: 'doc@clinic.co.il', ip: '1.2.3.4' })).throttled) throttled = true;
+  }
+  expect('  login requests are rate limited', throttled);
+
+  const devices = auth.listSessions('ten_auth_a', session.id);
+  expect('  the device list names the device in plain language',
+    devices[0]?.device?.includes('iPhone'), devices[0]?.device);
+  expect('  the current device is flagged', devices.some((d) => d.current));
+
+  expect('  another tenant cannot revoke this session',
+    auth.revokeSession('ten_auth_b', session.id).ok === false);
+  auth.revokeSession('ten_auth_a', session.id);
+  expect('  a revoked session stops validating',
+    !auth.sessionFromRequest({ headers: { cookie: cookieHeader } }));
+
+  const events = auth.recentAuthEvents('ten_auth_a', 50);
+  expect('  logins are audited', events.some((e) => e.event === 'login_success'));
+  expect('  the audit masks contact addresses',
+    events.every((e) => !String(e.destination ?? '').includes('doc@clinic')));
+
+  authDb.close();
+  fs.rmSync(authRoot, { recursive: true, force: true });
+}
+
+// --- Hub endpoints --------------------------------------------------------
+{
+  const overview = await req('/api/hub/overview');
+  expect('hub: overview requires a session', overview.status === 401);
+  const me = await req('/api/auth/me');
+  expect('  /api/auth/me requires a session', me.status === 401);
+  const sessions = await req('/api/auth/sessions');
+  expect('  the device list requires a session', sessions.status === 401);
+
+  const link = await req('/api/auth/request-link', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ destination: 'definitely-not-a-tenant@example.com' }),
+  });
+  expect('  requesting a link never reveals whether the address is known',
+    link.status === 200 && link.body.ok === true);
+
+  const badLogin = await req('/app/login?t=not-a-real-token');
+  expect('  a bad magic link redirects rather than erroring', badLogin.status === 302 || badLogin.status === 200);
+
+  const page = await req('/app');
+  expect('  the hub page is served', page.status === 200 && String(page.body).includes('הבית של העובד'));
+  expect('  the hub is never cached by intermediaries',
+    /no-store/.test(page.headers.get('cache-control') ?? ''), page.headers.get('cache-control'));
+  expect('  the hub page ships no API key', !String(page.body).includes('sk_'));
+}
+
 // --- Compliance -----------------------------------------------------------
 {
   const compliance = await import('./compliance.js');

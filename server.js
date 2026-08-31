@@ -73,6 +73,7 @@ import {
 import { buildEmbedScript } from './embed-widget.js';
 import * as urlSecurity from './url-security.js';
 import { imageConfigStatus } from './image-generation.js';
+import * as auth from './auth-sessions.js';
 import * as notify from './notify.js';
 import * as registry from './tenant-registry.js';
 import * as billing from './billing-lifecycle.js';
@@ -256,6 +257,7 @@ ownerAlerts.initOwnerAlerts({ baseUrl: PUBLIC_BASE_URL });
 compliance.initCompliance({ database: db, workersModule: workers });
 funnel.initFunnelAnalytics(db);
 waSession.initWhatsAppSessions(db);
+auth.initAuthSessions({ database: db, baseUrl: PUBLIC_BASE_URL });
 backup.initBackup({
   database: db,
   platformDbPath: DB_PATH,
@@ -267,9 +269,28 @@ backup.initBackup({
 // Also enforces quota: every authenticated call consumes one unit; over-limit returns null
 // with lastQuotaError available to the caller for HTTP 402 responses.
 let lastQuotaError = null;
+
+/**
+ * Two credentials, deliberately different in kind:
+ *
+ *   - A browser session (httpOnly cookie) for the business owner in the hub.
+ *     Expires, is revocable per device, and is invisible to page JavaScript.
+ *   - An API key (`sk_...`) for machines: the embed widget, integrations, scripts.
+ *
+ * Sessions are checked first so a logged-in owner never depends on a key living
+ * in localStorage. State-changing session requests must also pass CSRF.
+ */
 function requireAuth(req) {
-  const auth = req.headers['authorization'] || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+  const session = auth.sessionFromRequest(req);
+  if (session) {
+    if (!auth.csrfOk(req)) {
+      lastQuotaError = { reason: 'csrf_failed' };
+      return null;
+    }
+    return session.tenantId;
+  }
+  const header = req.headers['authorization'] || '';
+  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
   if (!token.startsWith('sk_')) return null;
   const check = validateApiKey(token);
   if (!check.valid) return null;
@@ -279,6 +300,11 @@ function requireAuth(req) {
     return null;
   }
   return check.tenantId;
+}
+
+/** The session row for this request, when the caller is a logged-in human. */
+function currentSession(req) {
+  return auth.sessionFromRequest(req);
 }
 function getLastQuotaError() { return lastQuotaError; }
 function clearLastQuotaError() { lastQuotaError = null; }
@@ -1921,6 +1947,190 @@ const server = http.createServer(async (req, res) => {
       label: issued.label,
       note: 'Store this key locally. It lets you configure workers; activation still requires payment approval.',
     });
+  }
+
+  // The owner's home. Served for /app and any sub-path so the SPA can own its
+  // own routing. /app/login is excluded explicitly rather than by ordering:
+  // it consumes a single-use magic-link token, and serving the SPA there
+  // instead would silently break every login email.
+  if (req.method === 'GET'
+      && (url.pathname === '/app' || url.pathname.startsWith('/app/'))
+      && url.pathname !== '/app/login') {
+    const html = fs.readFileSync(path.join(__dirname, 'hub-ui.html'), 'utf8');
+    return send(res, 200, html, {
+      'content-type': 'text/html; charset=utf-8',
+      // The hub shows customer PII — never let an intermediary cache it.
+      'cache-control': 'no-store, private',
+    });
+  }
+
+  // --- Hub: everything the owner's home page needs, in one request -------
+  //
+  // One round-trip on purpose: the audience is a business owner on a phone,
+  // often on mobile data, who should see their worker working within a second.
+
+  if (req.method === 'GET' && url.pathname === '/api/hub/overview') {
+    const session = currentSession(req);
+    if (!session) return send(res, 401, { error: 'not_signed_in' });
+    const tenantId = session.tenantId;
+    const tenant = registry.getTenant(tenantId);
+
+    let workerRows = [];
+    try { workerRows = workers.listWorkers(tenantId); } catch {}
+
+    const activity = [];
+    const leads = [];
+    const escalations = [];
+    let totals = { messagesThisWeek: 0, newLeads: 0, hotLeads: 0, openEscalations: 0 };
+
+    for (const w of workerRows) {
+      let digest = null;
+      try { digest = workers.getWeeklyDigest(tenantId, w.id, { days: 7 }); } catch {}
+      if (digest) {
+        totals.messagesThisWeek += digest.kpis?.messagesThisWeek ?? 0;
+        totals.newLeads += digest.kpis?.newLeads ?? 0;
+        totals.hotLeads += digest.kpis?.hotLeads ?? 0;
+        totals.openEscalations += digest.kpis?.escalationsOpen ?? 0;
+        for (const l of digest.recentLeads ?? []) leads.push({ ...l, workerId: w.id, workerName: w.name });
+        for (const e of digest.recentEscalations ?? []) {
+          if (e.status === 'open') escalations.push({ ...e, workerId: w.id, workerName: w.name });
+        }
+      }
+      try {
+        for (const a of workers.getAgentActions(tenantId, w.id, 8)) {
+          activity.push({ ...a, workerId: w.id, workerName: w.name });
+        }
+      } catch {}
+    }
+
+    const byNewest = (a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+    leads.sort(byNewest);
+    escalations.sort(byNewest);
+    activity.sort(byNewest);
+
+    const quota = metering.checkQuota(tenantId);
+    const usage = metering.tenantUsage(tenantId);
+
+    return send(res, 200, {
+      business: {
+        name: tenant?.businessName ?? '',
+        plan: registry.getPlan(tenant?.plan),
+        notifyEmail: tenant?.notifyEmail ?? true,
+        notifyWhatsapp: tenant?.notifyWhatsapp ?? false,
+      },
+      workers: workerRows.map((w) => ({
+        id: w.id, name: w.name, status: w.status, isActive: w.isActive,
+        inGrace: w.inGrace ?? false, graceEndsAt: w.graceEndsAt ?? null,
+        paidUntil: w.paidUntil, paused: w.paused,
+        health: w.health ?? null,
+      })),
+      totals,
+      // The action list comes first in the UI: these are the customers waiting.
+      escalations: escalations.slice(0, 10),
+      leads: leads.slice(0, 20),
+      activity: activity.slice(0, 20),
+      account: {
+        used: quota.used, limit: quota.limit, pct: quota.pct,
+        messagesThisPeriod: usage.chatTurns ?? 0,
+        period: usage.period,
+      },
+    });
+  }
+
+  // --- Auth: passwordless login for the owner's hub ----------------------
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/request-link') {
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const result = await auth.requestLogin({
+      destination: cleanText(body.destination, 160),
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+    // Always the same answer, whether or not the address belongs to a tenant —
+    // otherwise this endpoint reveals who the customers are.
+    return send(res, 200, { ok: true, sent: true, channel: result.channel ?? null });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/verify-code') {
+    const { text: raw, tooLarge } = await readBody(req, BODY_TINY);
+    if (tooLarge) return send(res, 413, { error: 'body_too_large' });
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    const result = auth.redeemCode({
+      destination: cleanText(body.destination, 160),
+      code: cleanText(body.code, 12),
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+    if (!result.ok) return send(res, 401, { error: result.error });
+    return send(res, 200, { ok: true, csrfToken: result.csrfToken },
+      auth.sessionCookieHeaders(req, result));
+  }
+
+  // Magic-link landing: consumes the token, sets the cookie, redirects to the hub.
+  if (req.method === 'GET' && url.pathname === '/app/login') {
+    const token = url.searchParams.get('t') ?? '';
+    if (!token) {
+      return send(res, 302, '', { location: '/app?error=missing_token', 'content-type': 'text/plain' });
+    }
+    const result = auth.redeemToken({
+      token, ip: clientIp(req), userAgent: req.headers['user-agent'],
+    });
+    if (!result.ok) {
+      return send(res, 302, '', { location: `/app?error=${encodeURIComponent(result.error)}`, 'content-type': 'text/plain' });
+    }
+    return send(res, 302, '', {
+      ...auth.sessionCookieHeaders(req, result),
+      location: '/app',
+      'content-type': 'text/plain',
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+    const session = currentSession(req);
+    if (!session) return send(res, 401, { error: 'not_signed_in' });
+    const tenant = registry.getTenant(session.tenantId);
+    return send(res, 200, {
+      ok: true,
+      tenantId: session.tenantId,
+      businessName: tenant?.businessName ?? '',
+      contactEmail: tenant?.contactEmail ? auth.maskDestination(tenant.contactEmail) : '',
+      contactPhone: tenant?.contactPhone ? auth.maskDestination(tenant.contactPhone) : '',
+      plan: registry.getPlan(tenant?.plan),
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+    const session = currentSession(req);
+    if (session) {
+      if (!auth.csrfOk(req)) return send(res, 403, { error: 'csrf_failed' });
+      auth.revokeSession(session.tenantId, session.sessionId);
+    }
+    return send(res, 200, { ok: true }, auth.clearCookieHeaders(req));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/sessions') {
+    const session = currentSession(req);
+    if (!session) return send(res, 401, { error: 'not_signed_in' });
+    return send(res, 200, {
+      sessions: auth.listSessions(session.tenantId, session.sessionId),
+      recentActivity: auth.recentAuthEvents(session.tenantId, 20),
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/sessions/revoke') {
+    const session = currentSession(req);
+    if (!session) return send(res, 401, { error: 'not_signed_in' });
+    if (!auth.csrfOk(req)) return send(res, 403, { error: 'csrf_failed' });
+    const { text: raw } = await readBody(req, BODY_TINY);
+    let body; try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+    if (body.all) {
+      // Keep this device signed in; drop everything else. This is the button an
+      // owner needs after losing a phone.
+      return send(res, 200, { ok: true, ...auth.revokeAllSessions(session.tenantId, { exceptSessionId: session.sessionId }) });
+    }
+    return send(res, 200, auth.revokeSession(session.tenantId, cleanText(body.sessionId, 64)));
   }
 
   // --- Funnel analytics (public, no PII) ---------------------------------

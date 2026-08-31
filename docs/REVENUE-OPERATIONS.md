@@ -176,6 +176,58 @@ order: cache hit rate, `MAX_AGENT_STEPS`, knowledge-base size, the model, and
 The system prompt is always the first message in the request, which is what
 makes the prefix cacheable — do not reorder it.
 
+## The owner's hub (`/app`)
+
+The business owner's home. Built for a done-for-you model: you set the worker
+up, and the owner never opens a builder. What they get is proof that the worker
+is working, and the two actions that matter — call the lead, handle the
+escalation.
+
+**Login is passwordless.** They enter their email or phone, get a magic link and
+a 6-digit code, and land in the hub. There is no password to invent, forget,
+reuse, or reset — which for a non-technical owner is the difference between
+logging in and giving up.
+
+### Why sessions and not the API key
+
+The API key (`sk_...`) predates this and still serves machines: the embed
+widget, integrations, scripts. It is a poor human credential:
+
+| | API key in localStorage | Session cookie |
+|---|---|---|
+| Readable by XSS | yes | no (HttpOnly) |
+| Expires | never | 30 days, sliding |
+| Per-device revocation | no | yes |
+| Login audit | no | yes |
+| Survives on a shared clinic PC | forever | ages out |
+
+Both are accepted by `requireAuth`; sessions are checked first.
+
+### Security properties
+
+- Session and magic-link tokens are stored as SHA-256 hashes, never in plaintext
+- Magic links are single-use with a 15-minute TTL
+- Codes are capped at 5 attempts, then the challenge is burned
+- Login requests are rate limited per address and per IP
+- Unknown addresses get the identical response — no customer enumeration
+- CSRF: `SameSite=Lax` plus a double-submit token on every write
+- The hub page is `Cache-Control: no-store, private` — it renders customer PII
+- Every login, failure and revocation is recorded in `auth_events`, with the
+  contact address masked
+
+### Env
+
+| Env | Default |
+|---|---|
+| `SESSION_TTL_DAYS` | `30` |
+| `MAGIC_LINK_TTL_MINUTES` | `15` |
+| `AUTH_MAX_REQUESTS_PER_HOUR` | `5` |
+| `SESSION_COOKIE_NAME` | `aiw_session` |
+
+Login emails and WhatsApp codes go through `notify.js`, so **without a mail
+provider configured nobody can log in.** That is the same dependency as renewal
+reminders, and the boot warning covers both.
+
 ## Vendors
 
 | Concern | Vendor | Key | Notes |

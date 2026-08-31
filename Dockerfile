@@ -16,6 +16,7 @@ COPY image-generation.js ./
 COPY media-tools.js ./
 COPY templates-media.js ./
 COPY workers-ui.html ./
+COPY hub-ui.html ./
 COPY assets/ ./assets/
 COPY brand/ ./brand/
 COPY mcp-client.js ./
@@ -33,6 +34,7 @@ COPY whatsapp-session.js ./
 
 # Revenue, reliability and compliance subsystems.
 COPY notify.js ./
+COPY auth-sessions.js ./
 COPY tenant-registry.js ./
 COPY billing-lifecycle.js ./
 COPY usage-metering.js ./
